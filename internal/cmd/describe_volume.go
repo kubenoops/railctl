@@ -1,0 +1,194 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/output"
+	"github.com/kubenoops/railctl/internal/resolver"
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+)
+
+var describeVolumeCmd = &cobra.Command{
+	Use:     "volume <name-or-id>",
+	Aliases: []string{"vol"},
+	Short:   "Show detailed information about a volume",
+	Args:    cobra.ExactArgs(1),
+	Example: `  railctl describe volume my-data -p my-project -e production
+  railctl describe volume redis-bhv4-volume -p my-project -e production -o json`,
+	RunE: runDescribeVolume,
+}
+
+func init() {
+	describeCmd.AddCommand(describeVolumeCmd)
+}
+
+func runDescribeVolume(cmd *cobra.Command, args []string) error {
+	volumeNameOrID := args[0]
+
+	format, err := getOutputFormat()
+	if err != nil {
+		return err
+	}
+
+	token, err := getToken()
+	if err != nil {
+		return err
+	}
+
+	projectFlag := getProject()
+	if projectFlag == "" {
+		return fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
+	}
+
+	envFlag := getEnvironment()
+	if envFlag == "" {
+		return fmt.Errorf("-e/--environment is required. Use -e flag or set RAILCTL_ENVIRONMENT")
+	}
+
+	client := newAPIClient(token)
+
+	// Resolve project name to ID
+	projects, err := client.ListProjects()
+	if err != nil {
+		return err
+	}
+
+	project, err := resolver.ResolveProject(projects, projectFlag)
+	if err != nil {
+		return fmt.Errorf("project '%s' not found", projectFlag)
+	}
+
+	// Resolve environment name to ID
+	environments, err := client.ListEnvironments(project.ID)
+	if err != nil {
+		return err
+	}
+
+	env, err := resolver.ResolveEnvironment(environments, envFlag)
+	if err != nil {
+		return fmt.Errorf("environment '%s' not found in project", envFlag)
+	}
+
+	// Get volumes to find the specific volume
+	volumes, err := client.ListVolumes(project.ID, env.ID)
+	if err != nil {
+		return err
+	}
+
+	// Find volume by name or ID
+	var volume *api.VolumeInstance
+	for i := range volumes {
+		if volumes[i].Volume.Name == volumeNameOrID || volumes[i].Volume.ID == volumeNameOrID {
+			volume = &volumes[i]
+			break
+		}
+	}
+
+	if volume == nil {
+		return fmt.Errorf("volume '%s' not found in environment", volumeNameOrID)
+	}
+
+	// Get service name if attached
+	var serviceName string
+	if volume.ServiceID != nil {
+		services, err := client.ListServices(project.ID, env.ID)
+		if err == nil {
+			for _, svc := range services {
+				if svc.ID == *volume.ServiceID {
+					serviceName = svc.Name
+					break
+				}
+			}
+		}
+		if serviceName == "" {
+			serviceName = *volume.ServiceID
+		}
+	}
+
+	switch format {
+	case output.FormatJSON:
+		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name)
+		out, _ := json.MarshalIndent(data, "", "  ")
+		fmt.Println(string(out))
+	case output.FormatYAML:
+		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name)
+		out, _ := yaml.Marshal(data)
+		fmt.Print(string(out))
+	default:
+		printVolumeDetail(volume, serviceName, project.Name, env.Name)
+	}
+
+	return nil
+}
+
+type volumeDetail struct {
+	Name          string  `json:"name" yaml:"name"`
+	ID            string  `json:"id" yaml:"id"`
+	Project       string  `json:"project" yaml:"project"`
+	Environment   string  `json:"environment" yaml:"environment"`
+	MountPath     string  `json:"mountPath" yaml:"mountPath"`
+	AttachedTo    string  `json:"attachedTo,omitempty" yaml:"attachedTo,omitempty"`
+	CurrentSizeMB float64 `json:"currentSizeMB" yaml:"currentSizeMB"`
+	TotalSizeMB   int     `json:"totalSizeMB" yaml:"totalSizeMB"`
+	UsagePercent  float64 `json:"usagePercent" yaml:"usagePercent"`
+}
+
+func buildVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string) volumeDetail {
+	attachedTo := ""
+	if serviceName != "" {
+		attachedTo = serviceName
+	} else if vol.ServiceID != nil {
+		attachedTo = *vol.ServiceID
+	}
+
+	usagePercent := 0.0
+	if vol.SizeMB > 0 {
+		usagePercent = (vol.CurrentSizeMB / float64(vol.SizeMB)) * 100
+	}
+
+	return volumeDetail{
+		Name:          vol.Volume.Name,
+		ID:            vol.Volume.ID,
+		Project:       projectName,
+		Environment:   envName,
+		MountPath:     vol.MountPath,
+		AttachedTo:    attachedTo,
+		CurrentSizeMB: vol.CurrentSizeMB,
+		TotalSizeMB:   vol.SizeMB,
+		UsagePercent:  usagePercent,
+	}
+}
+
+func printVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string) {
+	table := output.NewTable("FIELD", "VALUE")
+
+	table.AddRow("Name", vol.Volume.Name)
+	table.AddRow("ID", vol.Volume.ID)
+	table.AddRow("Project", projectName)
+	table.AddRow("Environment", envName)
+	table.AddRow("Mount Path", vol.MountPath)
+
+	if serviceName != "" {
+		table.AddRow("Attached To", serviceName)
+	} else if vol.ServiceID != nil {
+		table.AddRow("Attached To", *vol.ServiceID)
+	} else {
+		table.AddRow("Attached To", "-")
+	}
+
+	usedSize := fmt.Sprintf("%.1f MB", vol.CurrentSizeMB)
+	totalSize := fmt.Sprintf("%d MB", vol.SizeMB)
+	usagePercent := 0.0
+	if vol.SizeMB > 0 {
+		usagePercent = (vol.CurrentSizeMB / float64(vol.SizeMB)) * 100
+	}
+
+	table.AddRow("Size Used", usedSize)
+	table.AddRow("Size Total", totalSize)
+	table.AddRow("Usage", fmt.Sprintf("%.1f%%", usagePercent))
+
+	fmt.Println(table.Render())
+}

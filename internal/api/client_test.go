@@ -1,0 +1,202 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestClient_Debug(t *testing.T) {
+	tests := []struct {
+		name          string
+		debug         bool
+		wantDebugLogs bool
+	}{
+		{
+			name:          "debug enabled shows logs",
+			debug:         true,
+			wantDebugLogs: true,
+		},
+		{
+			name:          "debug disabled hides logs",
+			debug:         false,
+			wantDebugLogs: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test server
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Return a simple successful response
+				w.Header().Set("Content-Type", "application/json")
+				resp := graphQLResponse{
+					Data: json.RawMessage(`{"test": "data"}`),
+				}
+				json.NewEncoder(w).Encode(resp)
+			}))
+			defer server.Close()
+
+			// Capture stderr
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+
+			// Create client with debug flag
+			client := NewClient("test-token")
+			client.apiURL = server.URL
+			client.Debug = tt.debug
+
+			// Execute a query
+			_, err := client.execute("query { test }", map[string]any{"var": "value"})
+			if err != nil {
+				t.Fatalf("execute failed: %v", err)
+			}
+
+			// Restore stderr and read captured output
+			w.Close()
+			os.Stderr = oldStderr
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			output := buf.String()
+
+			// Check if debug logs are present
+			hasDebugLogs := strings.Contains(output, "[DEBUG] GraphQL Request") &&
+				strings.Contains(output, "[DEBUG] GraphQL Response")
+
+			if tt.wantDebugLogs && !hasDebugLogs {
+				t.Errorf("expected debug logs but got none. Output: %s", output)
+			}
+			if !tt.wantDebugLogs && hasDebugLogs {
+				t.Errorf("expected no debug logs but got some. Output: %s", output)
+			}
+
+			// Verify debug output contains expected information
+			if tt.wantDebugLogs {
+				if !strings.Contains(output, "URL:") {
+					t.Error("debug output missing URL")
+				}
+				if !strings.Contains(output, "Query:") {
+					t.Error("debug output missing Query")
+				}
+				if !strings.Contains(output, "Variables:") {
+					t.Error("debug output missing Variables")
+				}
+				if !strings.Contains(output, "Status:") {
+					t.Error("debug output missing Status")
+				}
+				if !strings.Contains(output, "Body:") {
+					t.Error("debug output missing Body")
+				}
+			}
+		})
+	}
+}
+
+func TestClient_DebugWithError(t *testing.T) {
+	// Create a test server that returns an error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := graphQLResponse{
+			Errors: []graphQLError{
+				{Message: "test error"},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+
+	// Create client with debug enabled
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+	client.Debug = true
+
+	// Execute a query (should fail)
+	_, err := client.execute("query { test }", nil)
+
+	// Restore stderr and read captured output
+	w.Close()
+	os.Stderr = oldStderr
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	// Should have error
+	if err == nil {
+		t.Fatal("expected error but got none")
+	}
+
+	// Should still have debug logs
+	if !strings.Contains(output, "[DEBUG] GraphQL Request") {
+		t.Error("expected debug request log")
+	}
+	if !strings.Contains(output, "[DEBUG] GraphQL Response") {
+		t.Error("expected debug response log")
+	}
+
+	// Should show the error in response
+	if !strings.Contains(output, "test error") {
+		t.Error("expected error message in debug output")
+	}
+}
+
+func TestCalculateBackoff(t *testing.T) {
+	t.Run("increases with attempts", func(t *testing.T) {
+		b0 := calculateBackoff(0)
+		b1 := calculateBackoff(1)
+		b2 := calculateBackoff(2)
+
+		// Each attempt should be roughly larger than the previous (allowing for jitter)
+		if b0 > b1 {
+			t.Errorf("backoff did not increase: attempt 0=%v, attempt 1=%v", b0, b1)
+		}
+		if b1 > b2 {
+			t.Errorf("backoff did not increase: attempt 1=%v, attempt 2=%v", b1, b2)
+		}
+	})
+
+	t.Run("capped at MaxBackoff", func(t *testing.T) {
+		b := calculateBackoff(100)
+		// With jitter, can be up to 110% of MaxBackoff
+		maxWithJitter := time.Duration(float64(MaxBackoff) * 1.11)
+		if b > maxWithJitter {
+			t.Errorf("backoff %v exceeded cap %v", b, maxWithJitter)
+		}
+	})
+}
+
+func TestTruncateBody(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short string", "hello", 10, "hello"},
+		{"exact length", "hello", 5, "hello"},
+		{"truncated", "hello world", 5, "hello..."},
+		{"strips html", "<html><body>content</body></html>", 100, "content"},
+		{"collapses whitespace", "a   b  \n  c", 100, "a b c"},
+		{"empty string", "", 10, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateBody(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("truncateBody(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}

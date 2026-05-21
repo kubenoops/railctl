@@ -1,0 +1,18 @@
+# Railway API token — get one from https://railway.app/account/tokens
+export RAILWAY_TOKEN="your-railway-api-token"
+export RAILCTL_ENVIRONMENT=test
+export RAILCTL_PROJECT=railctl-test
+
+# DockerHub credentials (if using private images)
+export DOCKERHUB_USERNAME="your-dockerhub-username"
+export DOCKERHUB_PASSWORD="your-dockerhub-token"
+
+# GitHub credentials (if using private container registry)
+export GH_USERNAME="your-github-username"
+export GH_PASSWORD="your-github-pat"
+
+# n8n deployment variables
+export RAILCTL_POSTGRES_PASSWORD=""     # Set a strong password
+export RAILCTL_REDIS_PASSWORD=""        # Set a strong password
+export RAILCTL_N8N_ENCRYPTION_KEY=""    # Generate with: openssl rand -hex 16
+export RAILCTL_N8N_EDITOR_BASE_URL="https://n8n.example.com"

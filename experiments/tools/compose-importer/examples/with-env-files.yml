@@ -1,0 +1,29 @@
+# Example: Compose file with env_file and secrets convention
+# Tests: env_file parsing, .secrets masking, ${VAR} substitution
+
+services:
+  api:
+    image: myapp/api:latest
+    env_file:
+      - .env
+      - .env.secrets
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DB_HOST: "db"
+      DB_PORT: "5432"
+    ports:
+      - "3000:3000"
+
+  db:
+    image: postgres:${POSTGRES_VERSION:-16}
+    env_file:
+      - .env.db.secrets
+    environment:
+      POSTGRES_DB: myapp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: on-failure
+
+volumes:
+  pgdata:

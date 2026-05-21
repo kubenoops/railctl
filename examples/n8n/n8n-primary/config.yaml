@@ -1,0 +1,45 @@
+service:
+  name: Primary
+  image: n8nio/n8n
+
+deploy:
+  startCommand: "n8n start"
+  restartPolicyType: ON_FAILURE
+  restartPolicyMaxRetries: 10
+  numReplicas: 1
+
+domain:
+  port: 5678
+
+variables:
+  # Database connection - use Railway service reference
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: "${{Postgres.RAILWAY_PRIVATE_DOMAIN}}"
+  DB_POSTGRESDB_PORT: "5432"
+  DB_POSTGRESDB_DATABASE: railway
+  DB_POSTGRESDB_USER: postgres
+  DB_POSTGRESDB_PASSWORD: "${{Postgres.PGPASSWORD}}"
+  
+  # Redis connection - use Railway service reference
+  QUEUE_BULL_REDIS_HOST: "${{Redis.RAILWAY_PRIVATE_DOMAIN}}"
+  QUEUE_BULL_REDIS_PORT: "6379"
+  QUEUE_BULL_REDIS_USERNAME: default
+  QUEUE_BULL_REDIS_PASSWORD: "${{Redis.REDIS_PASSWORD}}"
+  QUEUE_BULL_REDIS_DUALSTACK: "true"
+  
+  # n8n configuration
+  EXECUTIONS_MODE: queue
+  N8N_LISTEN_ADDRESS: "::"
+  N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+  N8N_ENCRYPTION_KEY: "${RAILCTL_N8N_ENCRYPTION_KEY}"
+  N8N_EDITOR_BASE_URL: "${RAILCTL_N8N_EDITOR_BASE_URL}"
+  N8N_TRUST_PROXY: "true"
+  WEBHOOK_URL: "${RAILCTL_N8N_EDITOR_BASE_URL}"
+  OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+  PORT: "5678"
+  
+  # Node.js configuration
+  NODE_OPTIONS: "--max_old_space_size=8192"
+  
+  # Railway-specific
+  ENABLE_ALPINE_PRIVATE_NETWORKING: "true"

@@ -1,0 +1,17 @@
+service:
+  name: Redis
+  image: railwayapp/redis
+
+deploy:
+  restartPolicyType: ON_FAILURE
+  restartPolicyMaxRetries: 10
+  numReplicas: 1
+
+volume:
+  mountPath: /bitnami
+
+variables:
+  # Redis configuration
+  REDIS_PASSWORD: "${RAILCTL_REDIS_PASSWORD}"
+  # Run as root to fix volume permission issues
+  RAILWAY_RUN_UID: "0"

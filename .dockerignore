@@ -1,0 +1,30 @@
+# Build artifacts
+railctl
+dist/
+coverage.out
+*.exe
+
+# Git & CI
+.git/
+.github/
+.gitmodules
+
+# Rust submodule (not needed for Go build)
+railway-cli-rust/
+
+# Dev / editor
+.vscode/
+.direnv/
+.DS_Store
+.env
+.secrets/
+.agent/
+.jules/
+
+# Docs & tests (not needed in image)
+docs/
+tests/
+examples/
+experiments/
+README.md
+SKILL.md

@@ -1,0 +1,27 @@
+/target
+node_modules
+bin/railway
+.direnv/*
+.env
+.env.*
+!.env.example
+.DS_Store
+test
+
+# Go
+/railctl
+dist/
+coverage.out
+*.exe
+
+# Secrets & local config
+.secrets/
+.agent/
+.jules/
+.vscode/
+*.pem
+*.key
+*.p12
+
+# direnv
+.envrc

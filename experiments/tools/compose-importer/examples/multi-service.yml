@@ -1,0 +1,50 @@
+# Example: Multi-service application with cross-service references
+# Tests: networking rewrite, volumes, env_file, deploy config
+
+services:
+  api:
+    image: myapp/api:latest
+    ports:
+      - "8080:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: "postgres://admin:secret@db:5432/myapp"
+      REDIS_URL: "redis://cache:6379"
+    depends_on:
+      - db
+      - cache
+    restart: on-failure
+    command: "npm start"
+    deploy:
+      replicas: 2
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: myapp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: always
+    command: "redis-server --appendonly yes"
+
+volumes:
+  pgdata:
+  redis_data:

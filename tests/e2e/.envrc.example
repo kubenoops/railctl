@@ -1,0 +1,6 @@
+# Railway API tokens for E2E testing.
+# You need at least one token. Multiple tokens enable load balancing across test suites.
+# Get tokens from: https://railway.app/account/tokens
+export RAILWAY_TOKEN_1="your-railway-api-token-1"
+# export RAILWAY_TOKEN_2="your-railway-api-token-2"
+# export RAILWAY_TOKEN_3="your-railway-api-token-3"
