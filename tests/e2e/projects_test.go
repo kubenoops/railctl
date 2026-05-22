@@ -66,4 +66,5 @@ func TestProjects(t *testing.T) {
 		}
 		r := env.RunOK(t, "describe", "project", prefix)
 		AssertContains(t, r.Stdout, env.ProjectName)
+	})
 }
