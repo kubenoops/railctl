@@ -154,8 +154,7 @@ func (n projectNode) toProject() types.Project {
 	return p
 }
 
-// ListProjects retrieves all projects accessible by the token.
-// If workspace ID is available, results are filtered to that workspace.
+// ListProjects retrieves all projects for the resolved workspace.
 func (c *Client) ListProjects() ([]types.Project, error) {
 	workspaceID, err := c.GetWorkspaceID()
 	if err != nil {
@@ -181,7 +180,6 @@ func (c *Client) ListProjects() ([]types.Project, error) {
 	for _, edge := range resp.Projects.Edges {
 		projects = append(projects, edge.Node.toProject())
 	}
-
 	return projects, nil
 }
 

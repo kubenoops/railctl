@@ -22,6 +22,7 @@ var (
 	// Global flags
 	token        string
 	outputFormat string
+	workspace    string
 	project      string
 	environment  string
 	service      string
@@ -32,6 +33,7 @@ var (
 	newAPIClient = func(tkn string) api.APIClient {
 		client := api.NewClient(tkn)
 		client.Debug = debug
+		client.Workspace = getWorkspace()
 		return client
 	}
 )
@@ -79,6 +81,8 @@ func init() {
 		"Railway API token (default: RAILWAY_TOKEN env var)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table",
 		fmt.Sprintf("Output format: %v", output.ValidFormats()))
+	rootCmd.PersistentFlags().StringVarP(&workspace, "workspace", "w", "",
+		"Workspace name (default: RAILCTL_WORKSPACE env var)")
 	rootCmd.PersistentFlags().StringVarP(&project, "project", "p", "",
 		"Project name (default: RAILCTL_PROJECT env var)")
 	rootCmd.PersistentFlags().StringVarP(&environment, "environment", "e", "",
@@ -101,6 +105,14 @@ func getToken() (string, error) {
 		return envToken, nil
 	}
 	return "", fmt.Errorf("no API token provided. Set RAILWAY_TOKEN environment variable or use --token flag")
+}
+
+// getWorkspace returns the workspace name from flag or environment variable.
+func getWorkspace() string {
+	if workspace != "" {
+		return workspace
+	}
+	return os.Getenv("RAILCTL_WORKSPACE")
 }
 
 // getProject returns the project name from flag or environment variable.
