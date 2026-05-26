@@ -55,7 +55,7 @@ jobs:
           fi
 
       - name: Create pre-release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }} (pre-release)
@@ -84,7 +84,7 @@ jobs:
           make build-all VERSION=$VERSION
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/railctl-linux-amd64
