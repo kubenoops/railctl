@@ -1,9 +1,13 @@
 # CODEOWNERS — require maintainer approval for CI/CD pipeline changes
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Note: these reference individual maintainers directly rather than a
+# @kubenoops/maintainers team, so code-owner review requirements are always
+# satisfiable. If a maintainers team is created later, switch these back.
 
 # CI/CD workflows — only maintainers can modify
-.github/                     @kubenoops/maintainers
-Makefile                     @kubenoops/maintainers
+.github/                     @omar-nahhas @ayadi-mohamed
+Makefile                     @omar-nahhas @ayadi-mohamed
 
 # Test infrastructure — only maintainers can modify
-tests/e2e/                   @kubenoops/maintainers
+tests/e2e/                   @omar-nahhas @ayadi-mohamed
