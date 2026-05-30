@@ -6,8 +6,8 @@
 # satisfiable. If a maintainers team is created later, switch these back.
 
 # CI/CD workflows — only maintainers can modify
-.github/                     @omar-nahhas @ayadi-mohamed
-Makefile                     @omar-nahhas @ayadi-mohamed
+.github/                     @omar-nahhas @ayadi-mohamed @souheilbenslama @0XSIKIPON
+Makefile                     @omar-nahhas @ayadi-mohamed @souheilbenslama @0XSIKIPON
 
 # Test infrastructure — only maintainers can modify
-tests/e2e/                   @omar-nahhas @ayadi-mohamed
+tests/e2e/                   @omar-nahhas @ayadi-mohamed @souheilbenslama @0XSIKIPON
