@@ -7,7 +7,7 @@ contributions to the same bar, not to aspirational rules the project does not ye
 follow.
 
 Keep feedback constructive and specific. Cite the file and line. Prefer a concrete
-suggestion over a vague complaint. Do not nitpick style that `gofmt`/`go vet`
+suggestion over a vague complaint. Do not nitpick style that `gofmt`/`golangci-lint`
 already enforce.
 
 ---
@@ -58,13 +58,19 @@ match it:
   `invalid restart policy '%s'. Must be one of: ON_FAILURE, ALWAYS, NEVER` and
   `--%s must be between 1 and 65535, got %d`. Hold new validation to that standard.
 - Don't swallow errors. Every returned `error` should be checked.
+- For resource-not-found and ambiguous-name conditions, use the resolver's
+  sentinel errors rather than ad-hoc strings (see §9).
 
 ## 4. Testing
 
-- Unit tests are **table-driven** and live next to the code (`*_test.go` in
-  `internal/cmd/`). New logic should come with unit tests in the same style.
-- Pure formatting/transformation helpers (e.g. `projectsToTable`,
-  `*ToWideTable`) must have direct unit tests asserting row counts / output shape.
+- Unit tests live next to the code (`*_test.go`) and cover **exhaustive scenarios,
+  not just the happy path**. The established bar (see `internal/resolver/resolver_test.go`)
+  is one test per scenario including edge cases: exact match, substring match,
+  case-insensitivity, **not-found, ambiguous, and empty-input**. New
+  resolution/validation logic without not-found/ambiguous/empty coverage is a gap.
+- Table-driven style is preferred where scenarios share a shape.
+- Pure formatting/transformation helpers (e.g. `projectsToTable`, the `output`
+  package) must have direct unit tests asserting output shape.
 - E2E tests live in `tests/e2e/` behind the `e2e` build tag and hit the live
   Railway API. Don't require new mandatory E2E coverage for small changes, but a
   new top-level command or lifecycle operation should have an E2E path.
@@ -75,21 +81,22 @@ match it:
 
 - **One feature or fix per PR** (per CONTRIBUTING.md). If a PR mixes unrelated
   changes, suggest splitting it.
-- Changes to behavior should update the relevant docs (`README.md`, `docs/`,
-  command help). Flag behavior changes that leave docs stale.
+- Changes to behavior should update the relevant docs (see §7 for the
+  behavior→doc map). Flag behavior changes that leave docs stale.
 - Changes to CI/CD workflows or `tests/e2e/` infrastructure require maintainer
   attention — call these out explicitly in the review summary (they are
   CODEOWNER-protected).
-- Keep the dependency footprint small. A new third-party dependency for something
-  the stdlib or an existing dep already does is worth questioning.
+- Keep the dependency footprint small. The project has only two direct
+  dependencies (`spf13/cobra`, `yaml.v3`). A new third-party dependency for
+  something the stdlib or an existing dep already does is worth questioning.
 - GitHub Actions must stay **SHA-pinned** (full-length commit SHA with a version
   comment). Flag any workflow change that introduces a floating tag like
   `uses: actions/checkout@v4`.
 
 ## 6. Go Practices
 
-- Code must be `gofmt`-clean and pass `go vet`; don't comment on formatting that
-  tooling handles.
+- Code must be `gofmt`-clean and pass `golangci-lint` (`make lint`); don't comment
+  on formatting/lint nits the tooling already handles.
 - Use the project's module path `github.com/kubenoops/railctl/...` for internal
   imports — never a stale `NuevaNext` path.
 - Prefer the standard library; follow idiomatic Go (early returns, no needless
@@ -110,19 +117,92 @@ and report each item in the review summary — even when the answer is "present"
   env var must be added to the env-var table, and a new flag should appear in the
   usage/examples. If the PR adds a surface but touches no `.md` file, call it out
   as a gap.
+- **Behavior docs** — Behavior changes should update the matching file under
+  `docs/`: domain-generation changes → `docs/domain-generation.md`; service-
+  creation semantics → `docs/railway-service-creation-behavior.md`; test approach
+  → `docs/testing-architecture.md`.
 - **Help text** — Does the new flag/command have a clear description, and is the
   command's `Long`/`Example` updated to mention the new capability?
-- **Tests** — Is there a table-driven unit test covering the new logic? New
-  resolution/validation logic without a test is a gap.
+- **Tests** — Is there a unit test covering the new logic, including not-found /
+  ambiguous / empty edge cases where applicable (see §4)?
 - **Examples** — If the change affects how the `examples/` deployments work, were
   they updated?
-- **Consistency** — Does the new surface follow existing patterns (flag→env→default
-  resolution, `-o` output formats, error wrapping)?
+- **Consistency** — Does the new surface follow existing patterns (architecture
+  in §8, resolution in §9, output via `output.Printer`, error wrapping)?
 
 Report the checklist as a short ✅/❌ list in the summary. An unchecked **Documentation**
 or **Tests** box on a behavior-changing PR should be raised as a MEDIUM (or higher)
 comment, not left silent. The goal is that "you added a flag but didn't document or
 test it" is never missed again.
+
+## 8. Architecture & Layering
+
+The codebase has a deliberate layering. New code should fit it rather than
+re-implement existing primitives:
+
+```
+cmd  →  cmdutil  →  api / resolver / output  →  types
+```
+
+- **Command scaffolding** — Commands resolve project/environment/service context
+  via `cmdutil.ResolveContext(client, cmdutil.ResolveOpts{…})` and render results
+  via `cmdutil.PrintResult(…)`. This is used across ~15 commands. A new command
+  that hand-rolls context resolution or output instead of using `cmdutil` is
+  diverging from the established pattern — flag it.
+- **Output** — Rendering goes through the `output` package (`output.NewPrinter`,
+  `Printer.PrintJSON/PrintYAML/PrintTable`, `output.NewTable`). Do **not**
+  hand-roll JSON/YAML/table formatting with ad-hoc `fmt.Println` when a structured
+  result is being returned.
+- **Types** — Shared structs live in `internal/types`. Don't redefine equivalent
+  shapes locally.
+
+## 9. Resolution Contract
+
+Name-to-resource lookup is centralized in `internal/resolver` and follows a fixed
+contract. New resolution logic should reuse it rather than re-implement matching:
+
+- **Order:** exact match first → case-insensitive substring → decide by count.
+- **Outcome:** 0 matches → `resolver.ErrNotFound{Resource, Name}`; exactly 1 →
+  that match; N > 1 → `resolver.ErrAmbiguous{Resource, Name, Matches}`.
+- **Error messages** are standardized by those sentinel types
+  (`"<resource> '<name>' not found"`, `"ambiguous <resource> name '<name>'. Matches: …"`).
+  Don't invent new not-found/ambiguous message formats.
+
+A PR that adds a new resource type or resolves by a new field (as the workspace
+feature did) should extend `resolver` and use these error types.
+
+## 10. Long-Running Operations (`--await`)
+
+Operations that wait for Railway to converge follow the `awaitDeployment` pattern
+(`internal/cmd/await.go`):
+
+- Poll until a **terminal status** (`SUCCESS`, `FAILED`, `CRASHED`, `REMOVED`,
+  `SKIPPED`).
+- Use **exponential backoff** (start 5s, cap 30s, factor 2.0).
+- Print status transitions as they occur and respect an explicit timeout, returning
+  a wrapped error on timeout.
+
+New long-running/polling commands should follow this rather than inventing their
+own loop or a fixed-interval busy-wait.
+
+## 11. API Client Conventions
+
+In `internal/api`, error surfaces are consistent — match them in new client methods:
+
+- **Internal failures** are wrapped: `fmt.Errorf("failed to <do X>: %w", err)`.
+- **API-level errors** use the `API error: %s` / `API %s (HTTP %d). %s` forms, and
+  response bodies are truncated (`truncateBody(body, 200)`) so we never dump a huge
+  payload into a user-facing error.
+
+## 12. What This Project Deliberately Does NOT Do
+
+To avoid false-positive review comments, do **not** ask for these — they run
+counter to the codebase's actual conventions:
+
+- **No `context.Context` threading.** No file in `internal/` uses `context.Context`;
+  do not request adding context parameters to functions or API calls.
+- **Lint nits belong to `golangci-lint`.** `make lint` runs `golangci-lint`; do not
+  duplicate formatting/lint-level comments the linter already enforces.
 
 ---
 
