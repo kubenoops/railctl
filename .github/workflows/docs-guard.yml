@@ -1,0 +1,63 @@
+name: Docs Guard
+
+# Deterministic completeness check: if a PR introduces a user-facing surface
+# (a CLI flag or RAILCTL_* env var) but updates no documentation, fail the build.
+# This is a seatbelt for the most common omission (flag/env-var without docs).
+# Bypass with the 'docs-not-needed' label when a change genuinely needs no docs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-guard:
+    runs-on: ubuntu-latest
+    # Skip entirely if a maintainer has marked the PR as not needing docs.
+    if: "!contains(github.event.pull_request.labels.*.name, 'docs-not-needed')"
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+
+      - name: Check for undocumented CLI surface changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+
+          # All files changed in this PR.
+          CHANGED=$(git diff --name-only "origin/$BASE_REF...HEAD")
+          echo "Changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          # Added (+) lines in Go files only.
+          ADDED_GO=$(git diff "origin/$BASE_REF...HEAD" -- '*.go' | grep '^+' || true)
+
+          # Does this PR register a new flag or reference a RAILCTL_ env var?
+          if echo "$ADDED_GO" | grep -Eq 'PersistentFlags\(\)|\.Flags\(\)|RAILCTL_[A-Z]+'; then
+            TOUCHES_SURFACE=true
+          else
+            TOUCHES_SURFACE=false
+          fi
+
+          # Were any docs updated? (.md anywhere, or anything under docs/)
+          if echo "$CHANGED" | grep -Eq '\.md$|^docs/'; then
+            DOCS_UPDATED=true
+          else
+            DOCS_UPDATED=false
+          fi
+
+          echo "Touches CLI surface (flag/env var): $TOUCHES_SURFACE"
+          echo "Docs updated: $DOCS_UPDATED"
+
+          if [ "$TOUCHES_SURFACE" = true ] && [ "$DOCS_UPDATED" = false ]; then
+            echo "::error::This PR adds a CLI flag or RAILCTL_* env var but updates no documentation."
+            echo "::error::Update README.md (env-var table + usage/examples) or docs/, or add the 'docs-not-needed' label to bypass."
+            exit 1
+          fi
+
+          echo "Docs guard passed."

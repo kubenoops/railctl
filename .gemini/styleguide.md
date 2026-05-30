@@ -98,6 +98,32 @@ match it:
   documents non-obvious decisions well (see the `sensitivePattern` rationale) —
   match that level of explanation for tricky logic.
 
+## 7. Completeness Pass — Run This on Every PR
+
+This review must not only react to the lines in the diff — it must check for what
+the PR **failed to change**. Diff-only review misses omissions (e.g. a flag added
+but never documented). For **every PR that adds or changes a CLI flag, environment
+variable, command, or user-facing behavior**, explicitly run through this checklist
+and report each item in the review summary — even when the answer is "present":
+
+- **Documentation** — Was `README.md` updated? In particular, a new `RAILCTL_*`
+  env var must be added to the env-var table, and a new flag should appear in the
+  usage/examples. If the PR adds a surface but touches no `.md` file, call it out
+  as a gap.
+- **Help text** — Does the new flag/command have a clear description, and is the
+  command's `Long`/`Example` updated to mention the new capability?
+- **Tests** — Is there a table-driven unit test covering the new logic? New
+  resolution/validation logic without a test is a gap.
+- **Examples** — If the change affects how the `examples/` deployments work, were
+  they updated?
+- **Consistency** — Does the new surface follow existing patterns (flag→env→default
+  resolution, `-o` output formats, error wrapping)?
+
+Report the checklist as a short ✅/❌ list in the summary. An unchecked **Documentation**
+or **Tests** box on a behavior-changing PR should be raised as a MEDIUM (or higher)
+comment, not left silent. The goal is that "you added a flag but didn't document or
+test it" is never missed again.
+
 ---
 
 ### Review tone
