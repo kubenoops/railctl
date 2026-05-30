@@ -1,0 +1,37 @@
+# Gemini Code Assist configuration for kubenoops/railctl
+# Docs: https://developers.google.com/gemini-code-assist/docs/customize-gemini-behavior-github
+
+# Keep reviews professional and focused.
+have_fun: false
+
+code_review:
+  # Run automated reviews on pull requests.
+  disable: false
+
+  # Only surface comments at MEDIUM severity or above to avoid nit noise.
+  # Security/correctness issues (HIGH/CRITICAL) always come through.
+  comment_severity_threshold: MEDIUM
+
+  # No cap on the number of review comments on a PR (-1 = unlimited).
+  max_review_comments: -1
+
+  pull_request_opened:
+    # Don't post the help/usage blurb on every PR.
+    help: false
+    # Post a concise summary of the change when a PR is opened.
+    summary: true
+    # Run a full code review when a PR is opened.
+    code_review: true
+
+# Paths Gemini should ignore when reviewing. Generated, vendored, and binary
+# artifacts add no review value.
+ignore_patterns:
+  - "vendor/**"
+  - "**/*.pb.go"
+  - "**/*_generated.go"
+  - "**/mock_*.go"
+  - "go.sum"
+  - "railctl"
+  - "dist/**"
+  - "**/testdata/**"
+  - "LICENSE"
