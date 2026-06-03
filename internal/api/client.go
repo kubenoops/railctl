@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kubenoops/railctl/internal/resolver"
 )
 
 const (
@@ -382,15 +384,38 @@ func (c *Client) GetWorkspaceID() (string, error) {
 
 	workspaces := resp.Me.Workspaces
 
-	// If a hint was given, resolve by name (case-insensitive)
+	// If a hint was given, resolve by name using the standard exact → substring pattern.
 	if hint != "" {
+		// Exact match first
 		for _, ws := range workspaces {
-			if strings.EqualFold(ws.Name, hint) {
+			if ws.Name == hint {
 				c.workspaceID = ws.ID
 				return c.workspaceID, nil
 			}
 		}
-		return "", fmt.Errorf("workspace %q not found. Available: %s", hint, joinWorkspaceNames(workspaces))
+
+		// Case-insensitive substring match
+		hintLower := strings.ToLower(hint)
+		var matches []workspaceEntry
+		for _, ws := range workspaces {
+			if strings.Contains(strings.ToLower(ws.Name), hintLower) {
+				matches = append(matches, ws)
+			}
+		}
+
+		switch len(matches) {
+		case 0:
+			return "", resolver.ErrNotFound{Resource: "workspace", Name: hint}
+		case 1:
+			c.workspaceID = matches[0].ID
+			return c.workspaceID, nil
+		default:
+			names := make([]string, len(matches))
+			for i, m := range matches {
+				names[i] = m.Name
+			}
+			return "", resolver.ErrAmbiguous{Resource: "workspace", Name: hint, Matches: names}
+		}
 	}
 
 	// No hint — auto-detect

@@ -241,11 +241,13 @@ Avoid repeating flags by setting context variables:
 
 ```bash
 # Set your working context
+export RAILCTL_WORKSPACE=my-team
 export RAILCTL_PROJECT=my-app
 export RAILCTL_ENVIRONMENT=production
 export RAILCTL_SERVICE=api
 
 # Now commands are much shorter
+railctl get projects
 railctl get variables
 railctl set variable NEW_VAR=value
 railctl delete variable OLD_VAR --yes
@@ -283,9 +285,10 @@ railctl update service app \
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `RAILWAY_TOKEN` | Railway API token (required) | `frp_xxxxxxxxx` |
-| `RAILCTL_PROJECT` | Default project name/ID | `my-app` |
-| `RAILCTL_ENVIRONMENT` | Default environment name/ID | `production` |
-| `RAILCTL_SERVICE` | Default service name/ID | `api` |
+| `RAILCTL_WORKSPACE` | Default workspace name (required when multiple workspaces exist) | `my-team` |
+| `RAILCTL_PROJECT` | Default project name | `my-app` |
+| `RAILCTL_ENVIRONMENT` | Default environment name | `production` |
+| `RAILCTL_SERVICE` | Default service name | `api` |
 | `RAILCTL_REGISTRY_USERNAME` | Docker registry username | `myuser` |
 | `RAILCTL_REGISTRY_PASSWORD` | Docker registry password | `mytoken` |
 
