@@ -271,7 +271,7 @@ func TestGetWorkspaceID(t *testing.T) {
 		{
 			name:       "ambiguous substring",
 			workspaces: []workspaceEntry{wsTeam, wsTeamSub},
-			hint:       "acme-",
+			hint:       "acm",
 			wantErrIs:  resolver.ErrAmbiguous{},
 		},
 		{
