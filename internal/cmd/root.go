@@ -50,10 +50,15 @@ services, variables, and deployments via the Railway GraphQL API.
 Authentication:
   Set RAILWAY_TOKEN environment variable or use --token flag.
 
+Workspace selection:
+  When your token has access to multiple workspaces, specify one with
+  -w <name> or RAILCTL_WORKSPACE=<name>. Single-workspace tokens are
+  auto-detected.
+
 Examples:
-  railctl get projects
+  railctl get projects -w my-team
   railctl get projects -o json
-  railctl describe project my-app
+  railctl describe project my-app -w my-team
   railctl get services -p my-app -e production`,
 	SilenceUsage: true,
 	Version:      version,

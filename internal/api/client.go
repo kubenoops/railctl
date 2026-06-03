@@ -372,6 +372,9 @@ func (c *Client) GetWorkspaceID() (string, error) {
 	data, err := c.execute(workspaceQuery, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Authorized") {
+			if hint != "" {
+				return "", fmt.Errorf("workspace %q requested but token is not authorized to list workspaces", hint)
+			}
 			return "", nil
 		}
 		return "", err
@@ -384,38 +387,24 @@ func (c *Client) GetWorkspaceID() (string, error) {
 
 	workspaces := resp.Me.Workspaces
 
-	// If a hint was given, resolve by name using the standard exact → substring pattern.
+	// If a hint was given, resolve by name using the centralized resolver.
 	if hint != "" {
-		// Exact match first
-		for _, ws := range workspaces {
-			if ws.Name == hint {
-				c.workspaceID = ws.ID
-				return c.workspaceID, nil
-			}
+		resources := make([]resolver.Resource, len(workspaces))
+		for i, ws := range workspaces {
+			resources[i] = resolver.Resource{ID: ws.ID, Name: ws.Name}
 		}
-
-		// Case-insensitive substring match
-		hintLower := strings.ToLower(hint)
-		var matches []workspaceEntry
-		for _, ws := range workspaces {
-			if strings.Contains(strings.ToLower(ws.Name), hintLower) {
-				matches = append(matches, ws)
+		id, _, err := resolver.ResolveWithName(hint, resources)
+		if err != nil {
+			if nf, ok := err.(resolver.ErrNotFound); ok {
+				return "", resolver.ErrNotFound{Resource: "workspace", Name: nf.Name}
 			}
-		}
-
-		switch len(matches) {
-		case 0:
-			return "", resolver.ErrNotFound{Resource: "workspace", Name: hint}
-		case 1:
-			c.workspaceID = matches[0].ID
-			return c.workspaceID, nil
-		default:
-			names := make([]string, len(matches))
-			for i, m := range matches {
-				names[i] = m.Name
+			if amb, ok := err.(resolver.ErrAmbiguous); ok {
+				return "", resolver.ErrAmbiguous{Resource: "workspace", Name: amb.Name, Matches: amb.Matches}
 			}
-			return "", resolver.ErrAmbiguous{Resource: "workspace", Name: hint, Matches: names}
+			return "", err
 		}
+		c.workspaceID = id
+		return c.workspaceID, nil
 	}
 
 	// No hint — auto-detect
