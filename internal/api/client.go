@@ -4,6 +4,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -373,7 +374,7 @@ func (c *Client) GetWorkspaceID() (string, error) {
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Authorized") {
 			if hint != "" {
-				return "", fmt.Errorf("workspace %q requested but token is not authorized to list workspaces", hint)
+				return "", fmt.Errorf("workspace %q requested but token is not authorized to list workspaces: %w", hint, err)
 			}
 			return "", nil
 		}
@@ -395,10 +396,12 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		}
 		id, _, err := resolver.ResolveWithName(hint, resources)
 		if err != nil {
-			if nf, ok := err.(resolver.ErrNotFound); ok {
+			var nf resolver.ErrNotFound
+			if errors.As(err, &nf) {
 				return "", resolver.ErrNotFound{Resource: "workspace", Name: nf.Name}
 			}
-			if amb, ok := err.(resolver.ErrAmbiguous); ok {
+			var amb resolver.ErrAmbiguous
+			if errors.As(err, &amb) {
 				return "", resolver.ErrAmbiguous{Resource: "workspace", Name: amb.Name, Matches: amb.Matches}
 			}
 			return "", err

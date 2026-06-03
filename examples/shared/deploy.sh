@@ -340,6 +340,9 @@ fi
 # ── Phase 2: Await deployments ───────────────────────────────────────
 log_step "Phase 2: Awaiting Deployments"
 
+declare -a deploy_status=()
+declare -a deploy_fail_count=()
+
 if [ "$SKIP_WAIT" = true ]; then
     log_info "--skip-wait specified, skipping deployment status check"
 elif [ ${#DEPLOYED_SERVICES[@]} -eq 0 ]; then
@@ -347,10 +350,6 @@ elif [ ${#DEPLOYED_SERVICES[@]} -eq 0 ]; then
 else
     log_info "Waiting for ${#DEPLOYED_SERVICES[@]} service(s)..."
     echo ""
-
-    # Bash 3.2 compatible (macOS): use indexed arrays parallel to DEPLOYED_SERVICES
-    declare -a deploy_status=()
-    declare -a deploy_fail_count=()
 
     for i in "${!DEPLOYED_SERVICES[@]}"; do
         deploy_status[$i]="PENDING"
