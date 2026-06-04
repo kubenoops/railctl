@@ -235,13 +235,33 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		fmt.Fprintf(w, "  Warning: volume changes detected for '%s' but volumes cannot be updated in place\n", name)
 	}
 
-	// Domain changes.
+	// Domain changes: check existing domains first (idempotent).
 	if domainChanged {
-		domain, err := client.CreateServiceDomain(serviceID, envID)
+		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
-			return fmt.Errorf("creating domain: %w", err)
+			return fmt.Errorf("listing domains: %w", err)
 		}
-		if cfg.Networking.Domain.Port > 0 {
+
+		var domainID string
+		if len(domains.ServiceDomains) > 0 {
+			domainID = domains.ServiceDomains[0].ID
+		} else if len(domains.CustomDomains) > 0 {
+			domainID = domains.CustomDomains[0].ID
+		}
+
+		if domainID != "" {
+			// Domain exists — update port if needed.
+			if cfg.Networking.Domain.Port > 0 {
+				if err := client.UpdateServiceDomainPort(domainID, cfg.Networking.Domain.Port); err != nil {
+					return fmt.Errorf("setting domain port: %w", err)
+				}
+			}
+		} else if cfg.Networking.Domain.Port > 0 {
+			// No domain exists — create one.
+			domain, err := client.CreateServiceDomain(serviceID, envID)
+			if err != nil {
+				return fmt.Errorf("creating domain: %w", err)
+			}
 			if err := client.UpdateServiceDomainPort(domain.ID, cfg.Networking.Domain.Port); err != nil {
 				return fmt.Errorf("setting domain port: %w", err)
 			}
