@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -17,6 +19,7 @@ var (
 	applyFile         string
 	applyDryRun       bool
 	applyPrune        bool
+	applyPruneYes     bool
 	applyAwait        bool
 	applyAwaitTimeout int
 	applyNoColor      bool
@@ -48,7 +51,7 @@ Use --prune to delete services not in the config file.`,
   railctl apply -f stack.yaml --dry-run
 
   # Apply and delete services not in the config
-  railctl apply -f stack.yaml --prune
+  railctl apply -f stack.yaml --prune --yes
 
   # Apply and wait for deployments to complete
   railctl apply -f stack.yaml --await`,
@@ -59,6 +62,7 @@ func init() {
 	applyCmd.Flags().StringVarP(&applyFile, "file", "f", "", "Path to YAML config file or directory (required)")
 	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "Show what would change without applying")
 	applyCmd.Flags().BoolVar(&applyPrune, "prune", false, "Delete services not in the config file")
+	applyCmd.Flags().BoolVar(&applyPruneYes, "yes", false, "Skip confirmation prompt for --prune deletions")
 	applyCmd.Flags().BoolVar(&applyAwait, "await", false, "Wait for deployments to reach terminal status")
 	applyCmd.Flags().IntVar(&applyAwaitTimeout, "await-timeout", 600, "Timeout in seconds for --await")
 	applyCmd.Flags().BoolVar(&applyNoColor, "no-color", false, "Disable colored output")
@@ -134,20 +138,40 @@ func runApply(cmd *cobra.Command, args []string) error {
 	diff.Render(cs, os.Stdout, useColor)
 	fmt.Fprintln(os.Stdout)
 
-	// 8. Build config map for apply.
+	// 8. If --prune will delete services, prompt for confirmation unless --yes.
+	if applyPrune && !applyPruneYes {
+		hasDeletes := false
+		for _, rc := range cs.Changes {
+			if rc.Type == diff.ChangeDelete {
+				hasDeletes = true
+				break
+			}
+		}
+		if hasDeletes {
+			fmt.Fprint(os.Stdout, "Prune will delete the services listed above. Are you sure? (y/N): ")
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				return fmt.Errorf("aborted by user")
+			}
+		}
+	}
+
+	// 9. Build config map for apply.
 	configMap := make(map[string]config.ServiceConfig, len(cfg.Services))
 	for _, svc := range cfg.Services {
 		configMap[svc.Name] = svc
 	}
 
-	// 9. Apply changes.
+	// 10. Apply changes.
 	result := apply.Apply(client, cs, projectID, envID, configMap, apply.Opts{
 		DryRun: false,
 		Prune:  applyPrune,
 		Output: os.Stdout,
 	})
 
-	// 10. Print result summary.
+	// 11. Print result summary.
 	if len(result.Created) > 0 {
 		fmt.Printf("Created: %v\n", result.Created)
 	}
@@ -164,7 +188,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d error(s) during apply", len(result.Errors))
 	}
 
-	// 11. If --await and there are created/updated services, await deployments.
+	// 12. If --await and there are created/updated services, await deployments.
 	if applyAwait && (len(result.Created) > 0 || len(result.Updated) > 0) {
 		// Re-fetch services to get deployment IDs.
 		services, err := client.ListServices(projectID, envID)
