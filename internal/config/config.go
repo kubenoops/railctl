@@ -266,6 +266,10 @@ var validRestartPolicies = map[string]bool{
 func Validate(cfg *Config) error {
 	var errs []string
 
+	if len(cfg.Services) == 0 {
+		errs = append(errs, "at least one service must be defined")
+	}
+
 	seen := make(map[string]bool)
 	for i, svc := range cfg.Services {
 		prefix := fmt.Sprintf("service[%d]", i)
@@ -284,6 +288,11 @@ func Validate(cfg *Config) error {
 			errs = append(errs, fmt.Sprintf("%s: image is required", prefix))
 		}
 
+		// Validate registry credentials: both or neither.
+		if (svc.Registry.Username != "" && svc.Registry.Password == "") || (svc.Registry.Username == "" && svc.Registry.Password != "") {
+			errs = append(errs, fmt.Sprintf("%s: both registry username and password must be set if either is provided", prefix))
+		}
+
 		// Normalize and validate restart policy.
 		if svc.Deploy.RestartPolicy != "" {
 			normalized := strings.ToUpper(svc.Deploy.RestartPolicy)
@@ -299,15 +308,15 @@ func Validate(cfg *Config) error {
 		}
 
 		if svc.Deploy.Replicas != 0 && svc.Deploy.Replicas < 1 {
-			errs = append(errs, fmt.Sprintf("%s: replicas must be >= 1", prefix))
+			errs = append(errs, fmt.Sprintf("%s: replicas must be >= 1, got %d", prefix, svc.Deploy.Replicas))
 		}
 
 		if port := svc.Networking.Domain.Port; port != 0 && (port < 1 || port > 65535) {
-			errs = append(errs, fmt.Sprintf("%s: domain port must be between 1 and 65535", prefix))
+			errs = append(errs, fmt.Sprintf("%s: domain port must be between 1 and 65535, got %d", prefix, port))
 		}
 
 		if port := svc.Networking.TCPProxy.Port; port != 0 && (port < 1 || port > 65535) {
-			errs = append(errs, fmt.Sprintf("%s: tcpProxy port must be between 1 and 65535", prefix))
+			errs = append(errs, fmt.Sprintf("%s: tcpProxy port must be between 1 and 65535, got %d", prefix, port))
 		}
 	}
 
