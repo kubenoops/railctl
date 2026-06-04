@@ -65,7 +65,7 @@ export RAILWAY_TOKEN=your-api-token-here
 # List all projects
 railctl get projects
 
-# Create a new project  
+# Create a new project
 railctl create project my-app
 
 # List services in production
@@ -83,6 +83,39 @@ railctl update service api --image node:20 -p my-app -e production
 - **[CI/CD & Build Setup](docs/ci-build-setup.md)** - Build system, GitHub Actions workflows, release lifecycle, and dependency management
 - **[Testing Architecture](docs/testing-architecture.md)** - Three-tier testing strategy, mock patterns, E2E test harness, and coverage matrix
 - **[Railway Service Creation Behavior](docs/railway-service-creation-behavior.md)** - Understanding Railway's automatic service instance creation and our workaround
+
+## Declarative Configuration
+
+Manage your Railway infrastructure as code with YAML config files:
+
+```bash
+# Define your stack
+cat > stack.yaml <<EOF
+services:
+  - name: api
+    image: node:20-alpine
+    deploy:
+      startCommand: "npm start"
+      replicas: 2
+    networking:
+      domain:
+        port: 3000
+    variables:
+      PORT: "3000"
+      DATABASE_URL: "${{postgres.DATABASE_URL}}"
+EOF
+
+# Preview changes
+railctl diff -f stack.yaml -p my-app -e production
+
+# Apply changes
+railctl apply -f stack.yaml -p my-app -e production
+
+# Apply with deployment wait
+railctl apply -f stack.yaml -p my-app -e production --await
+```
+
+See **[Declarative Configuration Reference](docs/declarative-config.md)** for the full schema.
 
 ## Usage Guide
 
@@ -165,14 +198,14 @@ railctl delete service api -p my-app -e production --yes
 
 Control how your services run and scale:
 
-| Flag | Description | Valid Values |
-|------|-------------|--------------|
-| `--start-command` | Override container's default start command | Any string |
-| `--restart-policy` | Control restart behavior | `ON_FAILURE`, `ALWAYS`, `NEVER` |
-| `--max-retries` | Maximum restart attempts (requires `--restart-policy`) | Integer >= 0 |
-| `--replicas` | Number of instances (horizontal scaling) | Integer >= 1 |
-| `--healthcheck-path` | HTTP endpoint for health checks | Path (e.g., `/health`) |
-| `--healthcheck-timeout` | Max seconds to wait for health check | Integer (default: 300) |
+| Flag                    | Description                                            | Valid Values                    |
+| ----------------------- | ------------------------------------------------------ | ------------------------------- |
+| `--start-command`       | Override container's default start command             | Any string                      |
+| `--restart-policy`      | Control restart behavior                               | `ON_FAILURE`, `ALWAYS`, `NEVER` |
+| `--max-retries`         | Maximum restart attempts (requires `--restart-policy`) | Integer >= 0                    |
+| `--replicas`            | Number of instances (horizontal scaling)               | Integer >= 1                    |
+| `--healthcheck-path`    | HTTP endpoint for health checks                        | Path (e.g., `/health`)          |
+| `--healthcheck-timeout` | Max seconds to wait for health check                   | Integer (default: 300)          |
 
 **Note:** These flags are available for both `create service` and `update service` commands.
 
@@ -280,14 +313,14 @@ railctl update service app \
 
 ### Environment Variables
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `RAILWAY_TOKEN` | Railway API token (required) | `frp_xxxxxxxxx` |
-| `RAILCTL_PROJECT` | Default project name/ID | `my-app` |
-| `RAILCTL_ENVIRONMENT` | Default environment name/ID | `production` |
-| `RAILCTL_SERVICE` | Default service name/ID | `api` |
-| `RAILCTL_REGISTRY_USERNAME` | Docker registry username | `myuser` |
-| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password | `mytoken` |
+| Variable                    | Description                  | Example         |
+| --------------------------- | ---------------------------- | --------------- |
+| `RAILWAY_TOKEN`             | Railway API token (required) | `frp_xxxxxxxxx` |
+| `RAILCTL_PROJECT`           | Default project name/ID      | `my-app`        |
+| `RAILCTL_ENVIRONMENT`       | Default environment name/ID  | `production`    |
+| `RAILCTL_SERVICE`           | Default service name/ID      | `api`           |
+| `RAILCTL_REGISTRY_USERNAME` | Docker registry username     | `myuser`        |
+| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password     | `mytoken`       |
 
 ### Output Formats
 
@@ -303,12 +336,13 @@ All `get` and `describe` commands support multiple output formats:
 The [`examples/`](examples/) directory contains production-ready deployment templates
 that show how to deploy real-world stacks on Railway using `railctl`:
 
-| Example | Description | Services |
-|---------|-------------|----------|
-| **[n8n](examples/n8n/)** | n8n workflow automation in queue mode | PostgreSQL, Redis, n8n Primary, n8n Worker (×2) |
-| **[Temporal](examples/temporal/)** | Temporal durable workflow engine | PostgreSQL, Temporal Server, Temporal UI, Worker (×2) |
+| Example                            | Description                           | Services                                              |
+| ---------------------------------- | ------------------------------------- | ----------------------------------------------------- |
+| **[n8n](examples/n8n/)**           | n8n workflow automation in queue mode | PostgreSQL, Redis, n8n Primary, n8n Worker (×2)       |
+| **[Temporal](examples/temporal/)** | Temporal durable workflow engine      | PostgreSQL, Temporal Server, Temporal UI, Worker (×2) |
 
 Each example includes:
+
 - Declarative YAML config files for every service
 - A shared [`deploy.sh`](examples/shared/deploy.sh) script that handles idempotent create-or-update
 - Cleanup scripts for full teardown
@@ -382,7 +416,6 @@ make fmt
 make lint
 ```
 
-
 ### Project Structure
 
 ```
@@ -439,6 +472,7 @@ railway-cli/
 When updating a service from a private Docker registry, you must re-provide registry credentials due to Railway API limitations. The API replaces configuration rather than merging, and credentials are encrypted.
 
 **Workaround:** Set environment variables once:
+
 ```bash
 export RAILCTL_REGISTRY_USERNAME=user
 export RAILCTL_REGISTRY_PASSWORD=token
@@ -448,6 +482,7 @@ export RAILCTL_REGISTRY_PASSWORD=token
 
 - **[README.md](README.md)** - This file
 - **[SKILL.md](SKILL.md)** - Development guidelines and patterns
+- **[Declarative Configuration](docs/declarative-config.md)** - Config file schema, variable expansion, and examples
 
 ## License
 
@@ -456,6 +491,7 @@ MIT License - see LICENSE file for details
 ## Credits
 
 Built with:
+
 - [Cobra](https://github.com/spf13/cobra) - CLI framework
 - [Go](https://golang.org) - Programming language
 - [Railway API](https://railway.app) - Infrastructure platform
