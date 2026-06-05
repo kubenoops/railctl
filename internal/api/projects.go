@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/kubenoops/railctl/internal/types"
@@ -168,6 +169,9 @@ func (c *Client) ListProjects() ([]types.Project, error) {
 
 	data, err := c.execute(listProjectsQuery, vars)
 	if err != nil {
+		if strings.Contains(err.Error(), "Not Authorized") && c.IsProjectToken() {
+			return nil, nil
+		}
 		return nil, err
 	}
 

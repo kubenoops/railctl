@@ -20,19 +20,23 @@ var (
 
 var (
 	// Global flags
-	token        string
-	outputFormat string
-	workspace    string
-	project      string
-	environment  string
-	service      string
-	debug        bool
+	token          string
+	workspaceToken string
+	projectToken   string
+	outputFormat   string
+	workspace      string
+	project        string
+	environment    string
+	service        string
+	debug          bool
 
 	// newAPIClient is a factory function for creating API clients.
 	// It can be overridden in tests for dependency injection.
 	newAPIClient = func(tkn string) api.APIClient {
 		client := api.NewClient(tkn)
 		client.Debug = debug
+		client.ProjectToken = getProjectToken()
+		client.WorkspaceScopedToken = getWorkspaceToken() != ""
 		client.Workspace = getWorkspace()
 		return client
 	}
@@ -84,6 +88,10 @@ func init() {
 	// Global persistent flags (available to all subcommands)
 	rootCmd.PersistentFlags().StringVar(&token, "token", "",
 		"Railway API token (default: RAILWAY_TOKEN env var)")
+	rootCmd.PersistentFlags().StringVar(&workspaceToken, "workspace-token", "",
+		"Railway workspace-scoped token (default: RAILWAY_WORKSPACE_TOKEN env var)")
+	rootCmd.PersistentFlags().StringVar(&projectToken, "project-token", "",
+		"Railway project-scoped token (default: RAILWAY_PROJECT_TOKEN env var)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table",
 		fmt.Sprintf("Output format: %v", output.ValidFormats()))
 	rootCmd.PersistentFlags().StringVarP(&workspace, "workspace", "w", "",
@@ -102,14 +110,57 @@ func init() {
 }
 
 // getToken returns the API token from flag or environment variable.
+// getWorkspaceToken returns the workspace-scoped token from flag or environment variable.
+func getWorkspaceToken() string {
+	if workspaceToken != "" {
+		return workspaceToken
+	}
+	return os.Getenv("RAILWAY_WORKSPACE_TOKEN")
+}
+
+// getProjectToken returns the project-scoped token from flag or environment variable.
+func getProjectToken() string {
+	if projectToken != "" {
+		return projectToken
+	}
+	return os.Getenv("RAILWAY_PROJECT_TOKEN")
+}
+
 func getToken() (string, error) {
+	wsToken := getWorkspaceToken()
+	ptToken := getProjectToken()
+
+	hasPersonalToken := token != "" || os.Getenv("RAILWAY_TOKEN") != ""
+	hasWorkspaceToken := wsToken != ""
+	hasProjectToken := ptToken != ""
+
+	setCount := 0
+	if hasPersonalToken {
+		setCount++
+	}
+	if hasWorkspaceToken {
+		setCount++
+	}
+	if hasProjectToken {
+		setCount++
+	}
+
+	if setCount > 1 {
+		return "", fmt.Errorf("multiple token types set — use only one of: --token / RAILWAY_TOKEN, --workspace-token / RAILWAY_WORKSPACE_TOKEN, --project-token / RAILWAY_PROJECT_TOKEN")
+	}
+	if hasProjectToken {
+		return "", nil
+	}
+	if hasWorkspaceToken {
+		return wsToken, nil
+	}
 	if token != "" {
 		return token, nil
 	}
 	if envToken := os.Getenv("RAILWAY_TOKEN"); envToken != "" {
 		return envToken, nil
 	}
-	return "", fmt.Errorf("no API token provided. Set RAILWAY_TOKEN environment variable or use --token flag")
+	return "", fmt.Errorf("no API token provided. Use --token / RAILWAY_TOKEN, --workspace-token / RAILWAY_WORKSPACE_TOKEN, or --project-token / RAILWAY_PROJECT_TOKEN")
 }
 
 // getWorkspace returns the workspace name from flag or environment variable.

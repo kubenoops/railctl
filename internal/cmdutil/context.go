@@ -6,6 +6,7 @@ package cmdutil
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/resolver"
@@ -41,6 +42,23 @@ type ResolveOpts struct {
 func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 	ctx := &Context{Client: client}
 
+	if client.IsProjectToken() {
+		projectID, environmentID, err := client.GetProjectContext()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get project context from token: %w", err)
+		}
+		if opts.ProjectName != "" {
+			fmt.Fprintf(os.Stderr, "Warning: -p flag ignored — project token is already scoped to a specific project\n")
+		}
+		if opts.NeedEnvironment && opts.EnvironmentName != "" {
+			fmt.Fprintf(os.Stderr, "Warning: -e flag ignored — project token is already scoped to a specific environment\n")
+		}
+		opts.ProjectName = projectID
+		if opts.NeedEnvironment && environmentID != "" {
+			opts.EnvironmentName = environmentID
+		}
+	}
+
 	// --- Project resolution (always required when opts.ProjectName is set) ---
 	if opts.ProjectName == "" {
 		return nil, fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
@@ -53,7 +71,15 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 	project, err := resolver.ResolveProject(projects, opts.ProjectName)
 	if err != nil {
-		return nil, fmt.Errorf("project '%s' not found", opts.ProjectName)
+		if len(projects) == 0 && client.IsProjectToken() {
+			p, directErr := client.GetProject(opts.ProjectName)
+			if directErr != nil {
+				return nil, fmt.Errorf("failed to fetch project from token: %w", directErr)
+			}
+			project = p
+		} else {
+			return nil, fmt.Errorf("project '%s' not found", opts.ProjectName)
+		}
 	}
 	ctx.Project = project
 
@@ -70,7 +96,17 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 		env, err := resolver.ResolveEnvironment(environments, opts.EnvironmentName)
 		if err != nil {
-			return nil, fmt.Errorf("environment '%s' not found in project '%s'", opts.EnvironmentName, project.Name)
+			found := false
+			for _, e := range environments {
+				if e.ID == opts.EnvironmentName {
+					env = e
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("environment '%s' not found in project '%s'", opts.EnvironmentName, project.Name)
+			}
 		}
 		ctx.Environment = env
 	}
