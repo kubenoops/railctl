@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -45,6 +46,11 @@ func runGetProjects(cmd *cobra.Command, args []string) error {
 	}
 
 	client := newAPIClient(tkn)
+
+	if client.IsProjectToken() {
+		return fmt.Errorf("project tokens are scoped to a single project — use 'railctl get services' to list services")
+	}
+
 	projects, err := client.ListProjects()
 	if err != nil {
 		return err

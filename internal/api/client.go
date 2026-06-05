@@ -30,12 +30,15 @@ const (
 
 // Client provides methods for interacting with the Railway API.
 type Client struct {
-	token       string
-	apiURL      string
-	httpClient  *http.Client
-	workspaceID string // cached resolved workspace ID
-	Workspace   string // workspace name provided by caller (-w flag / RAILCTL_WORKSPACE)
-	Debug       bool   // enable debug logging
+	token                string
+	apiURL               string
+	httpClient           *http.Client
+	workspaceID          string // cached resolved workspace ID
+	workspaceResolved    bool   // true after first GetWorkspaceID() call
+	Workspace            string // workspace name provided by caller (-w flag / RAILCTL_WORKSPACE)
+	ProjectToken         string // project-scoped token (uses Project-Access-Token header)
+	WorkspaceScopedToken bool   // true when using RAILWAY_WORKSPACE_TOKEN
+	Debug                bool   // enable debug logging
 }
 
 // NewClient creates a new Railway API client with the given token.
@@ -191,7 +194,11 @@ func (c *Client) execute(query string, variables map[string]any) (json.RawMessag
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		if c.ProjectToken != "" {
+			req.Header.Set("Project-Access-Token", c.ProjectToken)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -354,17 +361,37 @@ type workspaceResponse struct {
 	} `json:"me"`
 }
 
+// IsProjectToken reports whether the client is using a project-scoped token.
+func (c *Client) IsProjectToken() bool {
+	return c.ProjectToken != ""
+}
+
+// IsWorkspaceToken reports whether the client is using a workspace-scoped token.
+func (c *Client) IsWorkspaceToken() bool {
+	return c.WorkspaceScopedToken
+}
+
 // GetWorkspaceID resolves and returns the workspace ID for the current token.
 // Resolution order:
 //  1. Cached value from a previous call
 //  2. c.Workspace (set from -w flag or RAILCTL_WORKSPACE env var) — resolved by name
 //  3. Auto-detect: use the single workspace if exactly one exists; error if multiple
 func (c *Client) GetWorkspaceID() (string, error) {
-	if c.workspaceID != "" {
+	if c.workspaceResolved {
 		return c.workspaceID, nil
 	}
 
 	// Determine the workspace hint: name from caller (set via -w flag or RAILCTL_WORKSPACE env var)
+	hint := c.Workspace
+
+	if c.WorkspaceScopedToken {
+		if c.Workspace != "" {
+			fmt.Fprintf(os.Stderr, "Warning: -w flag ignored — workspace token is already scoped to a specific workspace\n")
+		}
+		c.workspaceResolved = true
+		return "", nil
+	}
+
 	hint := c.Workspace
 
 	data, err := c.execute(workspaceQuery, nil)
@@ -401,15 +428,18 @@ func (c *Client) GetWorkspaceID() (string, error) {
 			return "", err
 		}
 		c.workspaceID = id
+		c.workspaceResolved = true
 		return c.workspaceID, nil
 	}
 
 	// No hint — auto-detect
 	switch len(workspaces) {
 	case 0:
+		c.workspaceResolved = true
 		return "", nil
 	case 1:
 		c.workspaceID = workspaces[0].ID
+		c.workspaceResolved = true
 		return c.workspaceID, nil
 	default:
 		return "", fmt.Errorf("multiple workspaces found (%s): use -w <name> or set RAILCTL_WORKSPACE=<name>",
@@ -423,4 +453,34 @@ func joinWorkspaceNames(workspaces []workspaceEntry) string {
 		names[i] = ws.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// projectTokenQuery retrieves the project and environment IDs for a project-scoped token.
+const projectTokenQuery = `
+query {
+	projectToken {
+		projectId
+		environmentId
+	}
+}
+`
+
+type projectTokenContext struct {
+	ProjectToken struct {
+		ProjectID     string `json:"projectId"`
+		EnvironmentID string `json:"environmentId"`
+	} `json:"projectToken"`
+}
+
+// GetProjectContext returns the project and environment IDs associated with the project token.
+func (c *Client) GetProjectContext() (projectID, environmentID string, err error) {
+	data, err := c.execute(projectTokenQuery, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get project context: %w", err)
+	}
+	var resp projectTokenContext
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", "", fmt.Errorf("failed to parse project context: %w", err)
+	}
+	return resp.ProjectToken.ProjectID, resp.ProjectToken.EnvironmentID, nil
 }

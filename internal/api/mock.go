@@ -61,6 +61,11 @@ type MockClient struct {
 
 	// Workspace
 	GetWorkspaceIDFunc func() (string, error)
+
+	// Token type
+	IsProjectTokenFunc    func() bool
+	IsWorkspaceTokenFunc  func() bool
+	GetProjectContextFunc func() (string, string, error)
 }
 
 // Ensure MockClient implements APIClient.
@@ -192,6 +197,27 @@ func (m *MockClient) GetWorkspaceID() (string, error) {
 		return m.GetWorkspaceIDFunc()
 	}
 	return "mock-workspace-id", nil
+}
+
+func (m *MockClient) IsProjectToken() bool {
+	if m.IsProjectTokenFunc != nil {
+		return m.IsProjectTokenFunc()
+	}
+	return false
+}
+
+func (m *MockClient) IsWorkspaceToken() bool {
+	if m.IsWorkspaceTokenFunc != nil {
+		return m.IsWorkspaceTokenFunc()
+	}
+	return false
+}
+
+func (m *MockClient) GetProjectContext() (string, string, error) {
+	if m.GetProjectContextFunc != nil {
+		return m.GetProjectContextFunc()
+	}
+	return "", "", nil
 }
 
 func (m *MockClient) GetBuildLogs(deploymentID string, limit int) ([]string, error) {
