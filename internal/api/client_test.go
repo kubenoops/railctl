@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -303,11 +304,13 @@ func TestGetWorkspaceID(t *testing.T) {
 				}
 				switch tt.wantErrIs.(type) {
 				case resolver.ErrNotFound:
-					if _, ok := err.(resolver.ErrNotFound); !ok {
+					var target resolver.ErrNotFound
+					if !errors.As(err, &target) {
 						t.Errorf("expected ErrNotFound, got %T: %v", err, err)
 					}
 				case resolver.ErrAmbiguous:
-					if _, ok := err.(resolver.ErrAmbiguous); !ok {
+					var target resolver.ErrAmbiguous
+					if !errors.As(err, &target) {
 						t.Errorf("expected ErrAmbiguous, got %T: %v", err, err)
 					}
 				}
