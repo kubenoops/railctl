@@ -221,6 +221,15 @@ func makeWorkspaceServer(t *testing.T, workspaces []workspaceEntry) *httptest.Se
 	}))
 }
 
+func makeUnauthorizedWorkspaceServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
+	}))
+}
+
 func TestGetWorkspaceID(t *testing.T) {
 	wsPersonal := workspaceEntry{ID: "id-personal", Name: "personal"}
 	wsTeam := workspaceEntry{ID: "id-team", Name: "acme"}
@@ -335,4 +344,36 @@ func TestGetWorkspaceID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetWorkspaceID_Unauthorized(t *testing.T) {
+	server := makeUnauthorizedWorkspaceServer(t)
+	defer server.Close()
+
+	t.Run("no hint returns error", func(t *testing.T) {
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		_, err := c.GetWorkspaceID()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "not authorized") {
+			t.Errorf("error %q should mention authorization", err.Error())
+		}
+	})
+
+	t.Run("with hint returns error mentioning workspace", func(t *testing.T) {
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+		c.Workspace = "my-team"
+
+		_, err := c.GetWorkspaceID()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "my-team") {
+			t.Errorf("error %q should mention the requested workspace", err.Error())
+		}
+	})
 }

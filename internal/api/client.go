@@ -364,11 +364,8 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		return c.workspaceID, nil
 	}
 
-	// Determine the workspace hint: name or ID from caller or env var
+	// Determine the workspace hint: name from caller (set via -w flag or RAILCTL_WORKSPACE env var)
 	hint := c.Workspace
-	if hint == "" {
-		hint = os.Getenv("RAILCTL_WORKSPACE")
-	}
 
 	data, err := c.execute(workspaceQuery, nil)
 	if err != nil {
@@ -376,7 +373,7 @@ func (c *Client) GetWorkspaceID() (string, error) {
 			if hint != "" {
 				return "", fmt.Errorf("workspace %q requested but token is not authorized to list workspaces: %w", hint, err)
 			}
-			return "", nil
+			return "", fmt.Errorf("token is not authorized to list workspaces: %w", err)
 		}
 		return "", err
 	}

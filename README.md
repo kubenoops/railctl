@@ -280,6 +280,19 @@ railctl update service app \
 
 ## Configuration
 
+### Global Flags
+
+These flags are available on every command:
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--token` | | Railway API token (default: `RAILWAY_TOKEN` env var) |
+| `--workspace` | `-w` | Workspace name (default: `RAILCTL_WORKSPACE` env var) |
+| `--project` | `-p` | Project name (default: `RAILCTL_PROJECT` env var) |
+| `--environment` | `-e` | Environment name (default: `RAILCTL_ENVIRONMENT` env var) |
+| `--service` | `-s` | Service name (default: `RAILCTL_SERVICE` env var) |
+| `--output` | `-o` | Output format: `table`, `wide`, `json`, `yaml` (default: `table`) |
+
 ### Environment Variables
 
 | Variable | Description | Example |
