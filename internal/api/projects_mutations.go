@@ -62,7 +62,7 @@ func (c *Client) CreateProject(name string) (types.Project, error) {
 	}
 
 	if workspaceID == "" {
-		return types.Project{}, fmt.Errorf("workspace ID required to create a project; your token may not support this operation — use a personal API token from https://railway.app/account/tokens")
+		return types.Project{}, fmt.Errorf("workspace required to create a project: use -w <name> or set RAILCTL_WORKSPACE=<name>, or use a personal API token if your token does not have workspace access")
 	}
 
 	data, err := c.execute(createProjectMutation, map[string]any{

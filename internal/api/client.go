@@ -4,12 +4,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/kubenoops/railctl/internal/resolver"
 )
 
 const (
@@ -30,7 +33,8 @@ type Client struct {
 	token       string
 	apiURL      string
 	httpClient  *http.Client
-	workspaceID string // cached workspace ID
+	workspaceID string // cached resolved workspace ID
+	Workspace   string // workspace name provided by caller (-w flag / RAILCTL_WORKSPACE)
 	Debug       bool   // enable debug logging
 }
 
@@ -325,40 +329,48 @@ func truncateBody(s string, maxLen int) string {
 	return result
 }
 
-// workspaceQuery is the GraphQL query for getting the workspace ID.
+// workspaceQuery fetches all workspaces the token can access.
 const workspaceQuery = `
 query {
 	me {
 		workspaces {
 			id
+			name
 		}
 	}
 }
 `
 
+// workspaceEntry is a single workspace from the me query.
+type workspaceEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // workspaceResponse represents the response from the workspace query.
 type workspaceResponse struct {
 	Me struct {
-		Workspaces []struct {
-			ID string `json:"id"`
-		} `json:"workspaces"`
+		Workspaces []workspaceEntry `json:"workspaces"`
 	} `json:"me"`
 }
 
-// GetWorkspaceID returns the workspace ID for the current token.
-// The result is cached after the first call.
-// Returns empty string if the token doesn't support the me query (e.g., workspace API tokens).
+// GetWorkspaceID resolves and returns the workspace ID for the current token.
+// Resolution order:
+//  1. Cached value from a previous call
+//  2. c.Workspace (set from -w flag or RAILCTL_WORKSPACE env var) — resolved by name
+//  3. Auto-detect: use the single workspace if exactly one exists; error if multiple
 func (c *Client) GetWorkspaceID() (string, error) {
 	if c.workspaceID != "" {
 		return c.workspaceID, nil
 	}
 
+	// Determine the workspace hint: name from caller (set via -w flag or RAILCTL_WORKSPACE env var)
+	hint := c.Workspace
+
 	data, err := c.execute(workspaceQuery, nil)
 	if err != nil {
-		// If the me query fails (e.g., workspace API tokens can't access it),
-		// return empty string so callers can proceed without workspace filtering.
 		if strings.Contains(err.Error(), "Not Authorized") {
-			return "", nil
+			return "", fmt.Errorf("token is not authorized to list workspaces: %w", err)
 		}
 		return "", err
 	}
@@ -368,10 +380,47 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		return "", fmt.Errorf("failed to parse workspace response: %w", err)
 	}
 
-	if len(resp.Me.Workspaces) == 0 {
-		return "", nil
+	workspaces := resp.Me.Workspaces
+
+	// If a hint was given, resolve by name using the centralized resolver.
+	if hint != "" {
+		resources := make([]resolver.Resource, len(workspaces))
+		for i, ws := range workspaces {
+			resources[i] = resolver.Resource{ID: ws.ID, Name: ws.Name}
+		}
+		id, _, err := resolver.ResolveWithName(hint, resources)
+		if err != nil {
+			var nf resolver.ErrNotFound
+			if errors.As(err, &nf) {
+				return "", resolver.ErrNotFound{Resource: "workspace", Name: nf.Name}
+			}
+			var amb resolver.ErrAmbiguous
+			if errors.As(err, &amb) {
+				return "", resolver.ErrAmbiguous{Resource: "workspace", Name: amb.Name, Matches: amb.Matches}
+			}
+			return "", err
+		}
+		c.workspaceID = id
+		return c.workspaceID, nil
 	}
 
-	c.workspaceID = resp.Me.Workspaces[0].ID
-	return c.workspaceID, nil
+	// No hint — auto-detect
+	switch len(workspaces) {
+	case 0:
+		return "", nil
+	case 1:
+		c.workspaceID = workspaces[0].ID
+		return c.workspaceID, nil
+	default:
+		return "", fmt.Errorf("multiple workspaces found (%s): use -w <name> or set RAILCTL_WORKSPACE=<name>",
+			joinWorkspaceNames(workspaces))
+	}
+}
+
+func joinWorkspaceNames(workspaces []workspaceEntry) string {
+	names := make([]string, len(workspaces))
+	for i, ws := range workspaces {
+		names[i] = ws.Name
+	}
+	return strings.Join(names, ", ")
 }

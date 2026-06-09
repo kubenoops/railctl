@@ -253,7 +253,7 @@ ensure_service_from_config() {
     if [ -n "$vars" ]; then
         # Validate all $env() references before setting
         local env_refs missing_vars=()
-        env_refs=$(grep -oP '\$env\(\K[^)]+' "$config_file" | sort -u || true)
+        env_refs=$(grep -oE '\$env\([^)]+\)' "$config_file" | sed 's/\$env(//;s/)//' | sort -u || true)
         if [ -n "$env_refs" ]; then
             while IFS= read -r env_var; do
                 [ -z "${!env_var:-}" ] && missing_vars+=("$env_var")
@@ -340,6 +340,9 @@ fi
 # ── Phase 2: Await deployments ───────────────────────────────────────
 log_step "Phase 2: Awaiting Deployments"
 
+declare -a deploy_status=()
+declare -a deploy_fail_count=()
+
 if [ "$SKIP_WAIT" = true ]; then
     log_info "--skip-wait specified, skipping deployment status check"
 elif [ ${#DEPLOYED_SERVICES[@]} -eq 0 ]; then
@@ -348,47 +351,48 @@ else
     log_info "Waiting for ${#DEPLOYED_SERVICES[@]} service(s)..."
     echo ""
 
-    declare -A DEPLOY_RESULTS
-    declare -A DEPLOY_PENDING
-    declare -A DEPLOY_FAIL_COUNT
-
-    for svc in "${DEPLOYED_SERVICES[@]}"; do
-        DEPLOY_PENDING["$svc"]=1
-        DEPLOY_FAIL_COUNT["$svc"]=0
+    for i in "${!DEPLOYED_SERVICES[@]}"; do
+        deploy_status[$i]="PENDING"
+        deploy_fail_count[$i]=0
     done
 
     poll_interval=10
     max_fail_retries=4
+    pending_count=${#DEPLOYED_SERVICES[@]}
 
-    while [ ${#DEPLOY_PENDING[@]} -gt 0 ]; do
-        for svc in "${!DEPLOY_PENDING[@]}"; do
+    while [ "$pending_count" -gt 0 ]; do
+        pending_count=0
+        for i in "${!DEPLOYED_SERVICES[@]}"; do
+            svc="${DEPLOYED_SERVICES[$i]}"
+            [ "${deploy_status[$i]}" != "PENDING" ] && continue
+
             status=$($RAILCTL get deployments -s "$svc" -o json --limit 1 "${RAILCTL_FLAGS[@]}" 2>/dev/null \
                 | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['status'] if d else 'UNKNOWN')" 2>/dev/null || echo "UNKNOWN")
 
             case "$status" in
                 SUCCESS)
                     log_success "$svc: $status"
-                    DEPLOY_RESULTS["$svc"]="SUCCESS"
-                    unset DEPLOY_PENDING["$svc"]
+                    deploy_status[$i]="SUCCESS"
                     ;;
                 FAILED|CRASHED|REMOVED|SKIPPED)
-                    DEPLOY_FAIL_COUNT["$svc"]=$(( ${DEPLOY_FAIL_COUNT["$svc"]} + 1 ))
-                    if [ "${DEPLOY_FAIL_COUNT["$svc"]}" -ge "$max_fail_retries" ]; then
+                    deploy_fail_count[$i]=$(( deploy_fail_count[$i] + 1 ))
+                    if [ "${deploy_fail_count[$i]}" -ge "$max_fail_retries" ]; then
                         log_error "$svc: $status (confirmed)"
-                        DEPLOY_RESULTS["$svc"]="FAILED"
-                        unset DEPLOY_PENDING["$svc"]
+                        deploy_status[$i]="FAILED"
                     else
-                        log_info "$svc: $status (may be superseded — recheck ${DEPLOY_FAIL_COUNT["$svc"]}/$max_fail_retries)"
+                        log_info "$svc: $status (may be superseded — recheck ${deploy_fail_count[$i]}/$max_fail_retries)"
+                        (( pending_count++ )) || true
                     fi
                     ;;
                 *)
-                    DEPLOY_FAIL_COUNT["$svc"]=0
+                    deploy_fail_count[$i]=0
                     log_info "$svc: ${status:-UNKNOWN} (waiting...)"
+                    (( pending_count++ )) || true
                     ;;
             esac
         done
 
-        [ ${#DEPLOY_PENDING[@]} -gt 0 ] && sleep $poll_interval
+        [ "$pending_count" -gt 0 ] && sleep $poll_interval
     done
 fi
 
@@ -400,8 +404,9 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 succeeded=0
 failed=0
-for svc in "${DEPLOYED_SERVICES[@]}"; do
-    result="${DEPLOY_RESULTS[$svc]:-SKIPPED}"
+for i in "${!DEPLOYED_SERVICES[@]}"; do
+    svc="${DEPLOYED_SERVICES[$i]}"
+    result="${deploy_status[$i]:-SKIPPED}"
     if [ "$result" = "SUCCESS" ] || [ "$result" = "SKIPPED" ]; then
         log_success "$svc"
         ((succeeded++)) || true

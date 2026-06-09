@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kubenoops/railctl/internal/resolver"
 )
 
 func TestClient_Debug(t *testing.T) {
@@ -199,4 +202,178 @@ func TestTruncateBody(t *testing.T) {
 			}
 		})
 	}
+}
+
+func makeWorkspaceServer(t *testing.T, workspaces []workspaceEntry) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		type wsResp struct {
+			Data struct {
+				Me struct {
+					Workspaces []workspaceEntry `json:"workspaces"`
+				} `json:"me"`
+			} `json:"data"`
+		}
+		var resp wsResp
+		resp.Data.Me.Workspaces = workspaces
+		json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+func makeUnauthorizedWorkspaceServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
+	}))
+}
+
+func TestGetWorkspaceID(t *testing.T) {
+	wsPersonal := workspaceEntry{ID: "id-personal", Name: "personal"}
+	wsTeam := workspaceEntry{ID: "id-team", Name: "acme"}
+	wsTeamSub := workspaceEntry{ID: "id-team-sub", Name: "acme-staging"}
+
+	tests := []struct {
+		name       string
+		workspaces []workspaceEntry
+		hint       string // set via c.Workspace
+		wantID     string
+		wantErrIs  error // resolver.ErrNotFound or resolver.ErrAmbiguous
+		wantErrMsg string
+	}{
+		{
+			name:       "single workspace auto-detected",
+			workspaces: []workspaceEntry{wsTeam},
+			wantID:     "id-team",
+		},
+		{
+			name:       "exact match",
+			workspaces: []workspaceEntry{wsPersonal, wsTeam},
+			hint:       "acme",
+			wantID:     "id-team",
+		},
+		{
+			name:       "exact match preferred over substring",
+			workspaces: []workspaceEntry{wsTeam, wsTeamSub},
+			hint:       "acme",
+			wantID:     "id-team",
+		},
+		{
+			name:       "substring match",
+			workspaces: []workspaceEntry{wsPersonal, wsTeam},
+			hint:       "acm",
+			wantID:     "id-team",
+		},
+		{
+			name:       "case-insensitive substring match",
+			workspaces: []workspaceEntry{wsPersonal, wsTeam},
+			hint:       "ACME",
+			wantID:     "id-team",
+		},
+		{
+			name:       "not found",
+			workspaces: []workspaceEntry{wsPersonal, wsTeam},
+			hint:       "unknown",
+			wantErrIs:  resolver.ErrNotFound{},
+		},
+		{
+			name:       "ambiguous substring",
+			workspaces: []workspaceEntry{wsTeam, wsTeamSub},
+			hint:       "acm",
+			wantErrIs:  resolver.ErrAmbiguous{},
+		},
+		{
+			name:       "multiple workspaces no hint errors",
+			workspaces: []workspaceEntry{wsPersonal, wsTeam},
+			wantErrMsg: "multiple workspaces found",
+		},
+		{
+			name:       "no workspaces returns empty",
+			workspaces: []workspaceEntry{},
+			wantID:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := makeWorkspaceServer(t, tt.workspaces)
+			defer server.Close()
+
+			c := NewClient("test-token")
+			c.apiURL = server.URL
+			c.Workspace = tt.hint
+
+			got, err := c.GetWorkspaceID()
+
+			if tt.wantErrIs != nil {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				switch tt.wantErrIs.(type) {
+				case resolver.ErrNotFound:
+					var target resolver.ErrNotFound
+					if !errors.As(err, &target) {
+						t.Errorf("expected ErrNotFound, got %T: %v", err, err)
+					}
+				case resolver.ErrAmbiguous:
+					var target resolver.ErrAmbiguous
+					if !errors.As(err, &target) {
+						t.Errorf("expected ErrAmbiguous, got %T: %v", err, err)
+					}
+				}
+				return
+			}
+
+			if tt.wantErrMsg != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErrMsg)
+				}
+				if !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.wantID {
+				t.Errorf("GetWorkspaceID() = %q, want %q", got, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestGetWorkspaceID_Unauthorized(t *testing.T) {
+	server := makeUnauthorizedWorkspaceServer(t)
+	defer server.Close()
+
+	t.Run("no hint returns error", func(t *testing.T) {
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		_, err := c.GetWorkspaceID()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "not authorized") {
+			t.Errorf("error %q should mention authorization", err.Error())
+		}
+	})
+
+	t.Run("with hint returns error", func(t *testing.T) {
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+		c.Workspace = "my-team"
+
+		_, err := c.GetWorkspaceID()
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "not authorized") {
+			t.Errorf("error %q should mention authorization", err.Error())
+		}
+	})
 }
