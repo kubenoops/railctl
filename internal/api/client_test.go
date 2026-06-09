@@ -363,7 +363,7 @@ func TestGetWorkspaceID_Unauthorized(t *testing.T) {
 		}
 	})
 
-	t.Run("with hint returns error mentioning workspace", func(t *testing.T) {
+	t.Run("with hint returns error", func(t *testing.T) {
 		c := NewClient("test-token")
 		c.apiURL = server.URL
 		c.Workspace = "my-team"
@@ -372,8 +372,8 @@ func TestGetWorkspaceID_Unauthorized(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
-		if !strings.Contains(err.Error(), "my-team") {
-			t.Errorf("error %q should mention the requested workspace", err.Error())
+		if !strings.Contains(err.Error(), "not authorized") {
+			t.Errorf("error %q should mention authorization", err.Error())
 		}
 	})
 }

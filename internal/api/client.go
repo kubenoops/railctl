@@ -370,9 +370,6 @@ func (c *Client) GetWorkspaceID() (string, error) {
 	data, err := c.execute(workspaceQuery, nil)
 	if err != nil {
 		if strings.Contains(err.Error(), "Not Authorized") {
-			if hint != "" {
-				return "", fmt.Errorf("workspace %q requested but token is not authorized to list workspaces: %w", hint, err)
-			}
 			return "", fmt.Errorf("token is not authorized to list workspaces: %w", err)
 		}
 		return "", err
