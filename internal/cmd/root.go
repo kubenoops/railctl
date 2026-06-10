@@ -34,6 +34,7 @@ var (
 		client := api.NewClient(tkn)
 		client.Debug = debug
 		client.Workspace = getWorkspace()
+		client.WarnFn = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
 		return client
 	}
 )

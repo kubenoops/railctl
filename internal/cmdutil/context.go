@@ -96,17 +96,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 		env, err := resolver.ResolveEnvironment(environments, opts.EnvironmentName)
 		if err != nil {
-			found := false
-			for _, e := range environments {
-				if e.ID == opts.EnvironmentName {
-					env = e
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("environment '%s' not found in project '%s'", opts.EnvironmentName, project.Name)
-			}
+			return nil, fmt.Errorf("environment '%s' not found in project '%s'", opts.EnvironmentName, project.Name)
 		}
 		ctx.Environment = env
 	}

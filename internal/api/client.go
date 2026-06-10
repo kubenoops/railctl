@@ -56,6 +56,7 @@ type Client struct {
 	tokenTypeErr         error           // non-nil when all detection probes failed
 	cachedWorkspaceData  json.RawMessage // workspace response cached by detectTokenType() probe 1
 	Debug                bool            // enable debug logging
+	WarnFn               func(string)    // called with warning messages; set by cmd layer to write to stderr
 }
 
 // NewClient creates a new Railway API client with the given token.
@@ -534,8 +535,8 @@ func (c *Client) detectTokenType() (TokenType, error) {
 	if err == nil {
 		c.tokenType = TokenTypeWorkspace
 		c.WorkspaceScopedToken = true
-		if c.Workspace != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace\n")
+		if c.Workspace != "" && c.WarnFn != nil {
+			c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace")
 		}
 		c.tokenTypeResolved = true
 		return c.tokenType, nil
@@ -554,8 +555,8 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		if resp.ProjectToken.ProjectID != "" {
 			c.tokenType = TokenTypeProject
 			c.ProjectToken = c.token
-			if c.Workspace != "" {
-				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project\n")
+			if c.Workspace != "" && c.WarnFn != nil {
+				c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project")
 			}
 			c.tokenTypeResolved = true
 			return c.tokenType, nil

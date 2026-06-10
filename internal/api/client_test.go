@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -536,21 +537,16 @@ func TestGetWorkspaceID_Warnings(t *testing.T) {
 			c.apiURL = server.URL
 			c.Workspace = tt.workspaceHint
 
-			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
+			var buf bytes.Buffer
+			c.WarnFn = func(msg string) { fmt.Fprintln(&buf, msg) }
 
 			_, _ = c.GetWorkspaceID()
 
-			w.Close()
-			os.Stderr = oldStderr
-			var buf bytes.Buffer
-			io.Copy(&buf, r)
 			stderr := buf.String()
 
 			if tt.wantWarnContain != "" {
 				if !strings.Contains(stderr, tt.wantWarnContain) {
-					t.Errorf("expected stderr to contain %q, got: %q", tt.wantWarnContain, stderr)
+					t.Errorf("expected warning to contain %q, got: %q", tt.wantWarnContain, stderr)
 				}
 			} else {
 				if strings.Contains(stderr, "Warning:") {

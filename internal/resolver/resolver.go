@@ -69,12 +69,19 @@ func ResolveProject(projects []types.Project, name string) (types.Project, error
 	}
 }
 
-// ResolveEnvironment resolves an environment name to an Environment.
-// Priority: exact match > single substring match > error.
+// ResolveEnvironment resolves an environment name or ID to an Environment.
+// Priority: exact name match > ID match > single substring match > error.
 func ResolveEnvironment(environments []types.Environment, name string) (types.Environment, error) {
-	// Try exact match first
+	// Try exact name match first
 	for _, env := range environments {
 		if env.Name == name {
+			return env, nil
+		}
+	}
+
+	// Try ID match (project tokens pass environment IDs directly)
+	for _, env := range environments {
+		if env.ID == name {
 			return env, nil
 		}
 	}
