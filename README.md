@@ -59,6 +59,16 @@ sudo mv railctl /usr/local/bin/
 export RAILWAY_TOKEN=your-api-token-here
 ```
 
+railctl automatically detects the token type on first use — no extra configuration needed:
+
+| Token type | What it can do |
+|------------|----------------|
+| **Account** (personal) | Access all workspaces and projects |
+| **Workspace-scoped** | Access all projects in one workspace |
+| **Project-scoped** | Access one project and environment |
+
+When using a workspace or project token, flags like `-w`, `-p`, and `-e` (or their `RAILCTL_*` equivalents) are ignored with a warning — the scope is already baked into the token.
+
 ### Basic Usage
 
 ```bash
