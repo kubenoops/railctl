@@ -446,13 +446,6 @@ func (c *Client) GetWorkspaceID() (string, error) {
 
 	// Non-account tokens have no resolvable workspace ID
 	if c.WorkspaceScopedToken || c.ProjectToken != "" {
-		if c.Workspace != "" {
-			if c.WorkspaceScopedToken {
-				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace\n")
-			} else {
-				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project\n")
-			}
-		}
 		c.workspaceResolved = true
 		return "", nil
 	}
@@ -541,6 +534,9 @@ func (c *Client) detectTokenType() (TokenType, error) {
 	if err == nil {
 		c.tokenType = TokenTypeWorkspace
 		c.WorkspaceScopedToken = true
+		if c.Workspace != "" {
+			fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace\n")
+		}
 		c.tokenTypeResolved = true
 		return c.tokenType, nil
 	}
@@ -555,6 +551,9 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		if jsonErr := json.Unmarshal(data, &resp); jsonErr == nil && resp.ProjectToken.ProjectID != "" {
 			c.tokenType = TokenTypeProject
 			c.ProjectToken = c.token
+			if c.Workspace != "" {
+				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project\n")
+			}
 			c.tokenTypeResolved = true
 			return c.tokenType, nil
 		}
