@@ -55,6 +55,8 @@ type Client struct {
 	tokenTypeResolved    bool            // true after detectTokenType() completes (success or auth failure)
 	tokenTypeErr         error           // non-nil when all detection probes failed
 	cachedWorkspaceData  json.RawMessage // workspace response cached by detectTokenType() probe 1
+	cachedProjectID      string          // project ID cached by detectTokenType() probe 3
+	cachedEnvironmentID  string          // environment ID cached by detectTokenType() probe 3
 	Debug                bool            // enable debug logging
 	WarnFn               func(string)    // called with warning messages; set by cmd layer to write to stderr
 }
@@ -555,6 +557,8 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		if resp.ProjectToken.ProjectID != "" {
 			c.tokenType = TokenTypeProject
 			c.ProjectToken = c.token
+			c.cachedProjectID = resp.ProjectToken.ProjectID
+			c.cachedEnvironmentID = resp.ProjectToken.EnvironmentID
 			if c.Workspace != "" && c.WarnFn != nil {
 				c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project")
 			}
@@ -589,20 +593,19 @@ type projectTokenContext struct {
 }
 
 // GetProjectContext returns the project and environment IDs associated with the project token.
-// Triggers lazy token-type detection if not yet resolved.
+// Triggers lazy token-type detection if not yet resolved; IDs are cached from probe 3 so no
+// additional API call is made.
 func (c *Client) GetProjectContext() (projectID, environmentID string, err error) {
 	if !c.tokenTypeResolved {
 		if _, err := c.detectTokenType(); err != nil {
 			return "", "", err
 		}
 	}
-	data, err := c.execute(projectTokenQuery, nil)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to get project context: %w", err)
+	if c.tokenTypeErr != nil {
+		return "", "", c.tokenTypeErr
 	}
-	var resp projectTokenContext
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return "", "", fmt.Errorf("failed to parse project context: %w", err)
+	if c.tokenType != TokenTypeProject {
+		return "", "", fmt.Errorf("token is not a project-scoped token")
 	}
-	return resp.ProjectToken.ProjectID, resp.ProjectToken.EnvironmentID, nil
+	return c.cachedProjectID, c.cachedEnvironmentID, nil
 }

@@ -484,6 +484,53 @@ func TestDetectTokenType_CachedAfterFirstCall(t *testing.T) {
 	}
 }
 
+func TestGetProjectContext(t *testing.T) {
+	t.Run("returns cached IDs without extra API call", func(t *testing.T) {
+		callCount := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			callCount++
+			w.Header().Set("Content-Type", "application/json")
+			if r.Header.Get("Project-Access-Token") != "" {
+				w.Write([]byte(`{"data":{"projectToken":{"projectId":"proj-123","environmentId":"env-456"}}}`))
+			} else {
+				w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
+			}
+		}))
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		projectID, environmentID, err := c.GetProjectContext()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if projectID != "proj-123" {
+			t.Errorf("projectID = %q, want %q", projectID, "proj-123")
+		}
+		if environmentID != "env-456" {
+			t.Errorf("environmentID = %q, want %q", environmentID, "env-456")
+		}
+		// 3 probes during detection, 0 extra calls for GetProjectContext (uses cache)
+		if callCount != 3 {
+			t.Errorf("expected 3 API calls (detection only), got %d", callCount)
+		}
+	})
+
+	t.Run("returns error for non-project token", func(t *testing.T) {
+		server := makeTokenDetectionServer(t, false, true, false) // workspace token
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		_, _, err := c.GetProjectContext()
+		if err == nil {
+			t.Fatal("expected error for workspace token, got nil")
+		}
+	})
+}
+
 func TestGetWorkspaceID_ProjectToken(t *testing.T) {
 	// Project token: GetWorkspaceID should return "" with no error.
 	server := makeTokenDetectionServer(t, false, false, true)
