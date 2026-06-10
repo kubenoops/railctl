@@ -64,20 +64,20 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 		return nil, fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
 	}
 
-	projects, err := client.ListProjects()
-	if err != nil {
-		return nil, err
-	}
-
-	project, err := resolver.ResolveProject(projects, opts.ProjectName)
-	if err != nil {
-		if len(projects) == 0 && client.IsProjectToken() {
-			p, directErr := client.GetProject(opts.ProjectName)
-			if directErr != nil {
-				return nil, fmt.Errorf("failed to fetch project from token: %w", directErr)
-			}
-			project = p
-		} else {
+	var project types.Project
+	if client.IsProjectToken() {
+		p, err := client.GetProject(opts.ProjectName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch project from token: %w", err)
+		}
+		project = p
+	} else {
+		projects, err := client.ListProjects()
+		if err != nil {
+			return nil, err
+		}
+		project, err = resolver.ResolveProject(projects, opts.ProjectName)
+		if err != nil {
 			return nil, fmt.Errorf("project '%s' not found", opts.ProjectName)
 		}
 	}

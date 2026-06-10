@@ -548,7 +548,10 @@ func (c *Client) detectTokenType() (TokenType, error) {
 	data, err = c.executeWithProjectTokenHeader(projectTokenQuery, nil)
 	if err == nil {
 		var resp projectTokenContext
-		if jsonErr := json.Unmarshal(data, &resp); jsonErr == nil && resp.ProjectToken.ProjectID != "" {
+		if jsonErr := json.Unmarshal(data, &resp); jsonErr != nil {
+			return TokenTypeUnknown, fmt.Errorf("failed to parse project token response: %w", jsonErr)
+		}
+		if resp.ProjectToken.ProjectID != "" {
 			c.tokenType = TokenTypeProject
 			c.ProjectToken = c.token
 			if c.Workspace != "" {
