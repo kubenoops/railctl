@@ -558,6 +558,8 @@ func (c *Client) detectTokenType() (TokenType, error) {
 			c.tokenTypeResolved = true
 			return c.tokenType, nil
 		}
+	} else if !strings.Contains(err.Error(), errMsgNotAuthorized) {
+		return TokenTypeUnknown, err
 	}
 
 	// Cache the failure so subsequent calls don't re-probe.
