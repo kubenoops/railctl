@@ -330,12 +330,9 @@ func (c *Client) execute(query string, variables map[string]any) (json.RawMessag
 // executeWithProjectTokenHeader fires one request using c.token as a Project-Access-Token
 // header instead of Authorization: Bearer. Used only during token-type detection.
 func (c *Client) executeWithProjectTokenHeader(query string, variables map[string]any) (json.RawMessage, error) {
-	savedToken := c.token
 	savedProjectToken := c.ProjectToken
 	c.ProjectToken = c.token
-	c.token = ""
 	defer func() {
-		c.token = savedToken
 		c.ProjectToken = savedProjectToken
 	}()
 	return c.execute(query, variables)
