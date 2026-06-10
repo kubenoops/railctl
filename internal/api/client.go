@@ -381,8 +381,8 @@ query {
 `
 
 // detectWorkspaceTokenQuery is the minimal probe used to check if a token can list
-// projects (which workspace-scoped tokens can do, unlike account tokens that hit "Not Authorized"
-// on the me query).
+// projects. Workspace-scoped tokens succeed here (probe 2), having already failed the
+// me.workspaces query in probe 1 which only account tokens can answer.
 const detectWorkspaceTokenQuery = `
 query {
 	projects {
@@ -589,7 +589,13 @@ type projectTokenContext struct {
 }
 
 // GetProjectContext returns the project and environment IDs associated with the project token.
+// Triggers lazy token-type detection if not yet resolved.
 func (c *Client) GetProjectContext() (projectID, environmentID string, err error) {
+	if !c.tokenTypeResolved {
+		if _, err := c.detectTokenType(); err != nil {
+			return "", "", err
+		}
+	}
 	data, err := c.execute(projectTokenQuery, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get project context: %w", err)

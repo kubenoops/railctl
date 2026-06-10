@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -461,9 +462,9 @@ func TestGetWorkspaceID(t *testing.T) {
 }
 
 func TestDetectTokenType_CachedAfterFirstCall(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		callCount.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
 	}))
@@ -478,8 +479,8 @@ func TestDetectTokenType_CachedAfterFirstCall(t *testing.T) {
 	_, _ = c.GetWorkspaceID()
 
 	// Exactly 3 API calls: one probe sequence (account + workspace + project), never repeated.
-	if callCount != 3 {
-		t.Errorf("expected exactly 3 API calls (one probe sequence), got %d", callCount)
+	if got := callCount.Load(); got != 3 {
+		t.Errorf("expected exactly 3 API calls (one probe sequence), got %d", got)
 	}
 }
 

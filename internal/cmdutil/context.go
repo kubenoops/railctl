@@ -44,6 +44,8 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 	isProjectToken := client.IsProjectToken()
 
+	// --- Project resolution ---
+	var project types.Project
 	if isProjectToken {
 		projectID, environmentID, err := client.GetProjectContext()
 		if err != nil {
@@ -55,25 +57,19 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 		if opts.NeedEnvironment && opts.EnvironmentName != "" {
 			fmt.Fprintf(os.Stderr, "Warning: -e/RAILCTL_ENVIRONMENT ignored — project token is already scoped to a specific environment\n")
 		}
-		opts.ProjectName = projectID
-		if opts.NeedEnvironment && environmentID != "" {
-			opts.EnvironmentName = environmentID
-		}
-	}
-
-	// --- Project resolution (always required when opts.ProjectName is set) ---
-	if opts.ProjectName == "" {
-		return nil, fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
-	}
-
-	var project types.Project
-	if isProjectToken {
-		p, err := client.GetProject(opts.ProjectName)
+		p, err := client.GetProject(projectID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch project from token: %w", err)
 		}
 		project = p
+		opts.ProjectName = p.ID
+		if opts.NeedEnvironment && environmentID != "" {
+			opts.EnvironmentName = environmentID
+		}
 	} else {
+		if opts.ProjectName == "" {
+			return nil, fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
+		}
 		projects, err := client.ListProjects()
 		if err != nil {
 			return nil, fmt.Errorf("failed to list projects: %w", err)
