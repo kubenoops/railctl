@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/kubenoops/railctl/internal/types"
@@ -156,7 +155,12 @@ func (n projectNode) toProject() types.Project {
 }
 
 // ListProjects retrieves all projects for the resolved workspace.
+// Project-scoped tokens cannot list projects and return nil immediately.
 func (c *Client) ListProjects() ([]types.Project, error) {
+	if c.IsProjectToken() {
+		return nil, nil
+	}
+
 	workspaceID, err := c.GetWorkspaceID()
 	if err != nil {
 		return nil, err
@@ -169,9 +173,6 @@ func (c *Client) ListProjects() ([]types.Project, error) {
 
 	data, err := c.execute(listProjectsQuery, vars)
 	if err != nil {
-		if strings.Contains(err.Error(), "Not Authorized") && c.IsProjectToken() {
-			return nil, nil
-		}
 		return nil, err
 	}
 

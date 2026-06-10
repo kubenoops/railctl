@@ -48,10 +48,10 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 			return nil, fmt.Errorf("failed to get project context from token: %w", err)
 		}
 		if opts.ProjectName != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -p flag ignored — project token is already scoped to a specific project\n")
+			fmt.Fprintf(os.Stderr, "Warning: -p/RAILCTL_PROJECT ignored — project token is already scoped to a specific project\n")
 		}
 		if opts.NeedEnvironment && opts.EnvironmentName != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -e flag ignored — project token is already scoped to a specific environment\n")
+			fmt.Fprintf(os.Stderr, "Warning: -e/RAILCTL_ENVIRONMENT ignored — project token is already scoped to a specific environment\n")
 		}
 		opts.ProjectName = projectID
 		if opts.NeedEnvironment && environmentID != "" {
@@ -66,7 +66,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 	projects, err := client.ListProjects()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list projects: %w", err)
+		return nil, err
 	}
 
 	project, err := resolver.ResolveProject(projects, opts.ProjectName)

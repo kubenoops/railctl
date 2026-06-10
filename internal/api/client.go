@@ -28,6 +28,9 @@ const (
 	BackoffMultiplier = 2.0
 )
 
+// errMsgNotAuthorized is the Railway API error message for invalid or insufficient token scope.
+const errMsgNotAuthorized = "Not Authorized"
+
 // TokenType represents the detected Railway API token scope.
 type TokenType int
 
@@ -49,7 +52,8 @@ type Client struct {
 	ProjectToken         string          // set after detection when token is project-scoped
 	WorkspaceScopedToken bool            // set after detection when token is workspace-scoped
 	tokenType            TokenType       // result of detectTokenType()
-	tokenTypeResolved    bool            // true after detectTokenType() completes
+	tokenTypeResolved    bool            // true after detectTokenType() completes (success or auth failure)
+	tokenTypeErr         error           // non-nil when all detection probes failed
 	cachedWorkspaceData  json.RawMessage // workspace response cached by detectTokenType() probe 1
 	Debug                bool            // enable debug logging
 }
@@ -403,18 +407,20 @@ type workspaceResponse struct {
 
 // IsProjectToken reports whether the client is using a project-scoped token.
 // Triggers lazy token-type detection on first call.
+// Returns false if detection already failed; the error surfaces on the next real API call.
 func (c *Client) IsProjectToken() bool {
 	if !c.tokenTypeResolved {
-		c.detectTokenType() //nolint:errcheck — error surfaces on next real API call
+		c.detectTokenType() //nolint:errcheck
 	}
 	return c.ProjectToken != ""
 }
 
 // IsWorkspaceToken reports whether the client is using a workspace-scoped token.
 // Triggers lazy token-type detection on first call.
+// Returns false if detection already failed; the error surfaces on the next real API call.
 func (c *Client) IsWorkspaceToken() bool {
 	if !c.tokenTypeResolved {
-		c.detectTokenType() //nolint:errcheck — error surfaces on next real API call
+		c.detectTokenType() //nolint:errcheck
 	}
 	return c.WorkspaceScopedToken
 }
@@ -434,11 +440,18 @@ func (c *Client) GetWorkspaceID() (string, error) {
 			return "", err
 		}
 	}
+	if c.tokenTypeErr != nil {
+		return "", c.tokenTypeErr
+	}
 
 	// Non-account tokens have no resolvable workspace ID
 	if c.WorkspaceScopedToken || c.ProjectToken != "" {
-		if c.WorkspaceScopedToken && c.Workspace != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -w flag ignored — workspace token is already scoped to a specific workspace\n")
+		if c.Workspace != "" {
+			if c.WorkspaceScopedToken {
+				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project\n")
+			}
 		}
 		c.workspaceResolved = true
 		return "", nil
@@ -508,7 +521,7 @@ func joinWorkspaceNames(workspaces []workspaceEntry) string {
 //  4. All fail → error
 func (c *Client) detectTokenType() (TokenType, error) {
 	if c.tokenTypeResolved {
-		return c.tokenType, nil
+		return c.tokenType, c.tokenTypeErr
 	}
 
 	// Probe 1: account token
@@ -519,7 +532,7 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		c.tokenTypeResolved = true
 		return c.tokenType, nil
 	}
-	if !strings.Contains(err.Error(), "Not Authorized") {
+	if !strings.Contains(err.Error(), errMsgNotAuthorized) {
 		return TokenTypeUnknown, err
 	}
 
@@ -531,7 +544,7 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		c.tokenTypeResolved = true
 		return c.tokenType, nil
 	}
-	if !strings.Contains(err.Error(), "Not Authorized") {
+	if !strings.Contains(err.Error(), errMsgNotAuthorized) {
 		return TokenTypeUnknown, err
 	}
 
@@ -547,7 +560,10 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		}
 	}
 
-	return TokenTypeUnknown, fmt.Errorf("token is not authorized")
+	// Cache the failure so subsequent calls don't re-probe.
+	c.tokenTypeErr = fmt.Errorf("token is not authorized")
+	c.tokenTypeResolved = true
+	return TokenTypeUnknown, c.tokenTypeErr
 }
 
 // projectTokenQuery retrieves the project and environment IDs for a project-scoped token.
