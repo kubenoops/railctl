@@ -28,17 +28,30 @@ const (
 	BackoffMultiplier = 2.0
 )
 
+// TokenType represents the detected Railway API token scope.
+type TokenType int
+
+const (
+	TokenTypeUnknown   TokenType = iota
+	TokenTypeAccount             // personal token — can access me.workspaces
+	TokenTypeWorkspace           // workspace-scoped token — can list projects but not workspaces
+	TokenTypeProject             // project-scoped token — uses Project-Access-Token header
+)
+
 // Client provides methods for interacting with the Railway API.
 type Client struct {
 	token                string
 	apiURL               string
 	httpClient           *http.Client
-	workspaceID          string // cached resolved workspace ID
-	workspaceResolved    bool   // true after first GetWorkspaceID() call
-	Workspace            string // workspace name provided by caller (-w flag / RAILCTL_WORKSPACE)
-	ProjectToken         string // project-scoped token (uses Project-Access-Token header)
-	WorkspaceScopedToken bool   // true when using RAILWAY_WORKSPACE_TOKEN
-	Debug                bool   // enable debug logging
+	workspaceID          string          // cached resolved workspace ID
+	workspaceResolved    bool            // true after first GetWorkspaceID() call
+	Workspace            string          // workspace name provided by caller (-w flag / RAILCTL_WORKSPACE)
+	ProjectToken         string          // set after detection when token is project-scoped
+	WorkspaceScopedToken bool            // set after detection when token is workspace-scoped
+	tokenType            TokenType       // result of detectTokenType()
+	tokenTypeResolved    bool            // true after detectTokenType() completes
+	cachedWorkspaceData  json.RawMessage // workspace response cached by detectTokenType() probe 1
+	Debug                bool            // enable debug logging
 }
 
 // NewClient creates a new Railway API client with the given token.
@@ -307,6 +320,20 @@ func (c *Client) execute(query string, variables map[string]any) (json.RawMessag
 	return nil, lastErr
 }
 
+// executeWithProjectTokenHeader fires one request using c.token as a Project-Access-Token
+// header instead of Authorization: Bearer. Used only during token-type detection.
+func (c *Client) executeWithProjectTokenHeader(query string, variables map[string]any) (json.RawMessage, error) {
+	savedToken := c.token
+	savedProjectToken := c.ProjectToken
+	c.ProjectToken = c.token
+	c.token = ""
+	defer func() {
+		c.token = savedToken
+		c.ProjectToken = savedProjectToken
+	}()
+	return c.execute(query, variables)
+}
+
 // truncateBody returns the first maxLen characters of s for use in error messages.
 // It strips HTML tags and collapses whitespace for readability.
 func truncateBody(s string, maxLen int) string {
@@ -348,6 +375,19 @@ query {
 }
 `
 
+// detectWorkspaceTokenQuery is the minimal probe used to check if a token can list
+// projects (which workspace-scoped tokens can do, unlike account tokens that hit "Not Authorized"
+// on the me query).
+const detectWorkspaceTokenQuery = `
+query {
+	projects {
+		edges {
+			node { id }
+		}
+	}
+}
+`
+
 // workspaceEntry is a single workspace from the me query.
 type workspaceEntry struct {
 	ID   string `json:"id"`
@@ -362,17 +402,25 @@ type workspaceResponse struct {
 }
 
 // IsProjectToken reports whether the client is using a project-scoped token.
+// Triggers lazy token-type detection on first call.
 func (c *Client) IsProjectToken() bool {
+	if !c.tokenTypeResolved {
+		c.detectTokenType() //nolint:errcheck — error surfaces on next real API call
+	}
 	return c.ProjectToken != ""
 }
 
 // IsWorkspaceToken reports whether the client is using a workspace-scoped token.
+// Triggers lazy token-type detection on first call.
 func (c *Client) IsWorkspaceToken() bool {
+	if !c.tokenTypeResolved {
+		c.detectTokenType() //nolint:errcheck — error surfaces on next real API call
+	}
 	return c.WorkspaceScopedToken
 }
 
 // GetWorkspaceID resolves and returns the workspace ID for the current token.
-// Resolution order:
+// Triggers lazy token-type detection on first call. Resolution order:
 //  1. Cached value from a previous call
 //  2. c.Workspace (set from -w flag or RAILCTL_WORKSPACE env var) — resolved by name
 //  3. Auto-detect: use the single workspace if exactly one exists; error if multiple
@@ -381,35 +429,30 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		return c.workspaceID, nil
 	}
 
-	// Determine the workspace hint: name from caller (set via -w flag or RAILCTL_WORKSPACE env var)
-	hint := c.Workspace
+	if !c.tokenTypeResolved {
+		if _, err := c.detectTokenType(); err != nil {
+			return "", err
+		}
+	}
 
-	if c.WorkspaceScopedToken {
-		if c.Workspace != "" {
+	// Non-account tokens have no resolvable workspace ID
+	if c.WorkspaceScopedToken || c.ProjectToken != "" {
+		if c.WorkspaceScopedToken && c.Workspace != "" {
 			fmt.Fprintf(os.Stderr, "Warning: -w flag ignored — workspace token is already scoped to a specific workspace\n")
 		}
 		c.workspaceResolved = true
 		return "", nil
 	}
 
-	hint := c.Workspace
-
-	data, err := c.execute(workspaceQuery, nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "Not Authorized") {
-			return "", fmt.Errorf("token is not authorized to list workspaces: %w", err)
-		}
-		return "", err
-	}
-
+	// Use workspace data cached by detectTokenType() — avoids a second roundtrip
 	var resp workspaceResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
+	if err := json.Unmarshal(c.cachedWorkspaceData, &resp); err != nil {
 		return "", fmt.Errorf("failed to parse workspace response: %w", err)
 	}
 
 	workspaces := resp.Me.Workspaces
+	hint := c.Workspace
 
-	// If a hint was given, resolve by name using the centralized resolver.
 	if hint != "" {
 		resources := make([]resolver.Resource, len(workspaces))
 		for i, ws := range workspaces {
@@ -432,7 +475,6 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		return c.workspaceID, nil
 	}
 
-	// No hint — auto-detect
 	switch len(workspaces) {
 	case 0:
 		c.workspaceResolved = true
@@ -453,6 +495,59 @@ func joinWorkspaceNames(workspaces []workspaceEntry) string {
 		names[i] = ws.Name
 	}
 	return strings.Join(names, ", ")
+}
+
+// detectTokenType probes the Railway API to determine the token scope and caches the
+// result. It sets c.ProjectToken or c.WorkspaceScopedToken as a side-effect so all
+// subsequent calls automatically use the correct auth header.
+//
+// Probe sequence:
+//  1. Bearer + me.workspaces    → account token
+//  2. Bearer + projects listing → workspace-scoped token
+//  3. Project-Access-Token + projectToken query → project-scoped token
+//  4. All fail → error
+func (c *Client) detectTokenType() (TokenType, error) {
+	if c.tokenTypeResolved {
+		return c.tokenType, nil
+	}
+
+	// Probe 1: account token
+	data, err := c.execute(workspaceQuery, nil)
+	if err == nil {
+		c.tokenType = TokenTypeAccount
+		c.cachedWorkspaceData = data
+		c.tokenTypeResolved = true
+		return c.tokenType, nil
+	}
+	if !strings.Contains(err.Error(), "Not Authorized") {
+		return TokenTypeUnknown, err
+	}
+
+	// Probe 2: workspace-scoped token
+	_, err = c.execute(detectWorkspaceTokenQuery, nil)
+	if err == nil {
+		c.tokenType = TokenTypeWorkspace
+		c.WorkspaceScopedToken = true
+		c.tokenTypeResolved = true
+		return c.tokenType, nil
+	}
+	if !strings.Contains(err.Error(), "Not Authorized") {
+		return TokenTypeUnknown, err
+	}
+
+	// Probe 3: project-scoped token (different HTTP header)
+	data, err = c.executeWithProjectTokenHeader(projectTokenQuery, nil)
+	if err == nil {
+		var resp projectTokenContext
+		if jsonErr := json.Unmarshal(data, &resp); jsonErr == nil && resp.ProjectToken.ProjectID != "" {
+			c.tokenType = TokenTypeProject
+			c.ProjectToken = c.token
+			c.tokenTypeResolved = true
+			return c.tokenType, nil
+		}
+	}
+
+	return TokenTypeUnknown, fmt.Errorf("token is not authorized")
 }
 
 // projectTokenQuery retrieves the project and environment IDs for a project-scoped token.
