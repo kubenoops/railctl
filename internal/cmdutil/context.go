@@ -42,7 +42,9 @@ type ResolveOpts struct {
 func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 	ctx := &Context{Client: client}
 
-	if client.IsProjectToken() {
+	isProjectToken := client.IsProjectToken()
+
+	if isProjectToken {
 		projectID, environmentID, err := client.GetProjectContext()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get project context from token: %w", err)
@@ -65,7 +67,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 	}
 
 	var project types.Project
-	if client.IsProjectToken() {
+	if isProjectToken {
 		p, err := client.GetProject(opts.ProjectName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch project from token: %w", err)
@@ -74,7 +76,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 	} else {
 		projects, err := client.ListProjects()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to list projects: %w", err)
 		}
 		project, err = resolver.ResolveProject(projects, opts.ProjectName)
 		if err != nil {
