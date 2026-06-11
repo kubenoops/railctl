@@ -268,10 +268,36 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// TCP proxy changes.
+	// TCP proxy changes: check existing proxies first, delete old one if port changed.
 	if tcpChanged && cfg.Networking.TCPProxy.Port > 0 {
-		if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
-			return fmt.Errorf("creating TCP proxy: %w", err)
+		existingProxies, err := client.ListTCPProxies(envID, serviceID)
+		if err != nil {
+			return fmt.Errorf("listing TCP proxies: %w", err)
+		}
+
+		// Delete any existing proxy that doesn't match the desired port.
+		for _, tp := range existingProxies {
+			if tp.ApplicationPort != cfg.Networking.TCPProxy.Port {
+				if err := client.DeleteTCPProxy(tp.ID); err != nil {
+					return fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
+				}
+			}
+		}
+
+		// Check if desired proxy already exists.
+		proxyExists := false
+		for _, tp := range existingProxies {
+			if tp.ApplicationPort == cfg.Networking.TCPProxy.Port {
+				proxyExists = true
+				break
+			}
+		}
+
+		// Create only if it doesn't already exist.
+		if !proxyExists {
+			if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
+				return fmt.Errorf("creating TCP proxy: %w", err)
+			}
 		}
 	}
 
