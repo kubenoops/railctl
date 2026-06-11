@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/kubenoops/railctl/internal/types"
@@ -155,14 +156,14 @@ func (n projectNode) toProject() types.Project {
 }
 
 // ListProjects retrieves all projects for the resolved workspace.
-// Project-scoped tokens cannot list projects and return nil immediately.
+// Project-scoped tokens cannot list projects and return an error.
 func (c *Client) ListProjects() ([]types.Project, error) {
 	isProjectToken, err := c.IsProjectToken()
 	if err != nil {
 		return nil, err
 	}
 	if isProjectToken {
-		return nil, nil
+		return nil, fmt.Errorf("project tokens cannot list projects — the token is scoped to a single project")
 	}
 
 	workspaceID, err := c.GetWorkspaceID()
