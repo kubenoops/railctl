@@ -330,9 +330,16 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
 	}
 
-	// Domain port.
+	// Domain port: check if any live domain matches the desired port.
 	liveDomainPort := 0
-	if len(ls.Domains) > 0 {
+	for _, dom := range ls.Domains {
+		if dom.Port == d.Networking.Domain.Port {
+			liveDomainPort = dom.Port
+			break
+		}
+	}
+	// If no match found, use the first domain's port as the "current" value for the diff.
+	if liveDomainPort == 0 && len(ls.Domains) > 0 {
 		liveDomainPort = ls.Domains[0].Port
 	}
 	if d.Networking.Domain.Port != liveDomainPort {
@@ -343,9 +350,16 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		})
 	}
 
-	// TCP proxy port.
+	// TCP proxy port: check if any live proxy matches the desired port.
 	liveTCPPort := 0
-	if len(ls.TCPProxies) > 0 {
+	for _, tp := range ls.TCPProxies {
+		if tp.ApplicationPort == d.Networking.TCPProxy.Port {
+			liveTCPPort = tp.ApplicationPort
+			break
+		}
+	}
+	// If no match found, use the first proxy's port as the "current" value for the diff.
+	if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
 		liveTCPPort = ls.TCPProxies[0].ApplicationPort
 	}
 	if d.Networking.TCPProxy.Port != liveTCPPort {
