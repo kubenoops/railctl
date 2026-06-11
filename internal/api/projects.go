@@ -157,7 +157,11 @@ func (n projectNode) toProject() types.Project {
 // ListProjects retrieves all projects for the resolved workspace.
 // Project-scoped tokens cannot list projects and return nil immediately.
 func (c *Client) ListProjects() ([]types.Project, error) {
-	if c.IsProjectToken() {
+	isProjectToken, err := c.IsProjectToken()
+	if err != nil {
+		return nil, err
+	}
+	if isProjectToken {
 		return nil, nil
 	}
 

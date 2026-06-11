@@ -474,8 +474,8 @@ func TestDetectTokenType_CachedAfterFirstCall(t *testing.T) {
 	c.apiURL = server.URL
 
 	// Three separate callers that each trigger detection internally.
-	_ = c.IsProjectToken()
-	_ = c.IsWorkspaceToken()
+	_, _ = c.IsProjectToken()
+	_, _ = c.IsWorkspaceToken()
 	_, _ = c.GetWorkspaceID()
 
 	// Exactly 3 API calls: one probe sequence (account + workspace + project), never repeated.
@@ -486,9 +486,9 @@ func TestDetectTokenType_CachedAfterFirstCall(t *testing.T) {
 
 func TestGetProjectContext(t *testing.T) {
 	t.Run("returns cached IDs without extra API call", func(t *testing.T) {
-		callCount := 0
+		var callCount atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			callCount++
+			callCount.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			if r.Header.Get("Project-Access-Token") != "" {
 				w.Write([]byte(`{"data":{"projectToken":{"projectId":"proj-123","environmentId":"env-456"}}}`))
@@ -512,8 +512,8 @@ func TestGetProjectContext(t *testing.T) {
 			t.Errorf("environmentID = %q, want %q", environmentID, "env-456")
 		}
 		// 3 probes during detection, 0 extra calls for GetProjectContext (uses cache)
-		if callCount != 3 {
-			t.Errorf("expected 3 API calls (detection only), got %d", callCount)
+		if got := callCount.Load(); got != 3 {
+			t.Errorf("expected 3 API calls (detection only), got %d", got)
 		}
 	})
 

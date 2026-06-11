@@ -63,8 +63,8 @@ type MockClient struct {
 	GetWorkspaceIDFunc func() (string, error)
 
 	// Token type
-	IsProjectTokenFunc    func() bool
-	IsWorkspaceTokenFunc  func() bool
+	IsProjectTokenFunc    func() (bool, error)
+	IsWorkspaceTokenFunc  func() (bool, error)
 	GetProjectContextFunc func() (string, string, error)
 }
 
@@ -199,18 +199,18 @@ func (m *MockClient) GetWorkspaceID() (string, error) {
 	return "mock-workspace-id", nil
 }
 
-func (m *MockClient) IsProjectToken() bool {
+func (m *MockClient) IsProjectToken() (bool, error) {
 	if m.IsProjectTokenFunc != nil {
 		return m.IsProjectTokenFunc()
 	}
-	return false
+	return false, nil
 }
 
-func (m *MockClient) IsWorkspaceToken() bool {
+func (m *MockClient) IsWorkspaceToken() (bool, error) {
 	if m.IsWorkspaceTokenFunc != nil {
 		return m.IsWorkspaceTokenFunc()
 	}
-	return false
+	return false, nil
 }
 
 func (m *MockClient) GetProjectContext() (string, string, error) {

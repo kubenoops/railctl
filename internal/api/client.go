@@ -406,23 +406,31 @@ type workspaceResponse struct {
 }
 
 // IsProjectToken reports whether the client is using a project-scoped token.
-// Triggers lazy token-type detection on first call.
-// Returns false if detection already failed; the error surfaces on the next real API call.
-func (c *Client) IsProjectToken() bool {
+// Triggers lazy token-type detection on first call; detection errors are returned.
+func (c *Client) IsProjectToken() (bool, error) {
 	if !c.tokenTypeResolved {
-		c.detectTokenType() //nolint:errcheck
+		if _, err := c.detectTokenType(); err != nil {
+			return false, err
+		}
 	}
-	return c.ProjectToken != ""
+	if c.tokenTypeErr != nil {
+		return false, c.tokenTypeErr
+	}
+	return c.ProjectToken != "", nil
 }
 
 // IsWorkspaceToken reports whether the client is using a workspace-scoped token.
-// Triggers lazy token-type detection on first call.
-// Returns false if detection already failed; the error surfaces on the next real API call.
-func (c *Client) IsWorkspaceToken() bool {
+// Triggers lazy token-type detection on first call; detection errors are returned.
+func (c *Client) IsWorkspaceToken() (bool, error) {
 	if !c.tokenTypeResolved {
-		c.detectTokenType() //nolint:errcheck
+		if _, err := c.detectTokenType(); err != nil {
+			return false, err
+		}
 	}
-	return c.WorkspaceScopedToken
+	if c.tokenTypeErr != nil {
+		return false, c.tokenTypeErr
+	}
+	return c.WorkspaceScopedToken, nil
 }
 
 // GetWorkspaceID resolves and returns the workspace ID for the current token.

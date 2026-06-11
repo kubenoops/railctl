@@ -42,7 +42,10 @@ type ResolveOpts struct {
 func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 	ctx := &Context{Client: client}
 
-	isProjectToken := client.IsProjectToken()
+	isProjectToken, err := client.IsProjectToken()
+	if err != nil {
+		return nil, err
+	}
 
 	// --- Project resolution ---
 	var project types.Project
