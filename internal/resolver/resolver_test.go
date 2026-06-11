@@ -165,6 +165,47 @@ func TestResolveEnvironment_SubstringMatch(t *testing.T) {
 	}
 }
 
+func TestResolveEnvironment_IDMatch(t *testing.T) {
+	envs := []types.Environment{
+		{ID: "env-abc-123", Name: "production"},
+		{ID: "env-def-456", Name: "staging"},
+	}
+
+	result, err := ResolveEnvironment(envs, "env-def-456")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Name != "staging" {
+		t.Errorf("expected name 'staging', got '%s'", result.Name)
+	}
+}
+
+func TestResolveEnvironment_NameMatchPreferredOverID(t *testing.T) {
+	// An environment literally named like another's ID: exact name match wins.
+	envs := []types.Environment{
+		{ID: "env-1", Name: "env-2"},
+		{ID: "env-2", Name: "production"},
+	}
+
+	result, err := ResolveEnvironment(envs, "env-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ID != "env-1" {
+		t.Errorf("expected name match (ID 'env-1') to win over ID match, got ID '%s'", result.ID)
+	}
+}
+
+func TestResolveEnvironment_IDMatchEmptyList(t *testing.T) {
+	_, err := ResolveEnvironment(nil, "env-abc-123")
+	if err == nil {
+		t.Fatal("expected error for empty environment list, got nil")
+	}
+	if _, ok := err.(ErrNotFound); !ok {
+		t.Fatalf("expected ErrNotFound, got %T", err)
+	}
+}
+
 func TestResolveEnvironment_NotFound(t *testing.T) {
 	envs := []types.Environment{
 		{ID: "1", Name: "production"},
