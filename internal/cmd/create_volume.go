@@ -71,7 +71,10 @@ func runCreateVolume(cmd *cobra.Command, args []string) error {
 	// Rename the volume if the user provided a name and Railway generated a different one.
 	if volumeName != "" && vol.Name != volumeName {
 		if err := client.UpdateVolumeName(vol.ID, volumeName); err != nil {
-			return fmt.Errorf("volume created but failed to set name: %w", err)
+			fmt.Printf("Volume '%s' created and attached to service '%s' at '%s'\n",
+				vol.Name, ctx.Service.Name, volumeMountPath)
+			fmt.Printf("Volume ID: %s\n", vol.ID)
+			return fmt.Errorf("failed to rename volume to '%s': %w", volumeName, err)
 		}
 		vol.Name = volumeName
 	}
