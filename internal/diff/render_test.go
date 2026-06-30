@@ -205,3 +205,16 @@ func TestRender_WithColor(t *testing.T) {
 		t.Errorf("expected reset ANSI code in output")
 	}
 }
+
+func TestIsColorSupported(t *testing.T) {
+	// A bytes.Buffer is not a terminal, so auto-detection returns false.
+	if IsColorSupported(&bytes.Buffer{}) {
+		t.Error("expected false for a non-terminal writer")
+	}
+
+	// NO_COLOR disables color even when set to an empty value.
+	t.Setenv("NO_COLOR", "")
+	if IsColorSupported(&bytes.Buffer{}) {
+		t.Error("NO_COLOR should disable color")
+	}
+}

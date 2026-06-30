@@ -433,8 +433,8 @@ func TestCompute_NoPrune(t *testing.T) {
 
 func TestCompute_Mixed(t *testing.T) {
 	desired := []config.ServiceConfig{
-		{Name: "new-service", Image: "redis:7"},                  // create
-		{Name: "web", Image: "node:20-alpine"},                   // update (image change)
+		{Name: "new-service", Image: "redis:7"}, // create
+		{Name: "web", Image: "node:20-alpine"},  // update (image change)
 		// old-service not in desired — should be deleted with prune=true
 	}
 	live := []LiveService{
@@ -575,5 +575,63 @@ func TestChangeSet_Summary(t *testing.T) {
 	expectedEmpty := "0 to create, 0 to update, 0 to delete"
 	if empty.Summary() != expectedEmpty {
 		t.Errorf("Summary() = %q, expected %q", empty.Summary(), expectedEmpty)
+	}
+}
+
+func TestCompute_CreateShowsRegistryMaskedPassword(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:  "api",
+			Image: "ghcr.io/acme/api:v1",
+			Registry: config.RegistryConfig{
+				Username: "acme-bot",
+				Password: "ghp_supersecrettoken",
+			},
+		},
+	}
+
+	cs := Compute(desired, nil, false)
+	if len(cs.Changes) != 1 || cs.Changes[0].Type != ChangeCreate {
+		t.Fatalf("expected 1 create change, got %+v", cs.Changes)
+	}
+
+	var sawUser, sawPass bool
+	for _, f := range cs.Changes[0].Fields {
+		switch f.Path {
+		case "registry.username":
+			sawUser = true
+			if f.Desired != "acme-bot" {
+				t.Errorf("registry.username should be shown in clear, got %q", f.Desired)
+			}
+		case "registry.password":
+			sawPass = true
+			if f.Desired == "ghp_supersecrettoken" {
+				t.Error("registry.password must be masked, not shown in clear")
+			}
+			if f.Desired == "" {
+				t.Error("registry.password should be present (masked), not empty")
+			}
+		}
+	}
+	if !sawUser {
+		t.Error("expected registry.username field in create diff")
+	}
+	if !sawPass {
+		t.Error("expected registry.password field in create diff")
+	}
+}
+
+func TestCompute_NoRegistryNoRegistryFields(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{Name: "pg", Image: "postgres:16"}, // public image, no registry block
+	}
+	cs := Compute(desired, nil, false)
+	if len(cs.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(cs.Changes))
+	}
+	for _, f := range cs.Changes[0].Fields {
+		if f.Path == "registry.username" || f.Path == "registry.password" {
+			t.Errorf("did not expect registry field %q for a service without a registry block", f.Path)
+		}
 	}
 }

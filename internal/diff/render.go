@@ -46,27 +46,20 @@ func Render(cs *ChangeSet, w io.Writer, useColor bool) {
 	}
 }
 
-// IsColorSupported returns true if the given writer appears to be an
-// interactive terminal that supports ANSI colors. Returns false if the
-// NO_COLOR env var is set, if the writer is not an *os.File, or if the
-// file descriptor does not point to a character device (e.g., pipe or file).
+// IsColorSupported reports whether w is an interactive terminal that supports
+// ANSI colors. Returns false if NO_COLOR is set, w is not an *os.File, or the
+// file descriptor is not a character device (e.g. a pipe or file). Callers can
+// force color on regardless via the --color flag.
 func IsColorSupported(w io.Writer) bool {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		return false
 	}
-
-	// Only *os.File can be a terminal.
 	f, ok := w.(*os.File)
 	if !ok {
 		return false
 	}
-
-	// Check if the fd is a character device (terminal).
 	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (info.Mode() & os.ModeCharDevice) != 0
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // changeLabel returns the human-readable label for a change type.

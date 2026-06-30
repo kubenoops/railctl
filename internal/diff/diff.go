@@ -169,6 +169,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 	// Variables.
 	fields = append(fields, variableCreateFields(d.Variables)...)
 
+	// Registry credentials.
+	fields = append(fields, registryCreateFields(d.Registry)...)
+
 	// Volume.
 	if d.Volume.MountPath != "" {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Desired: d.Volume.MountPath})
@@ -232,6 +235,20 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 			desired = api.MaskValue(desired)
 		}
 		fields = append(fields, FieldDiff{Path: "variables." + k, Desired: desired})
+	}
+	return fields
+}
+
+// registryCreateFields returns FieldDiffs for the private-registry credentials,
+// password masked. Create-only: Railway never returns stored credentials, so
+// they can't be diffed — apply re-applies them on every update instead.
+func registryCreateFields(r config.RegistryConfig) []FieldDiff {
+	var fields []FieldDiff
+	if r.Username != "" {
+		fields = append(fields, FieldDiff{Path: "registry.username", Desired: r.Username})
+	}
+	if r.Password != "" {
+		fields = append(fields, FieldDiff{Path: "registry.password", Desired: api.MaskValue(r.Password)})
 	}
 	return fields
 }

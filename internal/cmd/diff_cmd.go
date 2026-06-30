@@ -15,6 +15,7 @@ var (
 	diffFile    string
 	diffPrune   bool
 	diffNoColor bool
+	diffColor   bool
 )
 
 var diffCmd = &cobra.Command{
@@ -38,6 +39,7 @@ func init() {
 	diffCmd.Flags().StringVarP(&diffFile, "file", "f", "", "Path to YAML config file or directory (required)")
 	diffCmd.Flags().BoolVar(&diffPrune, "prune", false, "Include unmanaged resources in diff")
 	diffCmd.Flags().BoolVar(&diffNoColor, "no-color", false, "Disable colored output")
+	diffCmd.Flags().BoolVar(&diffColor, "color", false, "Force colored output even when not a terminal (e.g. CI)")
 	_ = diffCmd.MarkFlagRequired("file")
 	rootCmd.AddCommand(diffCmd)
 }
@@ -92,7 +94,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	cs := diff.Compute(cfg.Services, liveServices, diffPrune)
 
 	// 6. Render diff with colors.
-	useColor := diff.IsColorSupported(os.Stdout) && !diffNoColor
+	useColor := !diffNoColor && (diffColor || diff.IsColorSupported(os.Stdout))
 	diff.Render(cs, os.Stdout, useColor)
 
 	// 7. Print summary.
