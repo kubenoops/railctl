@@ -46,15 +46,13 @@ func Render(cs *ChangeSet, w io.Writer, useColor bool) {
 	}
 }
 
-// IsColorSupported reports whether to use ANSI colors for w. NO_COLOR disables;
-// FORCE_COLOR/CLICOLOR_FORCE force-enable (the CI escape hatch for non-TTY logs
-// like GitHub Actions); otherwise color only on a terminal (character device).
+// IsColorSupported reports whether w is an interactive terminal that supports
+// ANSI colors. Returns false if NO_COLOR is set, w is not an *os.File, or the
+// file descriptor is not a character device (e.g. a pipe or file). Callers can
+// force color on regardless via the --color flag.
 func IsColorSupported(w io.Writer) bool {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		return false
-	}
-	if forceColorEnabled() {
-		return true
 	}
 	f, ok := w.(*os.File)
 	if !ok {
@@ -62,17 +60,6 @@ func IsColorSupported(w io.Writer) bool {
 	}
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
-
-// forceColorEnabled reports whether FORCE_COLOR/CLICOLOR_FORCE is set to a
-// non-"0" value ("0" falls back to auto-detection).
-func forceColorEnabled() bool {
-	for _, name := range []string{"FORCE_COLOR", "CLICOLOR_FORCE"} {
-		if v, ok := os.LookupEnv(name); ok && v != "0" {
-			return true
-		}
-	}
-	return false
 }
 
 // changeLabel returns the human-readable label for a change type.

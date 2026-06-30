@@ -2,7 +2,6 @@ package diff
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 )
@@ -207,57 +206,15 @@ func TestRender_WithColor(t *testing.T) {
 	}
 }
 
-func TestIsColorSupported_EnvOverrides(t *testing.T) {
-	vars := []string{"NO_COLOR", "FORCE_COLOR", "CLICOLOR_FORCE"}
-
-	// Snapshot and restore the environment around the whole test. We manage
-	// these vars directly (not via t.Setenv) because some cases require a var
-	// to be genuinely unset, which an empty value can't represent for NO_COLOR.
-	saved := make(map[string]*string, len(vars))
-	for _, k := range vars {
-		if v, ok := os.LookupEnv(k); ok {
-			vv := v
-			saved[k] = &vv
-		}
-	}
-	t.Cleanup(func() {
-		for _, k := range vars {
-			if v, ok := saved[k]; ok {
-				os.Setenv(k, *v)
-			} else {
-				os.Unsetenv(k)
-			}
-		}
-	})
-
-	// A bytes.Buffer is not an *os.File, so auto-detection yields false.
-	// This isolates the env-var resolution logic from TTY detection.
-	var buf bytes.Buffer
-
-	tests := []struct {
-		name string
-		env  map[string]string
-		want bool
-	}{
-		{"no env, non-tty", nil, false},
-		{"FORCE_COLOR=1", map[string]string{"FORCE_COLOR": "1"}, true},
-		{"CLICOLOR_FORCE=1", map[string]string{"CLICOLOR_FORCE": "1"}, true},
-		{"FORCE_COLOR=0 falls back to auto-detect", map[string]string{"FORCE_COLOR": "0"}, false},
-		{"NO_COLOR wins over FORCE_COLOR", map[string]string{"NO_COLOR": "1", "FORCE_COLOR": "1"}, false},
-		{"NO_COLOR empty still disables", map[string]string{"NO_COLOR": ""}, false},
+func TestIsColorSupported(t *testing.T) {
+	// A bytes.Buffer is not a terminal, so auto-detection returns false.
+	if IsColorSupported(&bytes.Buffer{}) {
+		t.Error("expected false for a non-terminal writer")
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			for _, k := range vars {
-				os.Unsetenv(k)
-			}
-			for k, v := range tc.env {
-				os.Setenv(k, v)
-			}
-			if got := IsColorSupported(&buf); got != tc.want {
-				t.Errorf("IsColorSupported() = %v, want %v", got, tc.want)
-			}
-		})
+	// NO_COLOR disables color even when set to an empty value.
+	t.Setenv("NO_COLOR", "")
+	if IsColorSupported(&bytes.Buffer{}) {
+		t.Error("NO_COLOR should disable color")
 	}
 }
