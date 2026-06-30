@@ -527,3 +527,97 @@ func TestApply_Mixed(t *testing.T) {
 		t.Errorf("expected no errors, got %v", result.Errors)
 	}
 }
+
+func TestApply_UpdateReconcilesRegistryCredsWithoutImageChange(t *testing.T) {
+	var updateCalled bool
+	var capturedImage string
+	var capturedCreds *api.RegistryCredentials
+
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "api"}}, nil
+		},
+		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
+			updateCalled = true
+			capturedImage = image
+			capturedCreds = creds
+			return nil
+		},
+		SetVariablesFunc: func(projectID, envID, serviceID string, variables map[string]string, skipDeploys bool) error {
+			return nil
+		},
+	}
+
+	// Only a variable changed — the image is NOT in the change set.
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "api",
+				Fields:      []diff.FieldDiff{{Path: "variables.FOO", Desired: "bar"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"api": {
+			Name:     "api",
+			Image:    "ghcr.io/acme/api:v1",
+			Registry: config.RegistryConfig{Username: "acme-bot", Password: "ghp_token"},
+		},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+
+	if !updateCalled {
+		t.Fatal("expected UpdateServiceInstance to be called to reconcile registry creds")
+	}
+	if capturedImage != "" {
+		t.Errorf("image should be empty when only creds are reconciled, got %q", capturedImage)
+	}
+	if capturedCreds == nil || capturedCreds.Username != "acme-bot" || capturedCreds.Password != "ghp_token" {
+		t.Errorf("expected real registry creds to be pushed, got %+v", capturedCreds)
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+}
+
+func TestApply_UpdateNoRegistryNoImageSkipsUpdateServiceInstance(t *testing.T) {
+	var updateCalled bool
+
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "pg"}}, nil
+		},
+		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
+			updateCalled = true
+			return nil
+		},
+		SetVariablesFunc: func(projectID, envID, serviceID string, variables map[string]string, skipDeploys bool) error {
+			return nil
+		},
+	}
+
+	// Variable-only change, public image (no registry block).
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "pg",
+				Fields:      []diff.FieldDiff{{Path: "variables.FOO", Desired: "bar"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"pg": {Name: "pg", Image: "postgres:16"},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+
+	if updateCalled {
+		t.Error("UpdateServiceInstance should not be called when neither image nor registry creds need updating")
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+}

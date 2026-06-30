@@ -121,15 +121,7 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	fmt.Fprintf(w, "Creating service '%s'...\n", name)
 
-	// Build registry credentials.
-	var creds *api.RegistryCredentials
-	if cfg.Registry.Username != "" && cfg.Registry.Password != "" {
-		creds = &api.RegistryCredentials{
-			Username: cfg.Registry.Username,
-			Password: cfg.Registry.Password,
-		}
-	}
-
+	creds := registryCreds(cfg.Registry)
 	svc, err := client.CreateService(projectID, envID, name, cfg.Image, creds)
 	if err != nil {
 		return fmt.Errorf("creating service: %w", err)
@@ -196,17 +188,18 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Update image.
-	if imageChanged {
-		var creds *api.RegistryCredentials
-		if cfg.Registry.Username != "" && cfg.Registry.Password != "" {
-			creds = &api.RegistryCredentials{
-				Username: cfg.Registry.Username,
-				Password: cfg.Registry.Password,
-			}
+	// Update the image and/or registry credentials. Railway doesn't return
+	// stored credentials, so the diff can't detect stale/missing ones — re-apply
+	// them on every update (even without an image change) so an expired or
+	// never-set token can't leave the service unable to pull its private image.
+	creds := registryCreds(cfg.Registry)
+	if imageChanged || creds != nil {
+		image := ""
+		if imageChanged {
+			image = newImage
 		}
-		if err := client.UpdateServiceInstance(serviceID, envID, newImage, creds); err != nil {
-			return fmt.Errorf("updating image: %w", err)
+		if err := client.UpdateServiceInstance(serviceID, envID, image, creds); err != nil {
+			return fmt.Errorf("updating image/registry credentials: %w", err)
 		}
 	}
 
@@ -368,6 +361,15 @@ func findServiceID(services []types.ServiceDetail, name string) (string, error) 
 		}
 	}
 	return "", fmt.Errorf("service %q not found", name)
+}
+
+// registryCreds returns the configured private-registry credentials, or nil
+// when either field is unset.
+func registryCreds(r config.RegistryConfig) *api.RegistryCredentials {
+	if r.Username == "" || r.Password == "" {
+		return nil
+	}
+	return &api.RegistryCredentials{Username: r.Username, Password: r.Password}
 }
 
 // buildDeployConfigFromConfig extracts pointer args from a DeployConfig for
