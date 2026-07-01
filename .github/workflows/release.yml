@@ -15,7 +15,7 @@ jobs:
   pre-release:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -47,7 +47,7 @@ jobs:
           LATEST="${{ steps.latest.outputs.tag }}"
           echo "## Changes since ${LATEST}" > notes.md
           echo "" >> notes.md
-          
+
           if git rev-parse "$LATEST" >/dev/null 2>&1; then
             git log ${LATEST}..HEAD --pretty=format:"- %s (%h)" >> notes.md
           else
@@ -55,19 +55,19 @@ jobs:
           fi
 
       - name: Create pre-release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }} (pre-release)
-          body_path: notes.md
-          prerelease: true
-          generate_release_notes: false
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }} (pre-release)" \
+            --notes-file notes.md \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   # Build and attach artifacts when release is published (promoted from pre-release)
   build-release:
     if: github.event_name == 'release' && !github.event.release.prerelease
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -75,7 +75,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: '1.22'
+          go-version: "1.22"
           cache: true
 
       - name: Build for all platforms
@@ -84,10 +84,12 @@ jobs:
           make build-all VERSION=$VERSION
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: |
-            dist/railctl-linux-amd64
-            dist/railctl-linux-arm64
-            dist/railctl-darwin-amd64
-            dist/railctl-darwin-arm64
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/railctl-linux-amd64 \
+            dist/railctl-linux-arm64 \
+            dist/railctl-darwin-amd64 \
+            dist/railctl-darwin-arm64 \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
