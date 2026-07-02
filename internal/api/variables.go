@@ -20,9 +20,8 @@ query VariablesForServiceDeployment(
 }
 `
 
-// rawVariablesQuery returns variables with references left unrendered (${{...}}
-// kept intact rather than resolved). Used by the diff so a config template
-// compares against the same template stored on Railway, not its resolved value.
+// rawVariablesQuery returns variables unrendered (${{...}} kept intact), so the
+// diff compares config templates against the stored template, not resolved values.
 const rawVariablesQuery = `
 query RawVariables(
 	$projectId: String!
@@ -180,8 +179,7 @@ func (c *Client) GetVariables(projectID, environmentID, serviceID string) (map[s
 	return resp.VariablesForServiceDeployment, nil
 }
 
-// GetRawVariables retrieves a service's variables with references unrendered
-// (${{...}} kept intact). Used by the diff to compare against config templates.
+// GetRawVariables retrieves a service's variables unrendered (${{...}} kept intact).
 func (c *Client) GetRawVariables(projectID, environmentID, serviceID string) (map[string]string, error) {
 	data, err := c.execute(rawVariablesQuery, map[string]any{
 		"projectId":     projectID,

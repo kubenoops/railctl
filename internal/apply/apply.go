@@ -188,8 +188,8 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Send the image and/or registry credentials. Railway doesn't return stored
-	// creds, so re-assert declared creds on any update (not just image changes).
+	// Railway doesn't return stored creds, so re-assert declared creds on any
+	// update, not just image changes.
 	creds := registryCreds(cfg.Registry)
 	if imageChanged || creds != nil {
 		image := ""
@@ -209,9 +209,8 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Update variables. Read real values from the config, not the diff fields:
-	// those are masked for sensitive keys, and writing the mask would clobber
-	// the secret with "**************".
+	// Read values from config, not the diff fields: those mask secrets, and
+	// writing the mask would clobber the real value.
 	if len(varAdded) > 0 {
 		realVars := make(map[string]string, len(varAdded))
 		for k := range varAdded {
@@ -298,12 +297,9 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Deploy the staged changes. serviceInstanceUpdate and SetVariables
-	// (skipDeploys=true) only stage changes on Railway — they don't roll out — so
-	// without this the service keeps running the old deployment. Image, deploy
-	// config, variables and volume are staged and need a deploy; networking
-	// (domain/TCP) applies immediately and doesn't. One deploy covers all staged
-	// changes. (Create is covered by serviceCreate's initial deployment.)
+	// serviceInstanceUpdate and SetVariables only stage changes — deploy to roll
+	// them out. Networking (domain/TCP) applies immediately, so it's excluded.
+	// (Create rolls out via serviceCreate.)
 	if imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0 || volumeChanged {
 		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
 			return fmt.Errorf("triggering deployment: %w", err)

@@ -46,10 +46,9 @@ func Render(cs *ChangeSet, w io.Writer, useColor bool) {
 	}
 }
 
-// IsColorSupported reports whether w is an interactive terminal that supports
-// ANSI colors. Returns false if NO_COLOR is set, w is not an *os.File, or the
-// file descriptor is not a character device (e.g. a pipe or file). Callers can
-// force color on regardless via the --color flag.
+// IsColorSupported reports whether w is a terminal that supports ANSI colors.
+// False if NO_COLOR is set or w isn't a character device (pipe/file). The
+// --color flag forces it on regardless.
 func IsColorSupported(w io.Writer) bool {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
 		return false

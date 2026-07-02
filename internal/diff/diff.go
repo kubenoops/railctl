@@ -240,7 +240,7 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 }
 
 // registryFields returns registry-credential fields (password masked), or nil
-// unless both are set (matching registryCreds, so no partial credential shows).
+// unless both are set (matching registryCreds).
 func registryFields(r config.RegistryConfig) []FieldDiff {
 	if r.Username == "" || r.Password == "" {
 		return nil
@@ -385,8 +385,8 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		})
 	}
 
-	// Registry credentials can't be diffed (Railway never returns them), so when
-	// the service is already changing, surface and re-assert the declared creds.
+	// Creds can't be diffed (never returned), so re-assert them when the service
+	// is already changing.
 	if len(fields) > 0 {
 		fields = append(fields, registryFields(d.Registry)...)
 	}
