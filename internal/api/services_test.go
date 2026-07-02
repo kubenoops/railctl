@@ -379,6 +379,104 @@ func TestUpdateServiceInstance(t *testing.T) {
 	}
 }
 
+// regCredsFromInput extracts input.registryCredentials from a captured GraphQL
+// request's variables.input, or nil if absent.
+func regCredsFromInput(input map[string]any) map[string]any {
+	rc, ok := input["registryCredentials"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return rc
+}
+
+// captureInputServer returns a test server that records the GraphQL request's
+// variables.input into *got and replies with resp.
+func captureInputServer(got *map[string]any, resp string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables struct {
+				Input map[string]any `json:"input"`
+			} `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		*got = req.Variables.Input
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(resp))
+	}))
+}
+
+func TestCreateService_SendsRegistryCredentials(t *testing.T) {
+	var input map[string]any
+	server := captureInputServer(&input, `{"data":{"serviceCreate":{"id":"svc-1","name":"api"}}}`)
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+	if _, err := client.CreateService("proj-1", "env-1", "api", "ghcr.io/acme/api:v1",
+		&RegistryCredentials{Username: "acme-bot", Password: "ghp_token"}); err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	rc := regCredsFromInput(input)
+	if rc == nil {
+		t.Fatal("expected registryCredentials in serviceCreate input")
+	}
+	if rc["username"] != "acme-bot" || rc["password"] != "ghp_token" {
+		t.Errorf("registryCredentials mismatch: got %v", rc)
+	}
+}
+
+func TestCreateService_OmitsRegistryCredentialsWhenNil(t *testing.T) {
+	var input map[string]any
+	server := captureInputServer(&input, `{"data":{"serviceCreate":{"id":"svc-1","name":"pg"}}}`)
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+	if _, err := client.CreateService("proj-1", "env-1", "pg", "postgres:16", nil); err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+	if rc := regCredsFromInput(input); rc != nil {
+		t.Errorf("did not expect registryCredentials for nil creds, got %v", rc)
+	}
+}
+
+func TestUpdateServiceInstance_SendsRegistryCredentials(t *testing.T) {
+	var input map[string]any
+	server := captureInputServer(&input, `{"data":{"serviceInstanceUpdate":true}}`)
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+	if err := client.UpdateServiceInstance("svc-1", "env-1", "ghcr.io/acme/api:v2",
+		&RegistryCredentials{Username: "acme-bot", Password: "ghp_token"}); err != nil {
+		t.Fatalf("UpdateServiceInstance: %v", err)
+	}
+
+	rc := regCredsFromInput(input)
+	if rc == nil {
+		t.Fatal("expected registryCredentials in serviceInstanceUpdate input")
+	}
+	if rc["username"] != "acme-bot" || rc["password"] != "ghp_token" {
+		t.Errorf("registryCredentials mismatch: got %v", rc)
+	}
+}
+
+func TestUpdateServiceInstance_OmitsRegistryCredentialsWhenNil(t *testing.T) {
+	var input map[string]any
+	server := captureInputServer(&input, `{"data":{"serviceInstanceUpdate":true}}`)
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+	if err := client.UpdateServiceInstance("svc-1", "env-1", "nginx:alpine", nil); err != nil {
+		t.Fatalf("UpdateServiceInstance: %v", err)
+	}
+	if rc := regCredsFromInput(input); rc != nil {
+		t.Errorf("did not expect registryCredentials for nil creds, got %v", rc)
+	}
+}
+
 func TestDeployServiceInstance(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
