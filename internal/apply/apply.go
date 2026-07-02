@@ -190,7 +190,8 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	// Send registry credentials with the image so the deployment can pull a
 	// private image. Only on an image change: serviceInstanceUpdate redeploys,
-	// and Railway never returns creds, so a creds-only change can't be diffed.
+	// and railctl doesn't read credentials back, so a creds-only change can't
+	// be diffed.
 	if imageChanged {
 		if err := client.UpdateServiceInstance(serviceID, envID, newImage, registryCreds(cfg.Registry)); err != nil {
 			return fmt.Errorf("updating image: %w", err)

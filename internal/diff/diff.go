@@ -241,8 +241,8 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 
 // registryCreateFields returns registry-credential fields (password masked) for
 // the create diff, or nil unless both are set (matching registryCreds, so no
-// partial credential is shown). Create-only: Railway never returns stored
-// credentials, so they can't be diffed on update.
+// partial credential is shown). Create-only: railctl doesn't read credentials
+// back, so they can't be diffed on update.
 func registryCreateFields(r config.RegistryConfig) []FieldDiff {
 	if r.Username == "" || r.Password == "" {
 		return nil
