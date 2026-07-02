@@ -635,3 +635,24 @@ func TestCompute_NoRegistryNoRegistryFields(t *testing.T) {
 		}
 	}
 }
+
+func TestCompute_CreatePartialRegistryOmitted(t *testing.T) {
+	// Only a username (no password) — apply would send no creds, so the diff
+	// must not show a partial, misleading credential.
+	desired := []config.ServiceConfig{
+		{
+			Name:     "api",
+			Image:    "ghcr.io/acme/api:v1",
+			Registry: config.RegistryConfig{Username: "acme-bot"},
+		},
+	}
+	cs := Compute(desired, nil, false)
+	if len(cs.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(cs.Changes))
+	}
+	for _, f := range cs.Changes[0].Fields {
+		if f.Path == "registry.username" || f.Path == "registry.password" {
+			t.Errorf("did not expect registry field %q when creds are incomplete", f.Path)
+		}
+	}
+}

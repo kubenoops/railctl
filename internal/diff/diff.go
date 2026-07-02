@@ -240,17 +240,19 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 }
 
 // registryCreateFields returns FieldDiffs for the private-registry credentials,
-// password masked. Create-only: Railway never returns stored credentials, so
-// they can't be diffed — apply re-applies them on every update instead.
+// password masked, or nil unless both fields are set — matching apply's
+// registryCreds, which only sends credentials when both are present (so the
+// diff never shows a partial credential that apply would silently drop).
+// Create-only: Railway never returns stored credentials, so they can't be
+// diffed; apply sends them alongside the image on update.
 func registryCreateFields(r config.RegistryConfig) []FieldDiff {
-	var fields []FieldDiff
-	if r.Username != "" {
-		fields = append(fields, FieldDiff{Path: "registry.username", Desired: r.Username})
+	if r.Username == "" || r.Password == "" {
+		return nil
 	}
-	if r.Password != "" {
-		fields = append(fields, FieldDiff{Path: "registry.password", Desired: api.MaskValue(r.Password)})
+	return []FieldDiff{
+		{Path: "registry.username", Desired: r.Username},
+		{Path: "registry.password", Desired: api.MaskValue(r.Password)},
 	}
-	return fields
 }
 
 // buildDeleteChange builds a ChangeDelete ResourceChange from a live service.
