@@ -764,3 +764,62 @@ func TestApply_UpdateNoDeployForNetworkingOnly(t *testing.T) {
 		t.Error("networking-only change must not trigger a deploy (applies immediately)")
 	}
 }
+
+func TestApply_UpdateNetworkingWithRegistryDoesNotStageOrDeploy(t *testing.T) {
+	// Networking-only drift on a service with a registry block must not stage creds
+	// (nothing would deploy them) nor trigger a deploy.
+	credsStaged := false
+	deployCalled := false
+	port := 8080
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{ServiceDomains: []api.ServiceDomain{{ID: "dom-1", TargetPort: &port}}}, nil
+		},
+		UpdateServiceDomainPortFunc: func(domainID string, targetPort int) error { return nil },
+		UpdateServiceInstanceFunc:   func(s, e, i string, c *api.RegistryCredentials) error { credsStaged = true; return nil },
+		DeployServiceInstanceFunc:   func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{
+			{Path: "networking.domain.port", Current: "3000", Desired: "8080"},
+			{Path: "registry.username", Desired: "user"},
+		},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {
+		Name: "web", Image: "node:20",
+		Registry:   config.RegistryConfig{Username: "user", Password: "pass"},
+		Networking: config.NetworkingConfig{Domain: config.DomainConfig{Port: 8080}},
+	}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if credsStaged {
+		t.Error("must not stage credentials on a networking-only change (they would strand as a pending change)")
+	}
+	if deployCalled {
+		t.Error("networking-only change must not trigger a deploy even with a registry block")
+	}
+}
+
+func TestApply_UpdateNoDeployForVolumeOnly(t *testing.T) {
+	// The volume branch only warns and stages nothing, so a volume-only diff must
+	// not redeploy (it would never converge and churn forever).
+	deployCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
+		},
+		DeployServiceInstanceFunc: func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "db",
+		Fields: []diff.FieldDiff{{Path: "volume.mountPath", Current: "/old", Desired: "/data"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"db": {Name: "db", Image: "postgres:16"}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if deployCalled {
+		t.Error("volume-only change must not trigger a deploy (nothing is staged)")
+	}
+}

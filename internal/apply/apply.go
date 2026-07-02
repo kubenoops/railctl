@@ -188,10 +188,14 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Railway doesn't return stored creds, so re-assert declared creds on any
-	// update, not just image changes.
+	// Only staged changes need a deploy. Networking applies immediately and the
+	// volume branch stages nothing, so neither is included.
+	needsDeploy := imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0
+
+	// Creds are write-only, so re-assert them — but only when a deploy will roll
+	// them out (they're used at image-pull time), else they'd strand as pending.
 	creds := registryCreds(cfg.Registry)
-	if imageChanged || creds != nil {
+	if imageChanged || (creds != nil && needsDeploy) {
 		image := ""
 		if imageChanged {
 			image = newImage
@@ -297,10 +301,8 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// serviceInstanceUpdate and SetVariables only stage changes — deploy to roll
-	// them out. Networking (domain/TCP) applies immediately, so it's excluded.
-	// (Create rolls out via serviceCreate.)
-	if imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0 || volumeChanged {
+	// Roll out the staged changes (create rolls out via serviceCreate).
+	if needsDeploy {
 		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
 			return fmt.Errorf("triggering deployment: %w", err)
 		}

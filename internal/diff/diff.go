@@ -395,33 +395,35 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 }
 
 // compareDeployConfig compares desired and live deploy configurations.
+// compareDeployConfig treats a zero-value field as unmanaged (like the create
+// path), so an undeclared field never diffs against or overwrites Railway's defaults.
 func compareDeployConfig(d config.DeployConfig, l LiveDeployConfig) []FieldDiff {
 	var fields []FieldDiff
 
-	if d.StartCommand != l.StartCommand {
+	if d.StartCommand != "" && d.StartCommand != l.StartCommand {
 		fields = append(fields, FieldDiff{Path: "deploy.startCommand", Current: l.StartCommand, Desired: d.StartCommand})
 	}
-	if d.RestartPolicy != l.RestartPolicy {
+	if d.RestartPolicy != "" && d.RestartPolicy != l.RestartPolicy {
 		fields = append(fields, FieldDiff{Path: "deploy.restartPolicy", Current: l.RestartPolicy, Desired: d.RestartPolicy})
 	}
-	if d.MaxRetries != l.MaxRetries {
+	if d.MaxRetries != 0 && d.MaxRetries != l.MaxRetries {
 		fields = append(fields, FieldDiff{
 			Path:    "deploy.maxRetries",
 			Current: fmt.Sprintf("%d", l.MaxRetries),
 			Desired: fmt.Sprintf("%d", d.MaxRetries),
 		})
 	}
-	if d.Replicas != l.Replicas {
+	if d.Replicas != 0 && d.Replicas != l.Replicas {
 		fields = append(fields, FieldDiff{
 			Path:    "deploy.replicas",
 			Current: fmt.Sprintf("%d", l.Replicas),
 			Desired: fmt.Sprintf("%d", d.Replicas),
 		})
 	}
-	if d.HealthcheckPath != l.HealthcheckPath {
+	if d.HealthcheckPath != "" && d.HealthcheckPath != l.HealthcheckPath {
 		fields = append(fields, FieldDiff{Path: "deploy.healthcheckPath", Current: l.HealthcheckPath, Desired: d.HealthcheckPath})
 	}
-	if d.HealthcheckTimeout != l.HealthcheckTimeout {
+	if d.HealthcheckTimeout != 0 && d.HealthcheckTimeout != l.HealthcheckTimeout {
 		fields = append(fields, FieldDiff{
 			Path:    "deploy.healthcheckTimeout",
 			Current: fmt.Sprintf("%d", l.HealthcheckTimeout),

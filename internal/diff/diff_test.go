@@ -734,3 +734,27 @@ func TestCompute_DeployConfigConvergesWhenLiveMatches(t *testing.T) {
 		t.Errorf("expected no changes when live deploy config matches, got %+v", cs.Changes)
 	}
 }
+
+func TestCompute_DeployConfigUndeclaredFieldsUnmanaged(t *testing.T) {
+	// A config with no deploy fields must not diff against Railway's defaults —
+	// otherwise it perma-diffs and apply overwrites them with zeros (e.g. 0 replicas).
+	desired := []config.ServiceConfig{
+		{Name: "api", Image: "ghcr.io/acme/api:v1"},
+	}
+	live := []LiveService{
+		{
+			Name:  "api",
+			Image: "ghcr.io/acme/api:v1",
+			Deploy: LiveDeployConfig{
+				Replicas:      1,
+				RestartPolicy: "ON_FAILURE",
+				MaxRetries:    10,
+			},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 0 {
+		t.Errorf("expected no changes for a config with no deploy block, got %+v", cs.Changes)
+	}
+}
