@@ -27,6 +27,7 @@ to match the desired state.
 | `--await`         |       | Wait for deployments to reach terminal status    |
 | `--await-timeout` |       | Timeout in seconds for --await (default: 600)    |
 | `--no-color`      |       | Disable colored output                           |
+| `--color`         |       | Force colored output even when not a terminal (CI) |
 | `--project`       | `-p`  | Project name (overrides config file)             |
 | `--environment`   | `-e`  | Environment name (overrides config file)         |
 
@@ -46,6 +47,7 @@ no changes, 1 if differences exist (useful for CI/CD).
 | `--file`     | `-f`  | Path to YAML config file or directory (required) |
 | `--prune`    |       | Include unmanaged resources in diff              |
 | `--no-color` |       | Disable colored output                           |
+| `--color`    |       | Force colored output even when not a terminal (CI) |
 
 ## Config File Schema
 
