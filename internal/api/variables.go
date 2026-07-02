@@ -187,14 +187,14 @@ func (c *Client) GetRawVariables(projectID, environmentID, serviceID string) (ma
 		"serviceId":     serviceID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to execute raw variables query: %w", err)
 	}
 
 	var resp struct {
 		Variables map[string]string `json:"variables"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to unmarshal raw variables: %w", err)
 	}
 	if resp.Variables == nil {
 		return make(map[string]string), nil
