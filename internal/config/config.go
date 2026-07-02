@@ -75,12 +75,12 @@ type legacyConfig struct {
 		Image string `yaml:"image"`
 	} `yaml:"service"`
 	Deploy struct {
-		StartCommand             string `yaml:"startCommand"`
-		RestartPolicyType        string `yaml:"restartPolicyType"`
-		RestartPolicyMaxRetries  int    `yaml:"restartPolicyMaxRetries"`
-		NumReplicas              int    `yaml:"numReplicas"`
-		HealthcheckPath          string `yaml:"healthcheckPath"`
-		HealthcheckTimeout       int    `yaml:"healthcheckTimeout"`
+		StartCommand            string `yaml:"startCommand"`
+		RestartPolicyType       string `yaml:"restartPolicyType"`
+		RestartPolicyMaxRetries int    `yaml:"restartPolicyMaxRetries"`
+		NumReplicas             int    `yaml:"numReplicas"`
+		HealthcheckPath         string `yaml:"healthcheckPath"`
+		HealthcheckTimeout      int    `yaml:"healthcheckTimeout"`
 	} `yaml:"deploy"`
 	Domain struct {
 		Port int `yaml:"port"`
@@ -91,6 +91,10 @@ type legacyConfig struct {
 	Volume struct {
 		MountPath string `yaml:"mountPath"`
 	} `yaml:"volume"`
+	Registry struct {
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+	} `yaml:"registry"`
 	Variables map[string]string `yaml:"variables"`
 }
 
@@ -113,10 +117,14 @@ func convertLegacy(data []byte) (*Config, error) {
 			HealthcheckTimeout: legacy.Deploy.HealthcheckTimeout,
 		},
 		Networking: NetworkingConfig{
-			Domain: DomainConfig{Port: legacy.Domain.Port},
+			Domain:   DomainConfig{Port: legacy.Domain.Port},
 			TCPProxy: TCPProxyConfig{Port: legacy.Networking.TCPProxyPort},
 		},
-		Volume:    VolumeConfig{MountPath: legacy.Volume.MountPath},
+		Volume: VolumeConfig{MountPath: legacy.Volume.MountPath},
+		Registry: RegistryConfig{
+			Username: legacy.Registry.Username,
+			Password: legacy.Registry.Password,
+		},
 		Variables: legacy.Variables,
 	}
 

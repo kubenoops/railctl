@@ -188,13 +188,16 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Send registry credentials with the image so the deployment can pull a
-	// private image. Only on an image change: serviceInstanceUpdate redeploys,
-	// and railctl doesn't read credentials back, so a creds-only change can't
-	// be diffed.
-	if imageChanged {
-		if err := client.UpdateServiceInstance(serviceID, envID, newImage, registryCreds(cfg.Registry)); err != nil {
-			return fmt.Errorf("updating image: %w", err)
+	// Send the image and/or registry credentials. Railway doesn't return stored
+	// creds, so re-assert declared creds on any update (not just image changes).
+	creds := registryCreds(cfg.Registry)
+	if imageChanged || creds != nil {
+		image := ""
+		if imageChanged {
+			image = newImage
+		}
+		if err := client.UpdateServiceInstance(serviceID, envID, image, creds); err != nil {
+			return fmt.Errorf("updating image/registry credentials: %w", err)
 		}
 	}
 
@@ -206,9 +209,15 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Update variables.
+	// Update variables. Read real values from the config, not the diff fields:
+	// those are masked for sensitive keys, and writing the mask would clobber
+	// the secret with "**************".
 	if len(varAdded) > 0 {
-		if err := client.SetVariables(projectID, envID, serviceID, varAdded, true); err != nil {
+		realVars := make(map[string]string, len(varAdded))
+		for k := range varAdded {
+			realVars[k] = cfg.Variables[k]
+		}
+		if err := client.SetVariables(projectID, envID, serviceID, realVars, true); err != nil {
 			return fmt.Errorf("setting variables: %w", err)
 		}
 	}
@@ -286,6 +295,18 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
 				return fmt.Errorf("creating TCP proxy: %w", err)
 			}
+		}
+	}
+
+	// Deploy the staged changes. serviceInstanceUpdate and SetVariables
+	// (skipDeploys=true) only stage changes on Railway — they don't roll out — so
+	// without this the service keeps running the old deployment. Image, deploy
+	// config, variables and volume are staged and need a deploy; networking
+	// (domain/TCP) applies immediately and doesn't. One deploy covers all staged
+	// changes. (Create is covered by serviceCreate's initial deployment.)
+	if imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0 || volumeChanged {
+		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
+			return fmt.Errorf("triggering deployment: %w", err)
 		}
 	}
 

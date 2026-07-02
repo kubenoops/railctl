@@ -631,126 +631,46 @@ func TestServiceNodeToServiceDetail(t *testing.T) {
 		want  types.ServiceDetail
 	}{
 		{
-			name: "service with image source",
+			name: "service with image source and deploy config",
 			node: serviceNode{
 				ID:        "service-1",
 				Name:      "web",
 				Icon:      "🌐",
 				UpdatedAt: now,
-				ServiceInstances: struct {
-					Edges []struct {
-						Node struct {
-							ID            string `json:"id"`
-							EnvironmentID string `json:"environmentId"`
-							StartCommand  string `json:"startCommand"`
-							Source        struct {
-								Image string `json:"image"`
-								Repo  string `json:"repo"`
-							} `json:"source"`
-							LatestDeployment *struct {
-								ID                string    `json:"id"`
-								Status            string    `json:"status"`
-								CreatedAt         time.Time `json:"createdAt"`
-								Meta              any       `json:"meta"`
-								DeploymentStopped bool      `json:"deploymentStopped"`
-							} `json:"latestDeployment"`
-							ActiveDeployments []struct {
-								ID     string `json:"id"`
-								Status string `json:"status"`
-							} `json:"activeDeployments"`
-						} `json:"node"`
-					} `json:"edges"`
-				}{
-					Edges: []struct {
-						Node struct {
-							ID            string `json:"id"`
-							EnvironmentID string `json:"environmentId"`
-							StartCommand  string `json:"startCommand"`
-							Source        struct {
-								Image string `json:"image"`
-								Repo  string `json:"repo"`
-							} `json:"source"`
-							LatestDeployment *struct {
-								ID                string    `json:"id"`
-								Status            string    `json:"status"`
-								CreatedAt         time.Time `json:"createdAt"`
-								Meta              any       `json:"meta"`
-								DeploymentStopped bool      `json:"deploymentStopped"`
-							} `json:"latestDeployment"`
-							ActiveDeployments []struct {
-								ID     string `json:"id"`
-								Status string `json:"status"`
-							} `json:"activeDeployments"`
-						} `json:"node"`
-					}{
-						{
-							Node: struct {
-								ID            string `json:"id"`
-								EnvironmentID string `json:"environmentId"`
-								StartCommand  string `json:"startCommand"`
-								Source        struct {
-									Image string `json:"image"`
-									Repo  string `json:"repo"`
-								} `json:"source"`
-								LatestDeployment *struct {
-									ID                string    `json:"id"`
-									Status            string    `json:"status"`
-									CreatedAt         time.Time `json:"createdAt"`
-									Meta              any       `json:"meta"`
-									DeploymentStopped bool      `json:"deploymentStopped"`
-								} `json:"latestDeployment"`
-								ActiveDeployments []struct {
-									ID     string `json:"id"`
-									Status string `json:"status"`
-								} `json:"activeDeployments"`
-							}{
-								ID:            "instance-1",
-								EnvironmentID: "env-1",
-								StartCommand:  "npm start",
-								Source: struct {
-									Image string `json:"image"`
-									Repo  string `json:"repo"`
-								}{
-									Image: "nginx:latest",
-									Repo:  "",
-								},
-								LatestDeployment: &struct {
-									ID                string    `json:"id"`
-									Status            string    `json:"status"`
-									CreatedAt         time.Time `json:"createdAt"`
-									Meta              any       `json:"meta"`
-									DeploymentStopped bool      `json:"deploymentStopped"`
-								}{
-									ID:                "deploy-1",
-									Status:            "SUCCESS",
-									CreatedAt:         now,
-									Meta:              map[string]any{},
-									DeploymentStopped: false,
-								},
-								ActiveDeployments: []struct {
-									ID     string `json:"id"`
-									Status string `json:"status"`
-								}{
-									{ID: "deploy-1", Status: "SUCCESS"},
-								},
-							},
-						},
+				ServiceInstances: serviceInstances{Edges: []serviceInstanceEdge{{Node: serviceInstanceNode{
+					ID:                      "instance-1",
+					EnvironmentID:           "env-1",
+					StartCommand:            "npm start",
+					RestartPolicyType:       "ON_FAILURE",
+					RestartPolicyMaxRetries: 10,
+					NumReplicas:             2,
+					HealthcheckPath:         "/health",
+					HealthcheckTimeout:      30,
+					Source:                  serviceInstanceSource{Image: "nginx:latest"},
+					LatestDeployment: &serviceInstanceDeployment{
+						ID: "deploy-1", Status: "SUCCESS", CreatedAt: now, Meta: map[string]any{},
 					},
-				},
+					ActiveDeployments: []serviceInstanceDeployment{{ID: "deploy-1", Status: "SUCCESS"}},
+				}}}},
 			},
 			envID: "env-1",
 			want: types.ServiceDetail{
-				ID:           "service-1",
-				Name:         "web",
-				Icon:         "🌐",
-				UpdatedAt:    now,
-				InstanceID:   "instance-1",
-				StartCommand: "npm start",
-				Source:       "nginx:latest",
-				SourceType:   "image",
-				Status:       "SUCCESS",
-				DeploymentID: "deploy-1",
-				DeployedAt:   now,
+				ID:                 "service-1",
+				Name:               "web",
+				Icon:               "🌐",
+				UpdatedAt:          now,
+				InstanceID:         "instance-1",
+				StartCommand:       "npm start",
+				RestartPolicy:      "ON_FAILURE",
+				MaxRetries:         10,
+				Replicas:           2,
+				HealthcheckPath:    "/health",
+				HealthcheckTimeout: 30,
+				Source:             "nginx:latest",
+				SourceType:         "image",
+				Status:             "SUCCESS",
+				DeploymentID:       "deploy-1",
+				DeployedAt:         now,
 			},
 		},
 		{
@@ -760,92 +680,12 @@ func TestServiceNodeToServiceDetail(t *testing.T) {
 				Name:      "api",
 				Icon:      "⚙️",
 				UpdatedAt: now,
-				ServiceInstances: struct {
-					Edges []struct {
-						Node struct {
-							ID            string `json:"id"`
-							EnvironmentID string `json:"environmentId"`
-							StartCommand  string `json:"startCommand"`
-							Source        struct {
-								Image string `json:"image"`
-								Repo  string `json:"repo"`
-							} `json:"source"`
-							LatestDeployment *struct {
-								ID                string    `json:"id"`
-								Status            string    `json:"status"`
-								CreatedAt         time.Time `json:"createdAt"`
-								Meta              any       `json:"meta"`
-								DeploymentStopped bool      `json:"deploymentStopped"`
-							} `json:"latestDeployment"`
-							ActiveDeployments []struct {
-								ID     string `json:"id"`
-								Status string `json:"status"`
-							} `json:"activeDeployments"`
-						} `json:"node"`
-					} `json:"edges"`
-				}{
-					Edges: []struct {
-						Node struct {
-							ID            string `json:"id"`
-							EnvironmentID string `json:"environmentId"`
-							StartCommand  string `json:"startCommand"`
-							Source        struct {
-								Image string `json:"image"`
-								Repo  string `json:"repo"`
-							} `json:"source"`
-							LatestDeployment *struct {
-								ID                string    `json:"id"`
-								Status            string    `json:"status"`
-								CreatedAt         time.Time `json:"createdAt"`
-								Meta              any       `json:"meta"`
-								DeploymentStopped bool      `json:"deploymentStopped"`
-							} `json:"latestDeployment"`
-							ActiveDeployments []struct {
-								ID     string `json:"id"`
-								Status string `json:"status"`
-							} `json:"activeDeployments"`
-						} `json:"node"`
-					}{
-						{
-							Node: struct {
-								ID            string `json:"id"`
-								EnvironmentID string `json:"environmentId"`
-								StartCommand  string `json:"startCommand"`
-								Source        struct {
-									Image string `json:"image"`
-									Repo  string `json:"repo"`
-								} `json:"source"`
-								LatestDeployment *struct {
-									ID                string    `json:"id"`
-									Status            string    `json:"status"`
-									CreatedAt         time.Time `json:"createdAt"`
-									Meta              any       `json:"meta"`
-									DeploymentStopped bool      `json:"deploymentStopped"`
-								} `json:"latestDeployment"`
-								ActiveDeployments []struct {
-									ID     string `json:"id"`
-									Status string `json:"status"`
-								} `json:"activeDeployments"`
-							}{
-								ID:            "instance-2",
-								EnvironmentID: "env-1",
-								StartCommand:  "go run main.go",
-								Source: struct {
-									Image string `json:"image"`
-									Repo  string `json:"repo"`
-								}{
-									Image: "",
-									Repo:  "github.com/user/repo",
-								},
-								LatestDeployment: nil,
-								ActiveDeployments: []struct {
-									ID     string `json:"id"`
-									Status string `json:"status"`
-								}{},
-							},
-						},
-					},
-				},
+				ServiceInstances: serviceInstances{Edges: []serviceInstanceEdge{{Node: serviceInstanceNode{
+					ID:            "instance-2",
+					EnvironmentID: "env-1",
+					StartCommand:  "go run main.go",
+					Source:        serviceInstanceSource{Repo: "github.com/user/repo"},
+				}}}},
 			},
 			envID: "env-1",
 			want: types.ServiceDetail{
@@ -864,7 +704,6 @@ func TestServiceNodeToServiceDetail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.node.toServiceDetail(tt.envID)
-
 			if got.ID != tt.want.ID {
 				t.Errorf("ID = %v, want %v", got.ID, tt.want.ID)
 			}
@@ -876,6 +715,21 @@ func TestServiceNodeToServiceDetail(t *testing.T) {
 			}
 			if got.SourceType != tt.want.SourceType {
 				t.Errorf("SourceType = %v, want %v", got.SourceType, tt.want.SourceType)
+			}
+			if got.RestartPolicy != tt.want.RestartPolicy {
+				t.Errorf("RestartPolicy = %v, want %v", got.RestartPolicy, tt.want.RestartPolicy)
+			}
+			if got.MaxRetries != tt.want.MaxRetries {
+				t.Errorf("MaxRetries = %v, want %v", got.MaxRetries, tt.want.MaxRetries)
+			}
+			if got.Replicas != tt.want.Replicas {
+				t.Errorf("Replicas = %v, want %v", got.Replicas, tt.want.Replicas)
+			}
+			if got.HealthcheckPath != tt.want.HealthcheckPath {
+				t.Errorf("HealthcheckPath = %v, want %v", got.HealthcheckPath, tt.want.HealthcheckPath)
+			}
+			if got.HealthcheckTimeout != tt.want.HealthcheckTimeout {
+				t.Errorf("HealthcheckTimeout = %v, want %v", got.HealthcheckTimeout, tt.want.HealthcheckTimeout)
 			}
 		})
 	}

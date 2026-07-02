@@ -164,6 +164,15 @@ Private Docker registry credentials. Required when `image` references a private 
 | `username` | string | (none)  | Registry username. Supports `$env()` expansion |
 | `password` | string | (none)  | Registry password. Supports `$env()` expansion |
 
+Both `username` and `password` must be set for credentials to be applied.
+
+Railway never returns stored credentials, so `apply` can't diff them — it
+re-applies the declared credentials on any update to the service and shows them
+(password masked) in the diff.
+
+**Removal is not supported:** the API can't clear stored credentials, so removing
+the `registry` block does not remove them from the service — use the dashboard.
+
 ## Variable Expansion
 
 ### `$env(VAR_NAME)`

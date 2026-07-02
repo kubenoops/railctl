@@ -170,7 +170,7 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 	fields = append(fields, variableCreateFields(d.Variables)...)
 
 	// Registry credentials.
-	fields = append(fields, registryCreateFields(d.Registry)...)
+	fields = append(fields, registryFields(d.Registry)...)
 
 	// Volume.
 	if d.Volume.MountPath != "" {
@@ -239,11 +239,9 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 	return fields
 }
 
-// registryCreateFields returns registry-credential fields (password masked) for
-// the create diff, or nil unless both are set (matching registryCreds, so no
-// partial credential is shown). Create-only: railctl doesn't read credentials
-// back, so they can't be diffed on update.
-func registryCreateFields(r config.RegistryConfig) []FieldDiff {
+// registryFields returns registry-credential fields (password masked), or nil
+// unless both are set (matching registryCreds, so no partial credential shows).
+func registryFields(r config.RegistryConfig) []FieldDiff {
 	if r.Username == "" || r.Password == "" {
 		return nil
 	}
@@ -385,6 +383,12 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 			Current: fmt.Sprintf("%d", liveTCPPort),
 			Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
 		})
+	}
+
+	// Registry credentials can't be diffed (Railway never returns them), so when
+	// the service is already changing, surface and re-assert the declared creds.
+	if len(fields) > 0 {
+		fields = append(fields, registryFields(d.Registry)...)
 	}
 
 	return fields

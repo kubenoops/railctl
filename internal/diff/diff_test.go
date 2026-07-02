@@ -656,3 +656,81 @@ func TestCompute_CreatePartialRegistryOmitted(t *testing.T) {
 		}
 	}
 }
+
+func TestCompute_UpdateShowsRegistryWhenOtherChanges(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:     "api",
+			Image:    "ghcr.io/acme/api:v2", // changed → triggers an update
+			Registry: config.RegistryConfig{Username: "acme-bot", Password: "ghp_token"},
+		},
+	}
+	live := []LiveService{{Name: "api", Image: "ghcr.io/acme/api:v1"}}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 1 || cs.Changes[0].Type != ChangeUpdate {
+		t.Fatalf("expected 1 update change, got %+v", cs.Changes)
+	}
+
+	var sawUser, sawPass bool
+	for _, f := range cs.Changes[0].Fields {
+		switch f.Path {
+		case "registry.username":
+			sawUser = true
+		case "registry.password":
+			sawPass = true
+			if f.Desired == "ghp_token" {
+				t.Error("registry.password must be masked in the update diff")
+			}
+		}
+	}
+	if !sawUser || !sawPass {
+		t.Error("expected registry.username and registry.password in the update diff")
+	}
+}
+
+func TestCompute_UpdateNoOtherChangesOmitsRegistry(t *testing.T) {
+	// Fully converged except (unknowable) creds — no other field differs, so the
+	// service must NOT show as an update just for registry (avoids spurious redeploy).
+	svc := config.ServiceConfig{
+		Name:     "api",
+		Image:    "ghcr.io/acme/api:v1",
+		Registry: config.RegistryConfig{Username: "acme-bot", Password: "ghp_token"},
+	}
+	live := []LiveService{{Name: "api", Image: "ghcr.io/acme/api:v1"}}
+
+	cs := Compute([]config.ServiceConfig{svc}, live, false)
+	if len(cs.Changes) != 0 {
+		t.Errorf("expected no changes for a converged service, got %+v", cs.Changes)
+	}
+}
+
+func TestCompute_DeployConfigConvergesWhenLiveMatches(t *testing.T) {
+	// Live now carries deploy config (restartPolicy/maxRetries/etc.), so a service
+	// whose live deploy config already matches desired shows no deploy diff.
+	desired := []config.ServiceConfig{
+		{
+			Name:  "api",
+			Image: "ghcr.io/acme/api:v1",
+			Deploy: config.DeployConfig{
+				RestartPolicy: "ON_FAILURE",
+				MaxRetries:    10,
+			},
+		},
+	}
+	live := []LiveService{
+		{
+			Name:  "api",
+			Image: "ghcr.io/acme/api:v1",
+			Deploy: LiveDeployConfig{
+				RestartPolicy: "ON_FAILURE",
+				MaxRetries:    10,
+			},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 0 {
+		t.Errorf("expected no changes when live deploy config matches, got %+v", cs.Changes)
+	}
+}

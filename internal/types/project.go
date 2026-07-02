@@ -51,21 +51,26 @@ type TCPProxy struct {
 
 // ServiceDetail represents detailed service information.
 type ServiceDetail struct {
-	ID              string          `json:"id" yaml:"id"`
-	Name            string          `json:"name" yaml:"name"`
-	Icon            string          `json:"icon,omitempty" yaml:"icon,omitempty"`
-	Source          string          `json:"source,omitempty" yaml:"source,omitempty"`
-	SourceType      string          `json:"sourceType,omitempty" yaml:"sourceType,omitempty"`
-	InstanceID      string          `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
-	StartCommand    string          `json:"startCommand,omitempty" yaml:"startCommand,omitempty"`
-	UpdatedAt       time.Time       `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
-	Status          string          `json:"status,omitempty" yaml:"status,omitempty"`
-	DeploymentID    string          `json:"deploymentId,omitempty" yaml:"deploymentId,omitempty"`
-	DeployedAt      time.Time       `json:"deployedAt,omitempty" yaml:"deployedAt,omitempty"`
-	DeploymentError string          `json:"deploymentError,omitempty" yaml:"deploymentError,omitempty"`
-	ServiceDomains  []ServiceDomain `json:"serviceDomains,omitempty" yaml:"serviceDomains,omitempty"`
-	CustomDomains   []CustomDomain  `json:"customDomains,omitempty" yaml:"customDomains,omitempty"`
-	TCPProxies      []TCPProxy      `json:"tcpProxies,omitempty" yaml:"tcpProxies,omitempty"`
+	ID                 string          `json:"id" yaml:"id"`
+	Name               string          `json:"name" yaml:"name"`
+	Icon               string          `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Source             string          `json:"source,omitempty" yaml:"source,omitempty"`
+	SourceType         string          `json:"sourceType,omitempty" yaml:"sourceType,omitempty"`
+	InstanceID         string          `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
+	StartCommand       string          `json:"startCommand,omitempty" yaml:"startCommand,omitempty"`
+	RestartPolicy      string          `json:"restartPolicy,omitempty" yaml:"restartPolicy,omitempty"`
+	MaxRetries         int             `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	Replicas           int             `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	HealthcheckPath    string          `json:"healthcheckPath,omitempty" yaml:"healthcheckPath,omitempty"`
+	HealthcheckTimeout int             `json:"healthcheckTimeout,omitempty" yaml:"healthcheckTimeout,omitempty"`
+	UpdatedAt          time.Time       `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
+	Status             string          `json:"status,omitempty" yaml:"status,omitempty"`
+	DeploymentID       string          `json:"deploymentId,omitempty" yaml:"deploymentId,omitempty"`
+	DeployedAt         time.Time       `json:"deployedAt,omitempty" yaml:"deployedAt,omitempty"`
+	DeploymentError    string          `json:"deploymentError,omitempty" yaml:"deploymentError,omitempty"`
+	ServiceDomains     []ServiceDomain `json:"serviceDomains,omitempty" yaml:"serviceDomains,omitempty"`
+	CustomDomains      []CustomDomain  `json:"customDomains,omitempty" yaml:"customDomains,omitempty"`
+	TCPProxies         []TCPProxy      `json:"tcpProxies,omitempty" yaml:"tcpProxies,omitempty"`
 }
 
 // EnvironmentCount returns the number of environments in the project.

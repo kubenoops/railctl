@@ -24,6 +24,11 @@ query($projectId: String!) {
 								id
 								environmentId
 								startCommand
+								restartPolicyType
+								restartPolicyMaxRetries
+								numReplicas
+								healthcheckPath
+								healthcheckTimeout
 								source {
 									image
 									repo
@@ -61,6 +66,11 @@ query($id: String!) {
 					id
 					environmentId
 					startCommand
+					restartPolicyType
+					restartPolicyMaxRetries
+					numReplicas
+					healthcheckPath
+					healthcheckTimeout
 					source {
 						image
 						repo
@@ -170,36 +180,53 @@ type buildLogsResponse struct {
 	} `json:"buildLogs"`
 }
 
+// serviceInstanceSource is the image/repo source of a service instance.
+type serviceInstanceSource struct {
+	Image string `json:"image"`
+	Repo  string `json:"repo"`
+}
+
+// serviceInstanceDeployment is a deployment referenced by a service instance.
+type serviceInstanceDeployment struct {
+	ID                string    `json:"id"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"createdAt"`
+	Meta              any       `json:"meta"`
+	DeploymentStopped bool      `json:"deploymentStopped"`
+}
+
+// serviceInstanceNode is one service instance (per environment) in a service response.
+type serviceInstanceNode struct {
+	ID                      string                      `json:"id"`
+	EnvironmentID           string                      `json:"environmentId"`
+	StartCommand            string                      `json:"startCommand"`
+	RestartPolicyType       string                      `json:"restartPolicyType"`
+	RestartPolicyMaxRetries int                         `json:"restartPolicyMaxRetries"`
+	NumReplicas             int                         `json:"numReplicas"`
+	HealthcheckPath         string                      `json:"healthcheckPath"`
+	HealthcheckTimeout      int                         `json:"healthcheckTimeout"`
+	Source                  serviceInstanceSource       `json:"source"`
+	LatestDeployment        *serviceInstanceDeployment  `json:"latestDeployment"`
+	ActiveDeployments       []serviceInstanceDeployment `json:"activeDeployments"`
+}
+
+// serviceInstanceEdge wraps a service instance node in the GraphQL edges list.
+type serviceInstanceEdge struct {
+	Node serviceInstanceNode `json:"node"`
+}
+
+// serviceInstances is the GraphQL edges collection of service instances.
+type serviceInstances struct {
+	Edges []serviceInstanceEdge `json:"edges"`
+}
+
 // serviceNode represents the raw service data from GraphQL.
 type serviceNode struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	Icon             string    `json:"icon"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-	ServiceInstances struct {
-		Edges []struct {
-			Node struct {
-				ID            string `json:"id"`
-				EnvironmentID string `json:"environmentId"`
-				StartCommand  string `json:"startCommand"`
-				Source        struct {
-					Image string `json:"image"`
-					Repo  string `json:"repo"`
-				} `json:"source"`
-				LatestDeployment *struct {
-					ID                string    `json:"id"`
-					Status            string    `json:"status"`
-					CreatedAt         time.Time `json:"createdAt"`
-					Meta              any       `json:"meta"`
-					DeploymentStopped bool      `json:"deploymentStopped"`
-				} `json:"latestDeployment"`
-				ActiveDeployments []struct {
-					ID     string `json:"id"`
-					Status string `json:"status"`
-				} `json:"activeDeployments"`
-			} `json:"node"`
-		} `json:"edges"`
-	} `json:"serviceInstances"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Icon             string           `json:"icon"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
+	ServiceInstances serviceInstances `json:"serviceInstances"`
 }
 
 // toServiceDetail converts a serviceNode to a types.ServiceDetail.
@@ -216,6 +243,11 @@ func (n serviceNode) toServiceDetail(envID string) types.ServiceDetail {
 		if envID == "" || edge.Node.EnvironmentID == envID {
 			sd.InstanceID = edge.Node.ID
 			sd.StartCommand = edge.Node.StartCommand
+			sd.RestartPolicy = edge.Node.RestartPolicyType
+			sd.MaxRetries = edge.Node.RestartPolicyMaxRetries
+			sd.Replicas = edge.Node.NumReplicas
+			sd.HealthcheckPath = edge.Node.HealthcheckPath
+			sd.HealthcheckTimeout = edge.Node.HealthcheckTimeout
 			if edge.Node.Source.Image != "" {
 				sd.Source = edge.Node.Source.Image
 				sd.SourceType = "image"

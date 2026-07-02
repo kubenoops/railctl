@@ -37,6 +37,7 @@ type APIClient interface {
 
 	// Variables
 	GetVariables(projectID, environmentID, serviceID string) (map[string]string, error)
+	GetRawVariables(projectID, environmentID, serviceID string) (map[string]string, error)
 	GetSealedVariables(environmentID, serviceID string) (map[string]bool, error)
 	SetVariables(projectID, environmentID, serviceID string, variables map[string]string, skipDeploys bool) error
 	DeleteVariable(projectID, environmentID, serviceID, name string) error

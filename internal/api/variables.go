@@ -20,6 +20,24 @@ query VariablesForServiceDeployment(
 }
 `
 
+// rawVariablesQuery returns variables with references left unrendered (${{...}}
+// kept intact rather than resolved). Used by the diff so a config template
+// compares against the same template stored on Railway, not its resolved value.
+const rawVariablesQuery = `
+query RawVariables(
+	$projectId: String!
+	$environmentId: String!
+	$serviceId: String!
+) {
+	variables(
+		projectId: $projectId
+		environmentId: $environmentId
+		serviceId: $serviceId
+		unrendered: true
+	)
+}
+`
+
 // GraphQL mutation to upsert variables (set/update multiple variables)
 const variableCollectionUpsertMutation = `
 mutation VariableCollectionUpsert(
@@ -160,6 +178,30 @@ func (c *Client) GetVariables(projectID, environmentID, serviceID string) (map[s
 	}
 
 	return resp.VariablesForServiceDeployment, nil
+}
+
+// GetRawVariables retrieves a service's variables with references unrendered
+// (${{...}} kept intact). Used by the diff to compare against config templates.
+func (c *Client) GetRawVariables(projectID, environmentID, serviceID string) (map[string]string, error) {
+	data, err := c.execute(rawVariablesQuery, map[string]any{
+		"projectId":     projectID,
+		"environmentId": environmentID,
+		"serviceId":     serviceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Variables map[string]string `json:"variables"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Variables == nil {
+		return make(map[string]string), nil
+	}
+	return resp.Variables, nil
 }
 
 // SetVariables sets or updates multiple environment variables for a service

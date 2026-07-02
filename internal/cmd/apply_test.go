@@ -74,6 +74,10 @@ func newMockForApply(liveServices []types.ServiceDetail) *api.MockClient {
 		GetVariablesFunc: func(projectID, environmentID, serviceID string) (map[string]string, error) {
 			return map[string]string{"PORT": "3000"}, nil
 		},
+		// The diff reads raw (unrendered) variables via GetRawVariables.
+		GetRawVariablesFunc: func(projectID, environmentID, serviceID string) (map[string]string, error) {
+			return map[string]string{"PORT": "3000"}, nil
+		},
 		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
 			return nil, nil
 		},

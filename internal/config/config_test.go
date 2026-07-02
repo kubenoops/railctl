@@ -135,6 +135,9 @@ networking:
   tcpProxyPort: 5432
 volume:
   mountPath: /data
+registry:
+  username: reg-user
+  password: reg-pass
 variables:
   KEY: "value"
   OTHER: "stuff"
@@ -186,6 +189,12 @@ variables:
 	}
 	if svc.Volume.MountPath != "/data" {
 		t.Errorf("volume.mountPath = %q, want %q", svc.Volume.MountPath, "/data")
+	}
+	if svc.Registry.Username != "reg-user" {
+		t.Errorf("registry.username = %q, want %q", svc.Registry.Username, "reg-user")
+	}
+	if svc.Registry.Password != "reg-pass" {
+		t.Errorf("registry.password = %q, want %q", svc.Registry.Password, "reg-pass")
 	}
 	if svc.Variables["KEY"] != "value" {
 		t.Errorf("variables[KEY] = %q, want %q", svc.Variables["KEY"], "value")

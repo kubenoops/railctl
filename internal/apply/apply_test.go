@@ -573,17 +573,20 @@ func TestApply_UpdateSendsRegistryCredsWithImage(t *testing.T) {
 	}
 }
 
-// A var-only update to a private-registry service must NOT call
-// UpdateServiceInstance — that would trigger an unnecessary redeployment.
-func TestApply_UpdateVarOnlyDoesNotTouchServiceInstance(t *testing.T) {
-	var updateCalled bool
+// A var-only update to a private-registry service re-asserts the creds (Railway
+// can't be diffed, so declared creds are refreshed on any update). Image is
+// empty because only the credentials are being sent.
+func TestApply_UpdateVarOnlyReassertsRegistryCreds(t *testing.T) {
+	var capturedImage string
+	var capturedCreds *api.RegistryCredentials
 
 	mock := &api.MockClient{
 		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
 			return []types.ServiceDetail{{ID: "svc-1", Name: "api"}}, nil
 		},
 		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
-			updateCalled = true
+			capturedImage = image
+			capturedCreds = creds
 			return nil
 		},
 		SetVariablesFunc: func(projectID, envID, serviceID string, variables map[string]string, skipDeploys bool) error {
@@ -610,10 +613,154 @@ func TestApply_UpdateVarOnlyDoesNotTouchServiceInstance(t *testing.T) {
 
 	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
 
-	if updateCalled {
-		t.Error("UpdateServiceInstance must not be called for a var-only update (avoids a spurious redeploy)")
+	if capturedCreds == nil || capturedCreds.Username != "acme-bot" || capturedCreds.Password != "ghp_token" {
+		t.Errorf("expected creds re-asserted on a var-only update, got %+v", capturedCreds)
+	}
+	if capturedImage != "" {
+		t.Errorf("image should be empty when only creds are re-asserted, got %q", capturedImage)
 	}
 	if len(result.Errors) != 0 {
 		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+}
+
+// A var-only update to a service WITHOUT a registry block must not call
+// UpdateServiceInstance (nothing to send, avoids a needless redeploy).
+func TestApply_UpdateVarOnlyNoRegistrySkipsServiceInstance(t *testing.T) {
+	var updateCalled bool
+
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "pg"}}, nil
+		},
+		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
+			updateCalled = true
+			return nil
+		},
+		SetVariablesFunc: func(projectID, envID, serviceID string, variables map[string]string, skipDeploys bool) error {
+			return nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "pg",
+				Fields:      []diff.FieldDiff{{Path: "variables.FOO", Desired: "bar"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"pg": {Name: "pg", Image: "postgres:16"},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+
+	if updateCalled {
+		t.Error("UpdateServiceInstance must not be called for a var-only update with no registry block")
+	}
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+}
+
+// A changed sensitive variable must be written to Railway with its real value,
+// not the masked value the diff displays.
+func TestApply_UpdateWritesRealSensitiveValueNotMask(t *testing.T) {
+	var captured map[string]string
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "api"}}, nil
+		},
+		SetVariablesFunc: func(projectID, envID, serviceID string, variables map[string]string, skipDeploys bool) error {
+			captured = variables
+			return nil
+		},
+	}
+
+	// The diff field carries a MASKED desired value, as diff.Compute produces
+	// for a sensitive key; the real value lives in the config.
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "api",
+				Fields:      []diff.FieldDiff{{Path: "variables.API_KEY", Current: "ol************", Desired: "ne************"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"api": {Name: "api", Image: "ghcr.io/acme/api:v1", Variables: map[string]string{"API_KEY": "real-secret-value"}},
+	}
+
+	Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+
+	if captured["API_KEY"] != "real-secret-value" {
+		t.Errorf("expected real value written to Railway, got %q (masked value leaked into the write)", captured["API_KEY"])
+	}
+}
+
+func TestApply_UpdateTriggersDeployOnImageChange(t *testing.T) {
+	deployCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		UpdateServiceInstanceFunc: func(s, e, i string, c *api.RegistryCredentials) error { return nil },
+		DeployServiceInstanceFunc: func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "image", Current: "node:18", Desired: "node:20"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20"}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if !deployCalled {
+		t.Error("expected a deployment to be triggered on an image change")
+	}
+}
+
+func TestApply_UpdateTriggersDeployOnVariableChange(t *testing.T) {
+	deployCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		SetVariablesFunc:          func(p, e, s string, v map[string]string, skip bool) error { return nil },
+		DeployServiceInstanceFunc: func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "variables.FOO", Desired: "bar"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Variables: map[string]string{"FOO": "bar"}}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if !deployCalled {
+		t.Error("expected a deployment to be triggered on a variable change (staged, skipDeploys=true)")
+	}
+}
+
+func TestApply_UpdateNoDeployForNetworkingOnly(t *testing.T) {
+	deployCalled := false
+	port := 8080
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{ServiceDomains: []api.ServiceDomain{{ID: "dom-1", TargetPort: &port}}}, nil
+		},
+		UpdateServiceDomainPortFunc: func(domainID string, targetPort int) error { return nil },
+		DeployServiceInstanceFunc:   func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "networking.domain.port", Current: "3000", Desired: "8080"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{Domain: config.DomainConfig{Port: 8080}}}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if deployCalled {
+		t.Error("networking-only change must not trigger a deploy (applies immediately)")
 	}
 }

@@ -257,12 +257,18 @@ func fetchLiveState(client api.APIClient, projectID, envID string) ([]diff.LiveS
 			Name:  svc.Name,
 			Image: svc.Source,
 			Deploy: diff.LiveDeployConfig{
-				StartCommand: svc.StartCommand,
+				StartCommand:       svc.StartCommand,
+				RestartPolicy:      svc.RestartPolicy,
+				MaxRetries:         svc.MaxRetries,
+				Replicas:           svc.Replicas,
+				HealthcheckPath:    svc.HealthcheckPath,
+				HealthcheckTimeout: svc.HealthcheckTimeout,
 			},
 		}
 
-		// Variables.
-		vars, err := client.GetVariables(projectID, envID, svc.ID)
+		// Variables. Use raw (unrendered) values so ${{...}} references compare
+		// against the config template instead of Railway's resolved value.
+		vars, err := client.GetRawVariables(projectID, envID, svc.ID)
 		if err != nil {
 			return nil, fmt.Errorf("getting variables for service %q: %w", svc.Name, err)
 		}
