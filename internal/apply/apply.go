@@ -188,11 +188,9 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Update the image, sending registry credentials alongside it so a private
-	// image can always be pulled on the resulting deployment. Credentials are
-	// only sent with an image change (serviceInstanceUpdate triggers a redeploy,
-	// so we don't fire it for unrelated var/port changes); Railway never returns
-	// stored credentials, so a credentials-only change can't be diffed anyway.
+	// Send registry credentials with the image so the deployment can pull a
+	// private image. Only on an image change: serviceInstanceUpdate redeploys,
+	// and Railway never returns creds, so a creds-only change can't be diffed.
 	if imageChanged {
 		if err := client.UpdateServiceInstance(serviceID, envID, newImage, registryCreds(cfg.Registry)); err != nil {
 			return fmt.Errorf("updating image: %w", err)

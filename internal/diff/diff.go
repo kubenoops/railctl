@@ -239,12 +239,10 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 	return fields
 }
 
-// registryCreateFields returns FieldDiffs for the private-registry credentials,
-// password masked, or nil unless both fields are set — matching apply's
-// registryCreds, which only sends credentials when both are present (so the
-// diff never shows a partial credential that apply would silently drop).
-// Create-only: Railway never returns stored credentials, so they can't be
-// diffed; apply sends them alongside the image on update.
+// registryCreateFields returns registry-credential fields (password masked) for
+// the create diff, or nil unless both are set (matching registryCreds, so no
+// partial credential is shown). Create-only: Railway never returns stored
+// credentials, so they can't be diffed on update.
 func registryCreateFields(r config.RegistryConfig) []FieldDiff {
 	if r.Username == "" || r.Password == "" {
 		return nil
