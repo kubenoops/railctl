@@ -243,3 +243,65 @@ func TestCreateServiceDomain_SendsTargetPort(t *testing.T) {
 		t.Error("targetPort must be omitted when port is 0")
 	}
 }
+
+// TestCreateCustomDomain verifies the input carries projectId and the returned
+// DNS records are parsed for printing.
+func TestCreateCustomDomain(t *testing.T) {
+	var capturedInput map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+		capturedInput, _ = req.Variables["input"].(map[string]any)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"customDomainCreate": map[string]any{
+				"id": "cd-1", "domain": "app.example.com", "targetPort": 8080,
+				"status": map[string]any{
+					"verified":            false,
+					"verificationDnsHost": "_railway-verify.app",
+					"verificationToken":   "railway-verify=token123",
+					"dnsRecords": []any{
+						map[string]any{
+							"recordType": "DNS_RECORD_TYPE_CNAME", "purpose": "DNS_RECORD_PURPOSE_TRAFFIC_ROUTE",
+							"hostlabel": "app", "fqdn": "app.example.com",
+							"requiredValue": "abc.up.railway.app", "currentValue": "", "status": "PROPAGATING",
+						},
+					},
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	cd, err := client.CreateCustomDomain("proj-1", "env-1", "svc-1", "app.example.com", 8080)
+	if err != nil {
+		t.Fatalf("CreateCustomDomain returned error: %v", err)
+	}
+
+	for _, k := range []string{"domain", "environmentId", "projectId", "serviceId"} {
+		if _, ok := capturedInput[k]; !ok {
+			t.Errorf("input missing %q", k)
+		}
+	}
+	if cd.Status == nil || len(cd.Status.DNSRecords) != 1 {
+		t.Fatalf("expected 1 routing DNS record, got %+v", cd.Status)
+	}
+	if r := cd.Status.DNSRecords[0]; r.RecordType != "DNS_RECORD_TYPE_CNAME" || r.RequiredValue != "abc.up.railway.app" {
+		t.Errorf("record[0] = %+v, want CNAME → abc.up.railway.app", r)
+	}
+	// Verification TXT comes from separate status fields, not dnsRecords.
+	if cd.Status.VerificationDNSHost != "_railway-verify.app" || cd.Status.VerificationToken != "railway-verify=token123" {
+		t.Errorf("verification fields = %q / %q, want _railway-verify.app / railway-verify=token123",
+			cd.Status.VerificationDNSHost, cd.Status.VerificationToken)
+	}
+}

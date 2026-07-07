@@ -303,7 +303,7 @@ func fetchLiveState(client api.APIClient, projectID, envID string) ([]diff.LiveS
 			if cd.TargetPort != nil {
 				port = *cd.TargetPort
 			}
-			ls.Domains = append(ls.Domains, diff.LiveDomain{
+			ls.CustomDomains = append(ls.CustomDomains, diff.LiveDomain{
 				Domain: cd.Domain,
 				Port:   port,
 			})

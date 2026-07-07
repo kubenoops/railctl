@@ -166,8 +166,61 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
+	// Custom domains (none exist yet on a new service).
+	if err := reconcileCustomDomains(client, projectID, envID, svc.ID, cfg.Networking, nil, w); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(w, "✓ Service '%s' created\n", name)
 	return nil
+}
+
+// reconcileCustomDomains creates each declared custom domain not already present
+// and prints its DNS record. Existing ones are left untouched; port defaults to
+// the service domain's port.
+func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID string, net config.NetworkingConfig, existing map[string]bool, w io.Writer) error {
+	for _, cd := range net.CustomDomains {
+		if existing[cd.Name] {
+			continue
+		}
+		port := cd.Port
+		if port == 0 {
+			port = net.Domain.Port
+		}
+		created, err := client.CreateCustomDomain(projectID, envID, serviceID, cd.Name, port)
+		if err != nil {
+			return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
+		}
+		printCustomDomainDNS(created, w)
+	}
+	return nil
+}
+
+// printCustomDomainDNS prints the DNS records a user must add for verification.
+// printCustomDomainDNS prints the DNS records to configure: the routing record(s)
+// (CNAME/A) from dnsRecords, plus the verification TXT, which Railway exposes
+// separately as verificationDnsHost/verificationToken rather than in dnsRecords.
+func printCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
+	fmt.Fprintf(w, "  Custom domain '%s' created — add the following DNS record(s):\n", cd.Domain)
+	if cd.Status == nil {
+		fmt.Fprintf(w, "    (no DNS records returned; check the Railway dashboard)\n")
+		return
+	}
+	for _, r := range cd.Status.DNSRecords {
+		// Railway returns verbose enums (DNS_RECORD_TYPE_CNAME, DNS_RECORD_PURPOSE_TRAFFIC_ROUTE).
+		recordType := strings.TrimPrefix(r.RecordType, "DNS_RECORD_TYPE_")
+		line := fmt.Sprintf("    %-6s %s  →  %s", recordType, r.Hostlabel, r.RequiredValue)
+		if p := strings.ToLower(strings.TrimPrefix(r.Purpose, "DNS_RECORD_PURPOSE_")); p != "" {
+			line += fmt.Sprintf("  (%s)", p)
+		}
+		fmt.Fprintln(w, line)
+	}
+	if !cd.Status.Verified && cd.Status.VerificationToken != "" {
+		fmt.Fprintf(w, "    %-6s %s  →  %s  (verification)\n", "TXT", cd.Status.VerificationDNSHost, cd.Status.VerificationToken)
+	}
+	if len(cd.Status.DNSRecords) == 0 && cd.Status.VerificationToken == "" {
+		fmt.Fprintf(w, "    (no DNS records returned; check the Railway dashboard)\n")
+	}
 }
 
 // applyUpdate handles a single ChangeUpdate operation.
@@ -254,6 +307,21 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
 				return fmt.Errorf("creating domain: %w", err)
 			}
+		}
+	}
+
+	// Reconcile custom domains: create declared-but-absent ones and print DNS.
+	if len(cfg.Networking.CustomDomains) > 0 {
+		domains, err := client.ListDomains(projectID, envID, serviceID)
+		if err != nil {
+			return fmt.Errorf("listing domains: %w", err)
+		}
+		existing := make(map[string]bool, len(domains.CustomDomains))
+		for _, cd := range domains.CustomDomains {
+			existing[cd.Domain] = true
+		}
+		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, existing, w); err != nil {
+			return err
 		}
 	}
 

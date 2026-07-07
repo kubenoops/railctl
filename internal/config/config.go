@@ -42,13 +42,21 @@ type DeployConfig struct {
 
 // NetworkingConfig holds networking settings for a service.
 type NetworkingConfig struct {
-	Domain   DomainConfig   `yaml:"domain,omitempty"`
-	TCPProxy TCPProxyConfig `yaml:"tcpProxy,omitempty"`
+	Domain        DomainConfig         `yaml:"domain,omitempty"`
+	TCPProxy      TCPProxyConfig       `yaml:"tcpProxy,omitempty"`
+	CustomDomains []CustomDomainConfig `yaml:"customDomains,omitempty"`
 }
 
 // DomainConfig holds domain-related networking settings.
 type DomainConfig struct {
 	Port int `yaml:"port,omitempty"`
+}
+
+// CustomDomainConfig declares a user-owned domain (e.g. app.example.com). Port
+// defaults to the service domain's port when 0.
+type CustomDomainConfig struct {
+	Name string `yaml:"name"`
+	Port int    `yaml:"port,omitempty"`
 }
 
 // TCPProxyConfig holds TCP proxy settings.
@@ -86,7 +94,8 @@ type legacyConfig struct {
 		Port int `yaml:"port"`
 	} `yaml:"domain"`
 	Networking struct {
-		TCPProxyPort int `yaml:"tcpProxyPort"`
+		TCPProxyPort  int                  `yaml:"tcpProxyPort"`
+		CustomDomains []CustomDomainConfig `yaml:"customDomains"`
 	} `yaml:"networking"`
 	Volume struct {
 		MountPath string `yaml:"mountPath"`
@@ -117,8 +126,9 @@ func convertLegacy(data []byte) (*Config, error) {
 			HealthcheckTimeout: legacy.Deploy.HealthcheckTimeout,
 		},
 		Networking: NetworkingConfig{
-			Domain:   DomainConfig{Port: legacy.Domain.Port},
-			TCPProxy: TCPProxyConfig{Port: legacy.Networking.TCPProxyPort},
+			Domain:        DomainConfig{Port: legacy.Domain.Port},
+			TCPProxy:      TCPProxyConfig{Port: legacy.Networking.TCPProxyPort},
+			CustomDomains: legacy.Networking.CustomDomains,
 		},
 		Volume: VolumeConfig{MountPath: legacy.Volume.MountPath},
 		Registry: RegistryConfig{

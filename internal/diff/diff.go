@@ -71,13 +71,14 @@ func (cs *ChangeSet) Summary() string {
 // LiveService represents the current state of a service in Railway.
 // This is populated from the API before diffing.
 type LiveService struct {
-	Name       string
-	Image      string
-	Deploy     LiveDeployConfig
-	Variables  map[string]string // current variable values
-	Volumes    []LiveVolume
-	Domains    []LiveDomain
-	TCPProxies []LiveTCPProxy
+	Name          string
+	Image         string
+	Deploy        LiveDeployConfig
+	Variables     map[string]string // current variable values
+	Volumes       []LiveVolume
+	Domains       []LiveDomain
+	CustomDomains []LiveDomain
+	TCPProxies    []LiveTCPProxy
 }
 
 // LiveDeployConfig holds the current deploy configuration for a live service.
@@ -183,6 +184,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 	}
 	if d.Networking.TCPProxy.Port != 0 {
 		fields = append(fields, FieldDiff{Path: "networking.tcpProxy.port", Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port)})
+	}
+	for _, cd := range d.Networking.CustomDomains {
+		fields = append(fields, FieldDiff{Path: "customDomain." + cd.Name, Desired: cd.Name})
 	}
 
 	return ResourceChange{
@@ -383,6 +387,20 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 			Current: fmt.Sprintf("%d", liveTCPPort),
 			Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
 		})
+	}
+
+	// Custom domains: surface declared-but-absent (create); present ones are a no-op.
+	for _, cd := range d.Networking.CustomDomains {
+		found := false
+		for _, live := range ls.CustomDomains {
+			if live.Domain == cd.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fields = append(fields, FieldDiff{Path: "customDomain." + cd.Name, Desired: cd.Name})
+		}
 	}
 
 	// Creds can't be diffed (never returned), so re-assert them when the service

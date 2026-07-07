@@ -797,6 +797,86 @@ func TestApply_UpdateDomainPortUsesCustomDomainMutation(t *testing.T) {
 	}
 }
 
+func TestApply_UpdateCreatesCustomDomainAndPrintsDNS(t *testing.T) {
+	// A declared custom domain absent from live is created, and its DNS record
+	// is printed for the user to configure.
+	var createdName string
+	var createdPort int
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) { return api.DomainList{}, nil },
+		CreateCustomDomainFunc: func(proj, env, svc, domain string, port int) (api.CustomDomain, error) {
+			createdName, createdPort = domain, port
+			return api.CustomDomain{ID: "cd-1", Domain: domain, Status: &api.CustomDomainStatus{
+				Verified:            false,
+				VerificationDNSHost: "_railway-verify.app",
+				VerificationToken:   "railway-verify=token123",
+				// Railway puts only the routing CNAME here; the verification TXT is separate.
+				DNSRecords: []api.DNSRecord{
+					{RecordType: "DNS_RECORD_TYPE_CNAME", Purpose: "DNS_RECORD_PURPOSE_TRAFFIC_ROUTE", Hostlabel: "app", RequiredValue: "abc.up.railway.app"},
+				},
+			}}, nil
+		},
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "customDomain.app.example.com", Desired: "app.example.com"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{
+		Domain:        config.DomainConfig{Port: 8080},
+		CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+	}}}
+	var out bytes.Buffer
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: &out})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected apply errors: %v", result.Errors)
+	}
+	if createdName != "app.example.com" {
+		t.Errorf("expected custom domain app.example.com created, got %q", createdName)
+	}
+	if createdPort != 8080 {
+		t.Errorf("expected port to default to the service domain port 8080, got %d", createdPort)
+	}
+	for _, want := range []string{"CNAME", "abc.up.railway.app", "(traffic_route)", "TXT", "_railway-verify.app", "railway-verify=token123", "(verification)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("expected output to contain %q, got:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "DNS_RECORD_TYPE_") || strings.Contains(out.String(), "DNS_RECORD_PURPOSE_") {
+		t.Errorf("raw enum prefixes must be stripped, got:\n%s", out.String())
+	}
+}
+
+func TestApply_UpdateSkipsExistingCustomDomain(t *testing.T) {
+	// A custom domain already present must not be recreated.
+	createCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{CustomDomains: []api.CustomDomain{{ID: "cd-1", Domain: "app.example.com"}}}, nil
+		},
+		CreateCustomDomainFunc: func(proj, env, svc, domain string, port int) (api.CustomDomain, error) {
+			createCalled = true
+			return api.CustomDomain{}, nil
+		},
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "image", Current: "node:18", Desired: "node:20"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{
+		CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+	}}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if createCalled {
+		t.Error("must not recreate an existing custom domain")
+	}
+}
+
 func TestApply_UpdateNetworkingWithRegistryDoesNotStageOrDeploy(t *testing.T) {
 	// Networking-only drift on a service with a registry block must not stage creds
 	// (nothing would deploy them) nor trigger a deploy.

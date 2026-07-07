@@ -758,3 +758,52 @@ func TestCompute_DeployConfigUndeclaredFieldsUnmanaged(t *testing.T) {
 		t.Errorf("expected no changes for a config with no deploy block, got %+v", cs.Changes)
 	}
 }
+
+func TestCompute_CustomDomainDeclaredButAbsent(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:  "web",
+			Image: "web:latest",
+			Networking: config.NetworkingConfig{
+				CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+			},
+		},
+	}
+	live := []LiveService{{Name: "web", Image: "web:latest"}}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(cs.Changes))
+	}
+	found := false
+	for _, f := range cs.Changes[0].Fields {
+		if f.Path == "customDomain.app.example.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected customDomain.app.example.com field, got %+v", cs.Changes[0].Fields)
+	}
+}
+
+func TestCompute_CustomDomainAlreadyPresent(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:  "web",
+			Image: "web:latest",
+			Networking: config.NetworkingConfig{
+				CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+			},
+		},
+	}
+	live := []LiveService{{
+		Name:          "web",
+		Image:         "web:latest",
+		CustomDomains: []LiveDomain{{Domain: "app.example.com"}},
+	}}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 0 {
+		t.Errorf("expected no changes when custom domain already exists, got %+v", cs.Changes)
+	}
+}
