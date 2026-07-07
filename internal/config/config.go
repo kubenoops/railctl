@@ -336,6 +336,15 @@ func Validate(cfg *Config) error {
 		if port := svc.Networking.TCPProxy.Port; port != 0 && (port < 1 || port > 65535) {
 			errs = append(errs, fmt.Sprintf("%s: tcpProxy port must be between 1 and 65535, got %d", prefix, port))
 		}
+
+		for _, cd := range svc.Networking.CustomDomains {
+			if cd.Name == "" {
+				errs = append(errs, fmt.Sprintf("%s: customDomains entry is missing a name", prefix))
+			}
+			if cd.Port != 0 && (cd.Port < 1 || cd.Port > 65535) {
+				errs = append(errs, fmt.Sprintf("%s: customDomain %q port must be between 1 and 65535, got %d", prefix, cd.Name, cd.Port))
+			}
+		}
 	}
 
 	if len(errs) > 0 {

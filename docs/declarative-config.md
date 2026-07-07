@@ -148,7 +148,7 @@ Network configuration for the service.
 
 ##### `services[].networking.customDomains` (optional, array)
 
-User-owned domains (e.g. `app.example.com`). railctl creates each declared domain and prints the DNS record(s) you must add — Railway may return more than one (e.g. a `CNAME`/`A` for routing and a `TXT` for verification), each printed with its type. **Verification is manual** (DNS propagation). Existing domains are left untouched, and removal is not supported here — use the dashboard.
+User-owned domains (e.g. `app.example.com`). railctl creates each declared domain and prints the DNS record(s) you must add — Railway may return more than one (e.g. a `CNAME`/`A` for routing and a `TXT` for verification), each printed with its type. **Verification is manual** (DNS propagation). The target port of an existing domain is reconciled when it drifts; removal is not supported here — use the dashboard.
 
 | Field  | Type   | Default          | Description                                              |
 | ------ | ------ | ---------------- | -------------------------------------------------------- |

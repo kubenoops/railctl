@@ -404,6 +404,21 @@ func TestValidate_InvalidPort(t *testing.T) {
 			},
 			want: "tcpProxy port must be between 1 and 65535",
 		},
+		{
+			name: "custom domain port too high",
+			cfg: &Config{
+				Services: []ServiceConfig{
+					{
+						Name:  "api",
+						Image: "img",
+						Networking: NetworkingConfig{
+							CustomDomains: []CustomDomainConfig{{Name: "app.example.com", Port: 70000}},
+						},
+					},
+				},
+			},
+			want: "customDomain \"app.example.com\" port must be between 1 and 65535",
+		},
 	}
 
 	for _, tt := range tests {

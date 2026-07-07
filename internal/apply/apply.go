@@ -176,22 +176,32 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 }
 
 // reconcileCustomDomains creates each declared custom domain not already present
-// and prints its DNS record. Existing ones are left untouched; port defaults to
-// the service domain's port.
-func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID string, net config.NetworkingConfig, existing map[string]bool, w io.Writer) error {
+// (printing its DNS records) and updates the target port of existing ones when it
+// drifts. Port defaults to the service domain's port when unset.
+func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID string, net config.NetworkingConfig, live []api.CustomDomain, w io.Writer) error {
+	byName := make(map[string]api.CustomDomain, len(live))
+	for _, cd := range live {
+		byName[cd.Domain] = cd
+	}
 	for _, cd := range net.CustomDomains {
-		if existing[cd.Name] {
-			continue
-		}
 		port := cd.Port
 		if port == 0 {
 			port = net.Domain.Port
 		}
-		created, err := client.CreateCustomDomain(projectID, envID, serviceID, cd.Name, port)
-		if err != nil {
-			return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
+		existing, ok := byName[cd.Name]
+		if !ok {
+			created, err := client.CreateCustomDomain(projectID, envID, serviceID, cd.Name, port)
+			if err != nil {
+				return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
+			}
+			printCustomDomainDNS(created, w)
+			continue
 		}
-		printCustomDomainDNS(created, w)
+		if port > 0 && (existing.TargetPort == nil || *existing.TargetPort != port) {
+			if err := client.UpdateCustomDomainPort(existing.ID, envID, port); err != nil {
+				return fmt.Errorf("setting custom domain %q port: %w", cd.Name, err)
+			}
+		}
 	}
 	return nil
 }
@@ -290,21 +300,24 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			return fmt.Errorf("listing domains: %w", err)
 		}
 
+		// networking.domain.port governs the Railway service domain; custom-domain
+		// ports are reconciled separately below from their own config.
 		port := cfg.Networking.Domain.Port
 		switch {
-		// Custom domains take priority, matching generateServiceDomain.
-		case len(domains.CustomDomains) > 0:
-			cd := domains.CustomDomains[0]
-			if cd.TargetPort == nil || *cd.TargetPort != port {
-				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
-					return fmt.Errorf("setting custom domain port: %w", err)
-				}
-			}
 		case len(domains.ServiceDomains) > 0:
 			sd := domains.ServiceDomains[0]
 			if sd.TargetPort == nil || *sd.TargetPort != port {
 				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
 					return fmt.Errorf("setting domain port: %w", err)
+				}
+			}
+		case len(domains.CustomDomains) > 0:
+			// No service domain, but a custom domain exists and isn't declared in
+			// customDomains — fall back to reconciling its port.
+			cd := domains.CustomDomains[0]
+			if cd.TargetPort == nil || *cd.TargetPort != port {
+				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
+					return fmt.Errorf("setting custom domain port: %w", err)
 				}
 			}
 		default:
@@ -314,17 +327,14 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Reconcile custom domains: create declared-but-absent ones and print DNS.
+	// Reconcile declared custom domains: create absent ones (printing DNS) and
+	// update the port of existing ones.
 	if len(cfg.Networking.CustomDomains) > 0 {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
 			return fmt.Errorf("listing domains: %w", err)
 		}
-		existing := make(map[string]bool, len(domains.CustomDomains))
-		for _, cd := range domains.CustomDomains {
-			existing[cd.Domain] = true
-		}
-		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, existing, w); err != nil {
+		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, domains.CustomDomains, w); err != nil {
 			return err
 		}
 	}

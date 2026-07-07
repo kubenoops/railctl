@@ -349,57 +349,76 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
 	}
 
-	// Domain port: check if any live domain matches the desired port.
-	liveDomainPort := 0
-	for _, dom := range ls.Domains {
-		if dom.Port == d.Networking.Domain.Port {
-			liveDomainPort = dom.Port
-			break
-		}
-	}
-	// If no match found, use the first domain's port as the "current" value for the diff.
-	if liveDomainPort == 0 && len(ls.Domains) > 0 {
-		liveDomainPort = ls.Domains[0].Port
-	}
-	if d.Networking.Domain.Port != liveDomainPort {
-		fields = append(fields, FieldDiff{
-			Path:    "networking.domain.port",
-			Current: fmt.Sprintf("%d", liveDomainPort),
-			Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
-		})
-	}
-
-	// TCP proxy port: check if any live proxy matches the desired port.
-	liveTCPPort := 0
-	for _, tp := range ls.TCPProxies {
-		if tp.ApplicationPort == d.Networking.TCPProxy.Port {
-			liveTCPPort = tp.ApplicationPort
-			break
-		}
-	}
-	// If no match found, use the first proxy's port as the "current" value for the diff.
-	if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
-		liveTCPPort = ls.TCPProxies[0].ApplicationPort
-	}
-	if d.Networking.TCPProxy.Port != liveTCPPort {
-		fields = append(fields, FieldDiff{
-			Path:    "networking.tcpProxy.port",
-			Current: fmt.Sprintf("%d", liveTCPPort),
-			Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
-		})
-	}
-
-	// Custom domains: surface declared-but-absent (create); present ones are a no-op.
-	for _, cd := range d.Networking.CustomDomains {
-		found := false
-		for _, live := range ls.CustomDomains {
-			if live.Domain == cd.Name {
-				found = true
+	// Domain port: reconcile only when declared (> 0). An undeclared port is
+	// unmanaged, so we never diff against Railway's assigned port — otherwise a
+	// service with a live domain would report a perma-diff that apply won't clear.
+	if d.Networking.Domain.Port > 0 {
+		liveDomainPort := 0
+		for _, dom := range ls.Domains {
+			if dom.Port == d.Networking.Domain.Port {
+				liveDomainPort = dom.Port
 				break
 			}
 		}
-		if !found {
+		// If no match found, use the first domain's port as the "current" value for the diff.
+		if liveDomainPort == 0 && len(ls.Domains) > 0 {
+			liveDomainPort = ls.Domains[0].Port
+		}
+		if d.Networking.Domain.Port != liveDomainPort {
+			fields = append(fields, FieldDiff{
+				Path:    "networking.domain.port",
+				Current: fmt.Sprintf("%d", liveDomainPort),
+				Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
+			})
+		}
+	}
+
+	// TCP proxy port: reconcile only when declared (> 0), same rationale as domain port.
+	if d.Networking.TCPProxy.Port > 0 {
+		liveTCPPort := 0
+		for _, tp := range ls.TCPProxies {
+			if tp.ApplicationPort == d.Networking.TCPProxy.Port {
+				liveTCPPort = tp.ApplicationPort
+				break
+			}
+		}
+		// If no match found, use the first proxy's port as the "current" value for the diff.
+		if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
+			liveTCPPort = ls.TCPProxies[0].ApplicationPort
+		}
+		if d.Networking.TCPProxy.Port != liveTCPPort {
+			fields = append(fields, FieldDiff{
+				Path:    "networking.tcpProxy.port",
+				Current: fmt.Sprintf("%d", liveTCPPort),
+				Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
+			})
+		}
+	}
+
+	// Custom domains: surface declared-but-absent (create) and target-port drift on
+	// existing ones. Port defaults to the service domain's port when unset.
+	for _, cd := range d.Networking.CustomDomains {
+		desiredPort := cd.Port
+		if desiredPort == 0 {
+			desiredPort = d.Networking.Domain.Port
+		}
+		var live *LiveDomain
+		for i := range ls.CustomDomains {
+			if ls.CustomDomains[i].Domain == cd.Name {
+				live = &ls.CustomDomains[i]
+				break
+			}
+		}
+		if live == nil {
 			fields = append(fields, FieldDiff{Path: "customDomain." + cd.Name, Desired: cd.Name})
+			continue
+		}
+		if desiredPort > 0 && live.Port != desiredPort {
+			fields = append(fields, FieldDiff{
+				Path:    "customDomain." + cd.Name + ".port",
+				Current: fmt.Sprintf("%d", live.Port),
+				Desired: fmt.Sprintf("%d", desiredPort),
+			})
 		}
 	}
 
