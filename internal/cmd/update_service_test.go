@@ -255,7 +255,7 @@ func TestRemoveServiceDomain(t *testing.T) {
 		mock := &api.MockClient{
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{
-					CustomDomains: []api.CustomDomain{{ID: "cdom-1", Domain: "api.example.com"}},
+					CustomDomains:  []api.CustomDomain{{ID: "cdom-1", Domain: "api.example.com"}},
 					ServiceDomains: []api.ServiceDomain{{ID: "dom-1", Domain: "api.up.railway.app"}},
 				}, nil
 			},
@@ -354,20 +354,18 @@ func TestGenerateServiceDomain(t *testing.T) {
 	t.Run("creates domain when none exists and sets requested port", func(t *testing.T) {
 		var createCalled bool
 		var updateCalled bool
-		var updatedDomainID string
-		var updatedPort int
+		var createdPort int
 		mock := &api.MockClient{
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				createCalled = true
+				createdPort = targetPort
 				return api.ServiceDomain{ID: "dom-1", Domain: "myapp-production.up.railway.app"}, nil
 			},
-			UpdateServiceDomainPortFunc: func(serviceDomainID string, port int) error {
+			UpdateServiceDomainPortFunc: func(serviceDomainID, domain, environmentID, serviceID string, port int) error {
 				updateCalled = true
-				updatedDomainID = serviceDomainID
-				updatedPort = port
 				return nil
 			},
 		}
@@ -379,27 +377,22 @@ func TestGenerateServiceDomain(t *testing.T) {
 		if !createCalled {
 			t.Error("expected CreateServiceDomain to be called")
 		}
-		if !updateCalled {
-			t.Error("expected UpdateServiceDomainPort to be called")
+		// Port is set at creation — no separate update.
+		if updateCalled {
+			t.Error("expected UpdateServiceDomainPort NOT to be called (port set at creation)")
 		}
-		if updatedDomainID != "dom-1" {
-			t.Errorf("expected domain ID dom-1, got %q", updatedDomainID)
-		}
-		if updatedPort != 5678 {
-			t.Errorf("expected port 5678, got %d", updatedPort)
+		if createdPort != 5678 {
+			t.Errorf("expected CreateServiceDomain to receive port 5678, got %d", createdPort)
 		}
 	})
 
-	t.Run("returns error when setting port on newly created domain fails", func(t *testing.T) {
+	t.Run("returns error when creating domain fails", func(t *testing.T) {
 		mock := &api.MockClient{
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
-				return api.ServiceDomain{ID: "dom-1", Domain: "myapp-production.up.railway.app"}, nil
-			},
-			UpdateServiceDomainPortFunc: func(serviceDomainID string, port int) error {
-				return errors.New("api failure")
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
+				return api.ServiceDomain{}, errors.New("api failure")
 			},
 		}
 
@@ -416,11 +409,11 @@ func TestGenerateServiceDomain(t *testing.T) {
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				createCalled = true
 				return api.ServiceDomain{ID: "dom-1", Domain: "myapp-production.up.railway.app"}, nil
 			},
-			UpdateServiceDomainPortFunc: func(serviceDomainID string, port int) error {
+			UpdateServiceDomainPortFunc: func(serviceDomainID, domain, environmentID, serviceID string, port int) error {
 				updateCalled = true
 				return nil
 			},
@@ -448,7 +441,7 @@ func TestGenerateServiceDomain(t *testing.T) {
 					},
 				}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				createCalled = true
 				return api.ServiceDomain{}, nil
 			},
@@ -473,7 +466,7 @@ func TestGenerateServiceDomain(t *testing.T) {
 					},
 				}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				createCalled = true
 				return api.ServiceDomain{}, nil
 			},
@@ -500,7 +493,7 @@ func TestGenerateServiceDomain(t *testing.T) {
 					},
 				}, nil
 			},
-			UpdateServiceDomainPortFunc: func(serviceDomainID string, port int) error {
+			UpdateServiceDomainPortFunc: func(serviceDomainID, domain, environmentID, serviceID string, port int) error {
 				updateCalled = true
 				updatedPort = port
 				return nil
@@ -568,7 +561,7 @@ func TestGenerateServiceDomain(t *testing.T) {
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				return api.ServiceDomain{}, errors.New("api failure")
 			},
 		}

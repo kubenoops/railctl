@@ -89,7 +89,7 @@ func TestListDomains_WithCustomDomains(t *testing.T) {
 
 func TestCreateServiceDomain(t *testing.T) {
 	client := &MockClient{
-		CreateServiceDomainFunc: func(serviceID, environmentID string) (ServiceDomain, error) {
+		CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (ServiceDomain, error) {
 			if serviceID != "svc-1" || environmentID != "env-1" {
 				t.Errorf("unexpected params: serviceID=%s, environmentID=%s", serviceID, environmentID)
 			}
@@ -97,7 +97,7 @@ func TestCreateServiceDomain(t *testing.T) {
 		},
 	}
 
-	domain, err := client.CreateServiceDomain("svc-1", "env-1")
+	domain, err := client.CreateServiceDomain("svc-1", "env-1", 8080)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,9 +135,8 @@ func TestServiceDomainJSON(t *testing.T) {
 	}
 }
 
-// TestUpdateServiceDomainPort_MutationInput verifies that the GraphQL mutation
-// sends only serviceDomainId and targetPort in the input — not serviceId or
-// environmentId, which would cause a Railway API error.
+// TestUpdateServiceDomainPort_MutationInput verifies all four NON_NULL fields
+// (plus targetPort) are sent; omitting any makes Railway reject the request.
 func TestUpdateServiceDomainPort_MutationInput(t *testing.T) {
 	var capturedInput map[string]any
 
@@ -175,16 +174,24 @@ func TestUpdateServiceDomainPort_MutationInput(t *testing.T) {
 	client := NewClient("test-token")
 	client.apiURL = server.URL
 
-	err := client.UpdateServiceDomainPort("dom-abc-123", 8080)
+	err := client.UpdateServiceDomainPort("dom-abc-123", "myapp.up.railway.app", "env-1", "svc-1", 8080)
 	if err != nil {
 		t.Fatalf("UpdateServiceDomainPort returned error: %v", err)
 	}
 
-	// Verify expected keys are present with correct values.
-	if id, ok := capturedInput["serviceDomainId"]; !ok {
-		t.Error("input missing 'serviceDomainId'")
-	} else if id != "dom-abc-123" {
-		t.Errorf("serviceDomainId = %v, want %q", id, "dom-abc-123")
+	// All four NON_NULL fields must be present with the right values.
+	wantStrings := map[string]string{
+		"serviceDomainId": "dom-abc-123",
+		"domain":          "myapp.up.railway.app",
+		"environmentId":   "env-1",
+		"serviceId":       "svc-1",
+	}
+	for key, want := range wantStrings {
+		if got, ok := capturedInput[key]; !ok {
+			t.Errorf("input missing %q", key)
+		} else if got != want {
+			t.Errorf("%s = %v, want %q", key, got, want)
+		}
 	}
 
 	if port, ok := capturedInput["targetPort"]; !ok {
@@ -192,22 +199,47 @@ func TestUpdateServiceDomainPort_MutationInput(t *testing.T) {
 	} else if port != float64(8080) { // JSON numbers decode as float64
 		t.Errorf("targetPort = %v, want %v", port, 8080)
 	}
+}
 
-	// Verify no extraneous keys that would break the mutation.
-	for key := range capturedInput {
-		switch key {
-		case "serviceDomainId", "targetPort":
-			// expected
-		default:
-			t.Errorf("unexpected key in input: %q", key)
+// TestCreateServiceDomain_SendsTargetPort verifies targetPort is sent on create
+// (when > 0) and omitted otherwise.
+func TestCreateServiceDomain_SendsTargetPort(t *testing.T) {
+	var capturedInput map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		var req struct {
+			Variables map[string]any `json:"variables"`
 		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+		capturedInput, _ = req.Variables["input"].(map[string]any)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"serviceDomainCreate": map[string]any{"id": "dom-1", "domain": "x.up.railway.app"}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	if _, err := client.CreateServiceDomain("svc-1", "env-1", 8080); err != nil {
+		t.Fatalf("CreateServiceDomain returned error: %v", err)
+	}
+	if port, ok := capturedInput["targetPort"]; !ok {
+		t.Error("input missing 'targetPort'")
+	} else if port != float64(8080) {
+		t.Errorf("targetPort = %v, want %v", port, 8080)
 	}
 
-	// Explicit check for the fields the bug originally included.
-	if _, ok := capturedInput["serviceId"]; ok {
-		t.Error("input must NOT contain 'serviceId'")
+	// A zero port must be omitted so Railway auto-detects the port.
+	if _, err := client.CreateServiceDomain("svc-1", "env-1", 0); err != nil {
+		t.Fatalf("CreateServiceDomain returned error: %v", err)
 	}
-	if _, ok := capturedInput["environmentId"]; ok {
-		t.Error("input must NOT contain 'environmentId'")
+	if _, ok := capturedInput["targetPort"]; ok {
+		t.Error("targetPort must be omitted when port is 0")
 	}
 }

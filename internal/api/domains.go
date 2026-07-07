@@ -70,23 +70,26 @@ func (c *Client) ListDomains(projectID, environmentID, serviceID string) (Domain
 	return result.Domains, nil
 }
 
-// CreateServiceDomain creates a Railway-generated domain (*.up.railway.app) for a service.
-func (c *Client) CreateServiceDomain(serviceID, environmentID string) (ServiceDomain, error) {
+// CreateServiceDomain creates a Railway-generated domain (*.up.railway.app),
+// routing to targetPort when > 0.
+func (c *Client) CreateServiceDomain(serviceID, environmentID string, targetPort int) (ServiceDomain, error) {
 	mutation := `
-		mutation ServiceDomainCreate($environmentId: String!, $serviceId: String!) {
-			serviceDomainCreate(
-				input: { environmentId: $environmentId, serviceId: $serviceId }
-			) {
+		mutation ServiceDomainCreate($input: ServiceDomainCreateInput!) {
+			serviceDomainCreate(input: $input) {
 				id
 				domain
 			}
 		}
 	`
 
-	variables := map[string]any{
+	input := map[string]any{
 		"environmentId": environmentID,
 		"serviceId":     serviceID,
 	}
+	if targetPort > 0 {
+		input["targetPort"] = targetPort
+	}
+	variables := map[string]any{"input": input}
 
 	data, err := c.execute(mutation, variables)
 	if err != nil {
@@ -104,8 +107,9 @@ func (c *Client) CreateServiceDomain(serviceID, environmentID string) (ServiceDo
 	return result.ServiceDomainCreate, nil
 }
 
-// UpdateServiceDomainPort updates the target port of a Railway-generated service domain.
-func (c *Client) UpdateServiceDomainPort(serviceDomainID string, port int) error {
+// UpdateServiceDomainPort sets a service domain's target port. All four fields are
+// required by ServiceDomainUpdateInput; omitting any fails with "Problem processing request".
+func (c *Client) UpdateServiceDomainPort(serviceDomainID, domain, environmentID, serviceID string, port int) error {
 	mutation := `
 		mutation ServiceDomainUpdate($input: ServiceDomainUpdateInput!) {
 			serviceDomainUpdate(input: $input)
@@ -115,6 +119,9 @@ func (c *Client) UpdateServiceDomainPort(serviceDomainID string, port int) error
 	variables := map[string]any{
 		"input": map[string]any{
 			"serviceDomainId": serviceDomainID,
+			"domain":          domain,
+			"environmentId":   environmentID,
+			"serviceId":       serviceID,
 			"targetPort":      port,
 		},
 	}

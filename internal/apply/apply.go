@@ -152,14 +152,10 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Create domain.
+	// Create domain with its port in one call.
 	if cfg.Networking.Domain.Port > 0 {
-		domain, err := client.CreateServiceDomain(svc.ID, envID)
-		if err != nil {
+		if _, err := client.CreateServiceDomain(svc.ID, envID, cfg.Networking.Domain.Port); err != nil {
 			return fmt.Errorf("creating domain: %w", err)
-		}
-		if err := client.UpdateServiceDomainPort(domain.ID, cfg.Networking.Domain.Port); err != nil {
-			return fmt.Errorf("setting domain port: %w", err)
 		}
 	}
 
@@ -235,35 +231,33 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		fmt.Fprintf(w, "  Warning: volume changes detected for '%s' but volumes cannot be updated in place\n", name)
 	}
 
-	// Domain changes: check existing domains first (idempotent).
-	if domainChanged {
+	// Domain changes: reconcile the target port (idempotent).
+	if domainChanged && cfg.Networking.Domain.Port > 0 {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
 			return fmt.Errorf("listing domains: %w", err)
 		}
 
-		var domainID string
-		if len(domains.ServiceDomains) > 0 {
-			domainID = domains.ServiceDomains[0].ID
-		} else if len(domains.CustomDomains) > 0 {
-			domainID = domains.CustomDomains[0].ID
-		}
-
-		if domainID != "" {
-			// Domain exists — update port if needed.
-			if cfg.Networking.Domain.Port > 0 {
-				if err := client.UpdateServiceDomainPort(domainID, cfg.Networking.Domain.Port); err != nil {
+		port := cfg.Networking.Domain.Port
+		switch {
+		// Custom domains take priority, matching generateServiceDomain.
+		case len(domains.CustomDomains) > 0:
+			cd := domains.CustomDomains[0]
+			if cd.TargetPort == nil || *cd.TargetPort != port {
+				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
+					return fmt.Errorf("setting custom domain port: %w", err)
+				}
+			}
+		case len(domains.ServiceDomains) > 0:
+			sd := domains.ServiceDomains[0]
+			if sd.TargetPort == nil || *sd.TargetPort != port {
+				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
 					return fmt.Errorf("setting domain port: %w", err)
 				}
 			}
-		} else if cfg.Networking.Domain.Port > 0 {
-			// No domain exists — create one.
-			domain, err := client.CreateServiceDomain(serviceID, envID)
-			if err != nil {
+		default:
+			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
 				return fmt.Errorf("creating domain: %w", err)
-			}
-			if err := client.UpdateServiceDomainPort(domain.ID, cfg.Networking.Domain.Port); err != nil {
-				return fmt.Errorf("setting domain port: %w", err)
 			}
 		}
 	}

@@ -751,7 +751,7 @@ func TestApply_UpdateNoDeployForNetworkingOnly(t *testing.T) {
 		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
 			return api.DomainList{ServiceDomains: []api.ServiceDomain{{ID: "dom-1", TargetPort: &port}}}, nil
 		},
-		UpdateServiceDomainPortFunc: func(domainID string, targetPort int) error { return nil },
+		UpdateServiceDomainPortFunc: func(domainID, domain, environmentID, serviceID string, targetPort int) error { return nil },
 		DeployServiceInstanceFunc:   func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
 	}
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
@@ -762,6 +762,73 @@ func TestApply_UpdateNoDeployForNetworkingOnly(t *testing.T) {
 	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
 	if deployCalled {
 		t.Error("networking-only change must not trigger a deploy (applies immediately)")
+	}
+}
+
+func TestApply_UpdateDomainPortUsesCustomDomainMutation(t *testing.T) {
+	// When only a custom domain exists, the port must go through UpdateCustomDomainPort,
+	// not the service-domain mutation.
+	var customPort int
+	serviceDomainCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{CustomDomains: []api.CustomDomain{{ID: "cdom-1", Domain: "app.example.com"}}}, nil
+		},
+		UpdateCustomDomainPortFunc:  func(id, envID string, port int) error { customPort = port; return nil },
+		UpdateServiceDomainPortFunc: func(id, domain, envID, svcID string, port int) error { serviceDomainCalled = true; return nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "networking.domain.port", Current: "3000", Desired: "8080"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{Domain: config.DomainConfig{Port: 8080}}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected apply errors: %v", result.Errors)
+	}
+	if serviceDomainCalled {
+		t.Error("must not call UpdateServiceDomainPort for a custom domain")
+	}
+	if customPort != 8080 {
+		t.Errorf("expected UpdateCustomDomainPort with port 8080, got %d", customPort)
+	}
+}
+
+func TestApply_UpdateDomainPortPrefersCustomDomainWhenBothExist(t *testing.T) {
+	// When both a service domain and a custom domain exist, the custom domain wins,
+	// matching generateServiceDomain's precedence.
+	var customPort int
+	serviceDomainCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{
+				ServiceDomains: []api.ServiceDomain{{ID: "dom-1", Domain: "web.up.railway.app"}},
+				CustomDomains:  []api.CustomDomain{{ID: "cdom-1", Domain: "app.example.com"}},
+			}, nil
+		},
+		UpdateCustomDomainPortFunc:  func(id, envID string, port int) error { customPort = port; return nil },
+		UpdateServiceDomainPortFunc: func(id, domain, envID, svcID string, port int) error { serviceDomainCalled = true; return nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "networking.domain.port", Current: "3000", Desired: "8080"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{Domain: config.DomainConfig{Port: 8080}}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected apply errors: %v", result.Errors)
+	}
+	if serviceDomainCalled {
+		t.Error("must not call UpdateServiceDomainPort when a custom domain exists")
+	}
+	if customPort != 8080 {
+		t.Errorf("expected UpdateCustomDomainPort with port 8080, got %d", customPort)
 	}
 }
 
@@ -778,7 +845,7 @@ func TestApply_UpdateNetworkingWithRegistryDoesNotStageOrDeploy(t *testing.T) {
 		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
 			return api.DomainList{ServiceDomains: []api.ServiceDomain{{ID: "dom-1", TargetPort: &port}}}, nil
 		},
-		UpdateServiceDomainPortFunc: func(domainID string, targetPort int) error { return nil },
+		UpdateServiceDomainPortFunc: func(domainID, domain, environmentID, serviceID string, targetPort int) error { return nil },
 		UpdateServiceInstanceFunc:   func(s, e, i string, c *api.RegistryCredentials) error { credsStaged = true; return nil },
 		DeployServiceInstanceFunc:   func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
 	}

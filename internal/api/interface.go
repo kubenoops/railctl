@@ -49,8 +49,8 @@ type APIClient interface {
 
 	// Domains
 	ListDomains(projectID, environmentID, serviceID string) (DomainList, error)
-	CreateServiceDomain(serviceID, environmentID string) (ServiceDomain, error)
-	UpdateServiceDomainPort(serviceDomainID string, port int) error
+	CreateServiceDomain(serviceID, environmentID string, targetPort int) (ServiceDomain, error)
+	UpdateServiceDomainPort(serviceDomainID, domain, environmentID, serviceID string, port int) error
 	UpdateCustomDomainPort(customDomainID, environmentID string, port int) error
 	DeleteServiceDomain(id string) error
 	DeleteCustomDomain(id string) error
