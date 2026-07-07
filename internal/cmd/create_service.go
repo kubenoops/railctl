@@ -327,7 +327,7 @@ func generateServiceDomain(client api.APIClient, projectID, environmentID, servi
 	if len(domains.ServiceDomains) > 0 {
 		d := domains.ServiceDomains[0]
 		if port > 0 && (d.TargetPort == nil || *d.TargetPort != port) {
-			if err := client.UpdateServiceDomainPort(d.ID, port); err != nil {
+			if err := client.UpdateServiceDomainPort(d.ID, d.Domain, environmentID, serviceID, port); err != nil {
 				return fmt.Errorf("failed to update domain port: %w", err)
 			}
 			if d.TargetPort != nil {
@@ -341,17 +341,13 @@ func generateServiceDomain(client api.APIClient, projectID, environmentID, servi
 		return nil
 	}
 
-	// No domains exist — create a new Railway domain
-	domain, err := client.CreateServiceDomain(serviceID, environmentID)
+	// No domains exist — create a new Railway domain with the port set at creation
+	domain, err := client.CreateServiceDomain(serviceID, environmentID, port)
 	if err != nil {
 		return fmt.Errorf("failed to generate domain: %w", err)
 	}
 
-	// Set the requested target port on the newly created domain
 	if port > 0 {
-		if err := client.UpdateServiceDomainPort(domain.ID, port); err != nil {
-			return fmt.Errorf("failed to set port on new domain: %w", err)
-		}
 		fmt.Printf("Domain generated: https://%s (port: %d)\n", domain.Domain, port)
 		return nil
 	}

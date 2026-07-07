@@ -2585,7 +2585,7 @@ func TestRunCreateService_WithGenerateDomain(t *testing.T) {
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil // No existing domains
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				domainCreated = true
 				return api.ServiceDomain{ID: "dom-1", Domain: "my-service-production.up.railway.app"}, nil
 			},
@@ -2650,7 +2650,7 @@ func TestRunCreateService_WithGenerateDomain_AlreadyExists(t *testing.T) {
 					},
 				}, nil // Domain already exists
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				domainCreated = true
 				return api.ServiceDomain{}, nil
 			},
@@ -2718,7 +2718,7 @@ func TestRunUpdateService_WithGenerateDomain(t *testing.T) {
 			ListDomainsFunc: func(projectID, environmentID, serviceID string) (api.DomainList, error) {
 				return api.DomainList{}, nil
 			},
-			CreateServiceDomainFunc: func(serviceID, environmentID string) (api.ServiceDomain, error) {
+			CreateServiceDomainFunc: func(serviceID, environmentID string, targetPort int) (api.ServiceDomain, error) {
 				domainCreated = true
 				return api.ServiceDomain{ID: "dom-1", Domain: "api-production.up.railway.app"}, nil
 			},

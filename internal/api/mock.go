@@ -41,8 +41,8 @@ type MockClient struct {
 
 	// Domains
 	ListDomainsFunc             func(projectID, environmentID, serviceID string) (DomainList, error)
-	CreateServiceDomainFunc     func(serviceID, environmentID string) (ServiceDomain, error)
-	UpdateServiceDomainPortFunc func(serviceDomainID string, port int) error
+	CreateServiceDomainFunc     func(serviceID, environmentID string, targetPort int) (ServiceDomain, error)
+	UpdateServiceDomainPortFunc func(serviceDomainID, domain, environmentID, serviceID string, port int) error
 	UpdateCustomDomainPortFunc  func(customDomainID, environmentID string, port int) error
 	DeleteServiceDomainFunc     func(id string) error
 	DeleteCustomDomainFunc      func(id string) error
@@ -340,16 +340,16 @@ func (m *MockClient) ListDomains(projectID, environmentID, serviceID string) (Do
 	return DomainList{}, nil
 }
 
-func (m *MockClient) CreateServiceDomain(serviceID, environmentID string) (ServiceDomain, error) {
+func (m *MockClient) CreateServiceDomain(serviceID, environmentID string, targetPort int) (ServiceDomain, error) {
 	if m.CreateServiceDomainFunc != nil {
-		return m.CreateServiceDomainFunc(serviceID, environmentID)
+		return m.CreateServiceDomainFunc(serviceID, environmentID, targetPort)
 	}
 	return ServiceDomain{}, nil
 }
 
-func (m *MockClient) UpdateServiceDomainPort(serviceDomainID string, port int) error {
+func (m *MockClient) UpdateServiceDomainPort(serviceDomainID, domain, environmentID, serviceID string, port int) error {
 	if m.UpdateServiceDomainPortFunc != nil {
-		return m.UpdateServiceDomainPortFunc(serviceDomainID, port)
+		return m.UpdateServiceDomainPortFunc(serviceDomainID, domain, environmentID, serviceID, port)
 	}
 	return nil
 }
