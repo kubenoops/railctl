@@ -349,9 +349,7 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
 	}
 
-	// Domain port: reconcile only when declared (> 0). An undeclared port is
-	// unmanaged, so we never diff against Railway's assigned port — otherwise a
-	// service with a live domain would report a perma-diff that apply won't clear.
+	// Port 0 is unmanaged; diffing it would perma-diff (apply skips port 0).
 	if d.Networking.Domain.Port > 0 {
 		liveDomainPort := 0
 		for _, dom := range ls.Domains {
@@ -373,7 +371,7 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		}
 	}
 
-	// TCP proxy port: reconcile only when declared (> 0), same rationale as domain port.
+	// Port 0 is unmanaged, same as domain port above.
 	if d.Networking.TCPProxy.Port > 0 {
 		liveTCPPort := 0
 		for _, tp := range ls.TCPProxies {
@@ -395,8 +393,7 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		}
 	}
 
-	// Custom domains: surface declared-but-absent (create) and target-port drift on
-	// existing ones. Port defaults to the service domain's port when unset.
+	// Custom domains: diff absent (create) and port drift. Port defaults to domain.port.
 	for _, cd := range d.Networking.CustomDomains {
 		desiredPort := cd.Port
 		if desiredPort == 0 {

@@ -175,9 +175,8 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	return nil
 }
 
-// reconcileCustomDomains creates each declared custom domain not already present
-// (printing its DNS records) and updates the target port of existing ones when it
-// drifts. Port defaults to the service domain's port when unset.
+// reconcileCustomDomains creates absent declared domains (printing DNS) and
+// updates the port of existing ones. Port defaults to domain.port.
 func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID string, net config.NetworkingConfig, live []api.CustomDomain, w io.Writer) error {
 	byName := make(map[string]api.CustomDomain, len(live))
 	for _, cd := range live {
@@ -195,6 +194,7 @@ func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID st
 				return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
 			}
 			printCustomDomainDNS(created, w)
+			byName[cd.Name] = created // avoid re-creating on duplicate declaration
 			continue
 		}
 		if port > 0 && (existing.TargetPort == nil || *existing.TargetPort != port) {
@@ -300,8 +300,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			return fmt.Errorf("listing domains: %w", err)
 		}
 
-		// networking.domain.port governs the Railway service domain; custom-domain
-		// ports are reconciled separately below from their own config.
+		// domain.port governs the service domain; custom domains reconcile below.
 		port := cfg.Networking.Domain.Port
 		switch {
 		case len(domains.ServiceDomains) > 0:
@@ -312,8 +311,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 				}
 			}
 		case len(domains.CustomDomains) > 0:
-			// No service domain, but a custom domain exists and isn't declared in
-			// customDomains — fall back to reconciling its port.
+			// No service domain — fall back to an existing custom domain.
 			cd := domains.CustomDomains[0]
 			if cd.TargetPort == nil || *cd.TargetPort != port {
 				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
@@ -327,9 +325,15 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Reconcile declared custom domains: create absent ones (printing DNS) and
-	// update the port of existing ones.
-	if len(cfg.Networking.CustomDomains) > 0 {
+	// Only when the diff touched a custom domain, to skip an extra ListDomains call.
+	customDomainChanged := false
+	for _, f := range rc.Fields {
+		if strings.HasPrefix(f.Path, "customDomain.") {
+			customDomainChanged = true
+			break
+		}
+	}
+	if customDomainChanged && len(cfg.Networking.CustomDomains) > 0 {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
 			return fmt.Errorf("listing domains: %w", err)
