@@ -240,13 +240,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 		port := cfg.Networking.Domain.Port
 		switch {
-		case len(domains.ServiceDomains) > 0:
-			sd := domains.ServiceDomains[0]
-			if sd.TargetPort == nil || *sd.TargetPort != port {
-				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
-					return fmt.Errorf("setting domain port: %w", err)
-				}
-			}
+		// Custom domains take priority, matching generateServiceDomain.
 		case len(domains.CustomDomains) > 0:
 			cd := domains.CustomDomains[0]
 			if cd.TargetPort == nil || *cd.TargetPort != port {
@@ -254,8 +248,14 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 					return fmt.Errorf("setting custom domain port: %w", err)
 				}
 			}
+		case len(domains.ServiceDomains) > 0:
+			sd := domains.ServiceDomains[0]
+			if sd.TargetPort == nil || *sd.TargetPort != port {
+				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
+					return fmt.Errorf("setting domain port: %w", err)
+				}
+			}
 		default:
-			// No domain — create one with the port set.
 			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
 				return fmt.Errorf("creating domain: %w", err)
 			}
