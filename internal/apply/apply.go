@@ -242,12 +242,17 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		switch {
 		case len(domains.ServiceDomains) > 0:
 			sd := domains.ServiceDomains[0]
-			if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
-				return fmt.Errorf("setting domain port: %w", err)
+			if sd.TargetPort == nil || *sd.TargetPort != port {
+				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
+					return fmt.Errorf("setting domain port: %w", err)
+				}
 			}
 		case len(domains.CustomDomains) > 0:
-			if err := client.UpdateCustomDomainPort(domains.CustomDomains[0].ID, envID, port); err != nil {
-				return fmt.Errorf("setting custom domain port: %w", err)
+			cd := domains.CustomDomains[0]
+			if cd.TargetPort == nil || *cd.TargetPort != port {
+				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
+					return fmt.Errorf("setting custom domain port: %w", err)
+				}
 			}
 		default:
 			// No domain — create one with the port set.
