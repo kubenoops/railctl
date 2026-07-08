@@ -61,14 +61,16 @@ func (c *Client) CreateProject(name string) (types.Project, error) {
 		return types.Project{}, err
 	}
 
-	if workspaceID == "" {
-		return types.Project{}, fmt.Errorf("workspace required to create a project: use -w <name> or set RAILCTL_WORKSPACE=<name>, or use a personal API token if your token does not have workspace access")
+	// A workspace-scoped token resolves to an empty ID (its workspace is implicit),
+	// so send a null workspaceId and let the API infer it — exactly as ListProjects
+	// does. GetWorkspaceID already errors on an ambiguous multi-workspace account
+	// token, so an empty ID here unambiguously means "infer from the token".
+	vars := map[string]any{"name": name}
+	if workspaceID != "" {
+		vars["workspaceId"] = workspaceID
 	}
 
-	data, err := c.execute(createProjectMutation, map[string]any{
-		"name":        name,
-		"workspaceId": workspaceID,
-	})
+	data, err := c.execute(createProjectMutation, vars)
 	if err != nil {
 		return types.Project{}, err
 	}
