@@ -158,6 +158,23 @@ railctl delete service api -p my-app -e production --yes
 Restart policies: `ON_FAILURE`, `ALWAYS`, `NEVER`. Railway creates a service in
 **all** environments; railctl cleans up non-target instances automatically.
 
+### Domains
+```bash
+railctl get domains -s api -p my-app -e production      # railway + custom, -o wide/json/yaml
+railctl create domain app.example.com -s api --port 3000 -p my-app -e production
+railctl delete domain app.example.com -s api -p my-app -e production --yes
+```
+`get domains` lists both Railway-generated domains (`*.up.railway.app`) and
+user-owned custom domains; for custom domains STATUS shows the DNS
+verification state (`verified`/`pending`). `create domain` registers a custom
+domain and prints the DNS record(s) to add — a CNAME/A for routing plus a TXT
+for verification; **verification is manual** (DNS propagation). `--port` is
+optional (Railway auto-detects when omitted). Railway-generated domains are
+created with `create service --generate-domain` / `update service
+--generate-domain`, not here. **Custom-domain removal is imperative-only by
+design**: a manifest `apply` creates and reconciles declared `customDomains`
+but never removes live ones — use `delete domain`.
+
 ### Variables
 ```bash
 railctl get variables -p my-app -e production -s api     # alias: vars
