@@ -77,6 +77,10 @@ type APIClient interface {
 	CreateVolumeBackup(volumeInstanceID, name string) (string, error)
 	RestoreVolumeBackup(backupID, volumeInstanceID string) error
 	DeleteVolumeBackup(backupID, volumeInstanceID string) error
+	// Project tokens
+	CreateProjectToken(projectID, environmentID, name string) (string, error)
+	ListProjectTokens(projectID string) ([]ProjectToken, error)
+	DeleteProjectToken(tokenID string) error
 
 	// Workspace
 	GetWorkspaceID() (string, error)
