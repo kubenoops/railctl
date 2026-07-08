@@ -1,237 +1,122 @@
 # railctl E2E Test Suite
 
-Comprehensive end-to-end test suite that exercises all `railctl` commands and flags against the live Railway API.
+End-to-end tests that exercise `railctl` against the live Railway API, structured as
+**three groups keyed to Railway token scope**. The suite is the executable form of
+[`docs/token-capability-matrix.md`](../../docs/token-capability-matrix.md) — the
+authoritative allow/deny matrix, verified live. Each test proves one or more matrix
+rows; when Railway's behaviour drifts, these tests fail. Design rationale:
+[`docs/designs/2026-07-08-e2e-token-layers.md`](../../docs/designs/2026-07-08-e2e-token-layers.md).
 
-## Overview
+## The three-layer model
 
-This test suite is built with `go test -tags e2e`. It includes:
+A Railway token is a pointer to exactly one node of the containment tree
+(account → workspace → project + environment): full access at and below its node,
+name-visibility of its own containment chain, hard denial everywhere else. Each e2e
+group runs under exactly one token scope and tests only what is **exclusive** to that
+scope — no duplication across layers.
 
-- **Smoke test** (`TestSmoke`): A fast ~1min linear walk through the full lifecycle (project → env → service → variable → volume → deployments). Use `make test-smoke` for a quick sanity check.
-- **Full suite**: Individual test files for each resource type with exhaustive flag/format coverage (~10min). Use `make test-e2e` to run everything.
+| Token | Can list (one level down) | Bound? | What "list" grants |
+|---|---|---|---|
+| Account | workspaces | not bound — full access to all of them | full access |
+| Workspace | projects | not bound — full access to all of them | full access |
+| Project | environments | **bound to one** | **names only** for siblings — content access solely in its bound environment |
 
-## Test Coverage
+## Layout
 
-### Commands Tested
+```
+tests/e2e/
+  harness/     # shared non-test package (build tag e2e): Env runner, assertions,
+               # fixtures, and the token-type preflight (ClassifyToken/RequireToken)
+  account/     # L1 — runs with RAILWAY_ACCOUNT_TOKEN
+  workspace/   # L2 — runs with RAILWAY_WORKSPACE_TOKEN
+  project/     # L3 — bootstrapped with RAILWAY_WORKSPACE_TOKEN, runs under a
+               # project token minted in TestMain
+```
 
-| Category | Commands |
-|----------|----------|
-| **Project** | create, get (table/json/yaml/wide), describe (all formats), delete |
-| **Environment** | create, get (all formats), describe (all formats), delete |
-| **Service** | create (with all deploy config flags), get (all formats), describe (--show-values), update (image, deploy config, healthcheck), delete |
-| **Variable** | set (single/multiple, --skip-deployment), get (all formats), delete |
-| **Volume** | create (--mount-path), get (all formats), describe, update (--name, --attach, --detach), delete |
-| **Deployment** | get (all formats, --limit), logs (--tail, --deployment, --follow), delete (rollback), update --set-active (reactivate) |
+**`harness/`** — the shared package every group imports: `Env` (CLI runner with
+`--token` injection and per-command timeouts), assertions, project/environment
+fixtures, and the preflight that classifies tokens with the same detection railctl
+itself uses (`internal/api`).
 
-### Test Phases
+**`account/`** — small by design. Exclusive to an account token: workspace
+enumeration and `-w` disambiguation (create with no `-w` on a multi-workspace
+account fails; explicit `-w` round-trips).
 
-1. **Pre-flight Checks** — Validate binary, token, and dependencies
-2. **Project Operations** — Create, list, describe, error handling
-3. **Environment Operations** — Create, list, describe, error handling
-4. **Service Operations** — Create with flags, list, describe, substring matching
-5. **Variable Operations** — Set, get, delete, skip-deployment flag
-6. **Volume Operations** — Create, attach, describe, update, error handling
-7. **Deployment Operations** — List, logs with various flags, error handling
-8. **Update Service Operations** — Image updates, deploy config, healthcheck, combined updates
-9. **Deployment Lifecycle** — Rollback (delete deployment), reactivate (update deployment --set-active)
-10. **Error Handling & Edge Cases** — Invalid inputs, missing flags, env var overrides, substring resolution
-11. **Cleanup** — Delete resources in reverse order
+**`workspace/`** — exclusive to a workspace token: project and environment
+lifecycle (with implicit workspace inference — no `-w` needed), minting project
+tokens for arbitrary projects, `-w` rejection on a bound token, and the `TestSmoke`
+full-lifecycle walk.
 
-### Total Test Cases
+**`project/`** — the bulk. In-scope mechanics (services, variables, volumes,
+backups, deployments, apply/diff) run **flag-free**: the token carries its
+(project, environment) scope, so dropping `-p`/`-e` is itself the implicit-scoping
+assertion. Plus the boundary fail-fasts: project enumeration denied, contradicting
+`-p`/`-e` flags refused, self-minting within scope. Its `TestMain` fixture: the
+workspace token creates a fixture project, mints a project token scoped to it
+(that bootstrap is itself the proof that workspace→project minting works), every
+test runs under the minted token — which lives only in process memory — and
+teardown runs with the workspace token.
 
-**~140+ test assertions** covering:
-- ✅ Success paths for all commands
-- ✅ All output formats (table, wide, json, yaml)
-- ✅ All command flags and combinations
-- ✅ Error handling (missing flags, nonexistent resources, invalid inputs)
-- ✅ Environment variable overrides
-- ✅ Substring matching for project/environment/service resolution
-- ✅ Deployment lifecycle (rollback, reactivate)
+## How to run
 
-## Prerequisites
+Tokens (see `.envrc.example`; with [direnv](https://direnv.net/), copy it to
+`tests/e2e/.envrc` and `direnv allow` — the make targets pick the vars up from the
+environment):
 
-1. **Railway Account & Token**
-   ```bash
-   export RAILWAY_TOKEN="your-token-here"
-   
-   ```
+| Variable | Needed by |
+|---|---|
+| `RAILWAY_ACCOUNT_TOKEN` | `account/` — account token (railway.app/account/tokens, **no** workspace selected) |
+| `RAILWAY_WORKSPACE_TOKEN` | `workspace/` and `project/` — workspace-scoped token |
 
-2. **railctl Binary**
-   ```bash
-   cd /path/to/railway-cli
-   go build -o railctl ./cmd/railctl
-   ```
-
-3. **Dependencies**
-   - `jq` — JSON parsing (required)
-   - `yq` — YAML parsing (optional, for YAML validation)
-
-## Usage
-
-### Basic Run
+Make targets (each builds the binary first):
 
 ```bash
-cd /path/to/railway-cli
-./tests/e2e/run.sh
+make test-e2e-account     # L1, timeout 10m
+make test-e2e-workspace   # L2, timeout 20m
+make test-e2e-project     # L3 (bulk), timeout 25m
+make test-e2e             # all three, top-down: account → workspace → project
+make test-smoke           # TestSmoke only (~1min, lives in the workspace group)
 ```
 
-### Quick Setup
+Run a single test directly:
 
 ```bash
-cd tests/e2e
-# Copy .envrc.example to .envrc and fill in your tokens
-./run.sh
+RAILCTL=$PWD/railctl RAILWAY_WORKSPACE_TOKEN=... \
+  go test -tags e2e -v -run TestBoundaries ./tests/e2e/project/...
 ```
 
-### Environment Variables
+## Preflight: wrong tokens refuse to run
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `RAILWAY_TOKEN` | Railway API token | **Required** |
-| `RAILCTL` | Path to railctl binary | `../../railctl` |
-| `E2E_PROJECT` | Custom project name | `e2e-test-<timestamp>-<random>` |
-| `E2E_KEEP` | Skip cleanup (for debugging) | `0` |
-| `E2E_VERBOSE` | Show command stdout | `0` |
+Each group's `TestMain` calls `harness.RequireToken`, which classifies the token
+against the live API using the same detection railctl itself uses
+(`IsProjectToken` / `IsWorkspaceToken` / account fallback) and **exits with an
+actionable message** if the env var is missing, the token fails detection, or its
+scope mismatches the group (e.g. an account token in `RAILWAY_WORKSPACE_TOKEN`).
+Wrong-token confusion is structurally impossible: the suite refuses to run rather
+than producing misleading results.
 
-### Examples
+Compile-check mode skips the preflight (and the project group's fixture), since no
+test executes:
 
 ```bash
-# Basic run
-RAILWAY_TOKEN=xxx ./run.sh
-
-# Verbose output (show command stdout)
-E2E_VERBOSE=1 ./run.sh
-
-# Keep resources for debugging
-E2E_KEEP=1 ./run.sh
-
-# Custom project name
-E2E_PROJECT=my-test ./run.sh
-
-# Use specific railctl binary
-RAILCTL=/usr/local/bin/railctl ./run.sh
+go test -tags e2e -run '^$' ./tests/e2e/...
 ```
-
-## Output Format
-
-```
-  ┌─────────────────────────────────────────────────┐
-  │         railctl E2E Test Suite                   │
-  └─────────────────────────────────────────────────┘
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Pre-flight Checks
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  [001] railctl binary exists                                    PASS
-  [002] RAILWAY_TOKEN is set                                     PASS
-  [003] jq is installed                                          PASS
-  [004] railctl --version                                        PASS
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Phase 1: Project Operations
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  [005] create project                                           PASS
-  [006] get projects (table)                                     PASS
-  [007] get projects -o json                                     PASS
-  ...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Test Results
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  Passed:  140
-  Failed:  0
-  Skipped: 2
-  Total:   142
-
-  ✓ All tests passed!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-## Test Philosophy
-
-### Sequential Flow
-Unlike traditional unit tests that isolate each test, this E2E suite uses a **single sequential flow** that:
-- Creates resources once (project → environment → service)
-- Tests all operations in dependency order
-- Cleans up in reverse order
-
-This approach:
-- ✅ Mimics real-world usage patterns
-- ✅ Reduces API calls and test time
-- ✅ Avoids Railway rate limits (project/env creation has 30s cooldown)
-- ✅ Tests the full lifecycle of resources
-
-### Error Recovery
-- **Emergency cleanup** on script failure/interrupt (Ctrl+C)
-- **Graceful degradation** — Skips tests when resources aren't available (e.g., no deployment IDs yet)
-- **Clear failure messages** — Shows exactly what failed and why
 
 ## Debugging
 
-### Keep Resources After Run
+- **`E2E_KEEP=1`** — on a **failed** run, skips cleanup so you can inspect
+  resources in the Railway dashboard (harness fixtures keep their project only if
+  the test failed; the project group keeps its fixture only on a non-zero exit).
+  Remember to delete the leftovers manually.
+- **`E2E_PROJECT=<name>`** — overrides the generated project name in
+  `harness.SetupProject` (used by the account and workspace groups). The project
+  is still created and torn down — this pins the name, it does not attach to an
+  existing project. The project group ignores it (its fixture always generates a
+  unique name).
+- **`RAILCTL=<path>`** — path to the binary under test; without it the harness
+  walks upward from the working directory looking for `railctl`.
 
-```bash
-E2E_KEEP=1 ./run.sh
-```
+## Legacy
 
-This skips cleanup so you can inspect resources in Railway's dashboard.
-
-**⚠️ Remember to manually delete the project when done!**
-
-### Verbose Mode
-
-```bash
-E2E_VERBOSE=1 ./run.sh
-```
-
-Shows stdout/stderr for every command, helpful for diagnosing failures.
-
-### Inspect Specific Test
-
-```bash
-# Run the script, it will fail/skip at the first error
-# Then use railctl directly to debug:
-./railctl get projects -p e2e-test-1707600000-abc123 -o json
-```
-
-## CI/CD Integration
-
-This test suite is designed for CI/CD pipelines:
-
-```yaml
-# Example GitHub Actions workflow
-- name: Run E2E Tests
-  env:
-    RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-  run: |
-    go build -o railctl ./cmd/railctl
-    ./tests/e2e/run.sh
-```
-
-Exit code: **0** if all tests pass, **non-zero** otherwise.
-
-## Known Limitations
-
-1. **Rate Limits** — Railway limits project/environment creation to 1 per 30 seconds. This suite respects that but tests may take 5-10 minutes to complete.
-
-2. **Deployment Timing** — Some tests wait for deployments to register. If Railway is slow, some deployment-related tests may be skipped (but won't fail).
-
-3. **Logs Availability** — Build logs may not be immediately available. The suite accepts "no logs" as a valid state for recent deployments.
-
-4. **Sequential Dependencies** — If an early test fails (e.g., project creation), subsequent tests will cascade fail or skip.
-
-## Contributing
-
-When adding new commands or flags to `railctl`:
-
-1. Add test cases to the appropriate phase function
-2. Test both success and error paths
-3. Test all output formats if applicable
-4. Add edge cases to `test_error_handling`
-5. Update the "Test Coverage" section in this README
-
-## See Also
-
-- [Railway CLI Documentation](https://docs.railway.app/reference/cli)
-- [Project README](../../README.md)
-- [Example Deployments](../../examples/)
+`run.sh` is the legacy flat bash suite — untouched, superseded by the Go groups,
+candidate for deletion in a follow-up.
