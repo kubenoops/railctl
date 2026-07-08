@@ -15,6 +15,7 @@ source .envrc                      # token + secrets (see above)
 railctl diff  -f stack.yaml        # exit != 0 while anything would change
 railctl apply -f stack.yaml --await
 railctl diff  -f stack.yaml        # now empty — state matches the manifest
+railctl delete -f stack.yaml --yes # teardown — deletes the declared services + postgres volume
 ```
 
 With a project token no `-p`/`-e` flags are needed — the token carries its

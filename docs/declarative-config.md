@@ -4,7 +4,8 @@
 
 railctl supports declarative resource management via YAML config files.
 Define your desired infrastructure state in a config file, then use
-`railctl apply` to create/update resources and `railctl diff` to preview changes.
+`railctl apply` to create/update resources, `railctl diff` to preview changes,
+and `railctl delete -f` to tear down what the config declares.
 
 ## Commands
 
@@ -48,6 +49,51 @@ no changes, 1 if differences exist (useful for CI/CD).
 | `--prune`    |       | Include unmanaged resources in diff              |
 | `--no-color` |       | Disable colored output                           |
 | `--color`    |       | Force colored output even when not a terminal (CI) |
+
+### `railctl delete -f`
+
+```bash
+railctl delete -f <file-or-directory> [flags]
+```
+
+Tear down the resources a config declares — the deletion counterpart of
+`apply`. The existing `delete` verb group gains file-mode: without `-f` it
+still dispatches to its subcommands (`delete service`, `delete volume`, …).
+
+Semantics:
+
+- **Services** named in the config that exist live are deleted in **reverse
+  manifest order** (dependents declared later go first). Declared services
+  that don't exist live are reported as `not found — skipping` and do not
+  cause an error.
+- **Volumes** declared in the config (`volume.mountPath`) are deleted *after*
+  all services: deleting a service orphans its volume, so railctl identifies
+  each declared volume by its mount path up front and removes it explicitly.
+- **Confirmation:** the command lists everything that will be deleted and
+  prompts `[y/N]`; pass `--yes`/`-y` to skip the prompt (automation).
+- **Scope:** only what the manifest declares is deleted. Live services not in
+  the config are never touched (no `--prune`-style extras), and the
+  environment and project are **never** deleted.
+- **Summary / exit code:** ends with
+  `N services deleted, M volumes deleted, K skipped (not found)` and exits
+  non-zero only when an actual deletion fails (partial failures are reported
+  individually).
+- `$env()` references are **not** expanded on delete — deletion only needs
+  service names and mount paths, so teardown works without the apply-time
+  secrets in your environment.
+
+Project/environment resolve exactly like `apply`/`diff`: `-p`/`-e` flags win,
+then the config's `project:`/`environment:` fields; under a project token no
+flags are needed (the scope is baked into the token).
+
+**Flags:**
+
+| Flag            | Short | Description                                      |
+| --------------- | ----- | ------------------------------------------------ |
+| `--file`        | `-f`  | Path to YAML config file or directory (enables declarative mode) |
+| `--yes`         | `-y`  | Skip confirmation prompt                         |
+| `--project`     | `-p`  | Project name (overrides config file)             |
+| `--environment` | `-e`  | Environment name (overrides config file)         |
 
 ## Config File Schema
 
@@ -386,6 +432,9 @@ railctl apply -f config.yaml -p my-app -e production --await
 
 # Dry run in CI to preview changes
 railctl apply -f config.yaml -p my-app -e production --dry-run
+
+# Tear down everything the config declares (ephemeral/preview environments)
+railctl delete -f config.yaml -p my-app -e preview --yes
 ```
 
 ### Private Registry
