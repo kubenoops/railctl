@@ -3,8 +3,9 @@
 # The declarative equivalent of configs/01..04: postgres + redis + n8n primary
 # + n8n workers, one file. Deploy with:
 #
-#   railctl diff  -f stack.yaml     # show what would change (exit != 0 if any)
-#   railctl apply -f stack.yaml     # reconcile live state to this manifest
+#   railctl diff  -f stack.yaml           # show what would change (exit != 0 if any)
+#   railctl apply -f stack.yaml           # reconcile live state to this manifest
+#   railctl delete -f stack.yaml --yes    # teardown: delete these services + declared volumes
 #
 # Works flag-free under a project token (scope is baked into the token);
 # with a workspace/account token pass -p/-e as usual.
@@ -60,6 +61,9 @@ services:
     networking:
       domain:
         port: 5678
+      customDomains:
+        - name: n8n-test.innovativerealities.com
+          port: 5678
     variables:
       # Database connection (Railway service references resolve at runtime)
       DB_TYPE: "postgresdb"

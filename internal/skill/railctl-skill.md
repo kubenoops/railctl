@@ -57,7 +57,7 @@ printing the token value.
 | Create / delete **projects** | yes | yes | no |
 | Create / delete **environments** | yes | yes | no |
 | Services / variables / volumes / backups / domains / logs / deploys | yes | yes | yes — within its one project+environment |
-| `apply` / `diff` (declarative) | yes | yes | yes — its environment only |
+| `apply` / `diff` / `delete -f` (declarative) | yes | yes | yes — its environment only |
 | Deployment **rollback** (`delete deployment`) | yes | yes | yes |
 | Deployment **reactivation** (`update deployment --set-active`) | yes | yes | no — workspace-level capability |
 | Mint project tokens (`token create`) | yes (any project) | yes (any project in its workspace) | yes — **its own project+environment only** |
@@ -184,7 +184,8 @@ railctl update volume my-data --attach -s backend ...        # attach/detach
 railctl delete volume my-data --yes -p my-app -e production
 ```
 Volumes cannot change mount path in place via apply; deleting a service orphans
-its volume — delete volumes explicitly.
+its volume — delete volumes explicitly (`delete -f` does this for declared
+volumes automatically).
 
 ### Volume backups
 ```bash
@@ -219,7 +220,7 @@ unnecessary; mismatching flags error).
 
 ---
 
-## 4. Declarative configuration (`apply` / `diff`)
+## 4. Declarative configuration (`apply` / `diff` / `delete -f`)
 
 Infrastructure-as-code for a whole environment:
 
@@ -257,6 +258,7 @@ railctl diff  -f stack.yaml -p my-app -e production   # exit != 0 when changes e
 railctl apply -f stack.yaml -p my-app -e production --dry-run
 railctl apply -f stack.yaml -p my-app -e production --await   # wait for deploy
 railctl apply -f dir-of-yamls/ -p my-app -e production        # whole directory
+railctl delete -f stack.yaml -p my-app -e production --yes    # teardown: declared services + volumes
 ```
 
 Semantics worth knowing:
@@ -271,6 +273,11 @@ Semantics worth knowing:
 - Secrets: `$env(NAME)` pulls from your local environment at apply time — keep
   secrets out of the YAML; pair with `.envrc`.
 - `--prune` deletes services not present in the config — use deliberately.
+- `delete -f` is the teardown counterpart: deletes only the manifest's
+  services (reverse manifest order, so dependents go first) and their declared
+  volumes; live services outside the config, the environment, and the project
+  are never touched. Prompts with the doomed list unless `--yes`. `$env()`
+  secrets are not needed at delete time.
 
 ---
 
