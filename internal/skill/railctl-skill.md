@@ -144,6 +144,14 @@ railctl create environment staging -p my-app
 railctl delete environment staging -p my-app --yes
 ```
 
+**Delete protection:** an environment whose shared (environment-level)
+variable `DELETE_PROTECTION` is truthy (`true`/`1`/`yes`/`on`,
+case-insensitive) cannot be deleted, nor can its project — railctl refuses
+with no bypass flag; unset the variable to allow deletion. Set it in the
+Railway dashboard (shared variables); the CLI currently has no serviceless
+`set variable`. If the protection state cannot be read, deletion is refused
+(fail-closed).
+
 ### Services
 ```bash
 railctl get services -p my-app -e production             # alias: svc

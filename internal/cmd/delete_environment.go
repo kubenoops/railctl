@@ -77,6 +77,13 @@ func runDeleteEnvironment(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cannot delete the last environment in project %q", project.Name)
 	}
 
+	// Refuse to delete a protected environment — checked before the
+	// confirmation prompt so protection fails fast, and never bypassed by
+	// --yes (which only skips the prompt).
+	if err := cmdutil.CheckDeleteProtection(client, project.ID, env); err != nil {
+		return err
+	}
+
 	// Confirm deletion
 	if !deleteEnvironmentYes {
 		fmt.Printf("Are you sure you want to delete environment %q from project %q? This action cannot be undone.\n",

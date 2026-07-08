@@ -56,6 +56,18 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Refuse to delete the project if any of its environments is
+	// delete-protected — checked before the confirmation prompt so
+	// protection fails fast, and never bypassed by --yes (which only
+	// skips the prompt).
+	environments, err := client.ListEnvironments(project.ID)
+	if err != nil {
+		return fmt.Errorf("failed to list environments: %w", err)
+	}
+	if err := cmdutil.CheckProjectDeleteProtection(client, project, environments); err != nil {
+		return err
+	}
+
 	// Check if project has services and environments (deletion guard)
 	if len(project.Services) > 0 {
 		return fmt.Errorf("cannot delete project %q: has %d service(s). Delete services first or use Railway dashboard",
