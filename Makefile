@@ -1,4 +1,4 @@
-.PHONY: build clean test test-e2e test-smoke install build-all gen gen-check
+.PHONY: build clean test test-e2e test-e2e-account test-e2e-workspace test-e2e-project test-smoke install build-all gen gen-check
 
 # Binary name
 BINARY=railctl
@@ -39,15 +39,30 @@ clean:
 test:
 	go test -v ./...
 
-# Run E2E tests (requires RAILWAY_TOKEN; loads via direnv from tests/e2e/.envrc)
-test-e2e: build
-	
-	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 20m ./tests/e2e/...
+# E2E tests are split into three groups keyed to Railway token scope
+# (see tests/e2e/README.md and docs/token-capability-matrix.md).
+# Tokens load via direnv from tests/e2e/.envrc.
 
-# Run smoke E2E test only (~1min, full lifecycle, no permutations)
+# Run L1 account-scope E2E tests (needs RAILWAY_ACCOUNT_TOKEN)
+test-e2e-account: build
+	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 10m ./tests/e2e/account/...
+
+# Run L2 workspace-scope E2E tests (needs RAILWAY_WORKSPACE_TOKEN)
+test-e2e-workspace: build
+	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 20m ./tests/e2e/workspace/...
+
+# Run L3 project-scope E2E tests — the bulk group (needs RAILWAY_WORKSPACE_TOKEN;
+# the group's TestMain mints its own project token)
+test-e2e-project: build
+	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 25m ./tests/e2e/project/...
+
+# Run all E2E groups top-down: account → workspace → project
+# (needs both RAILWAY_ACCOUNT_TOKEN and RAILWAY_WORKSPACE_TOKEN)
+test-e2e: test-e2e-account test-e2e-workspace test-e2e-project
+
+# Run smoke E2E test only (~1min, full lifecycle; lives in the workspace group)
 test-smoke: build
-	
-	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -run TestSmoke -timeout 3m ./tests/e2e/...
+	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -run TestSmoke -timeout 5m ./tests/e2e/workspace/...
 
 # Regenerate embedded assets (copies docs/railctl-skill.md into internal/skill/)
 gen:
@@ -76,8 +91,11 @@ help:
 	@echo "  install         - Install to GOPATH/bin"
 	@echo "  clean           - Remove build artifacts"
 	@echo "  test            - Run Go unit tests"
-	@echo "  test-e2e        - Build and run all E2E tests (needs RAILWAY_TOKEN, ~20min)"
-	@echo "  test-smoke      - Build and run smoke E2E test (needs RAILWAY_TOKEN, ~1min)"
+	@echo "  test-e2e        - Run all E2E groups top-down (needs RAILWAY_ACCOUNT_TOKEN + RAILWAY_WORKSPACE_TOKEN)"
+	@echo "  test-e2e-account   - Run L1 account-scope E2E group (needs RAILWAY_ACCOUNT_TOKEN)"
+	@echo "  test-e2e-workspace - Run L2 workspace-scope E2E group (needs RAILWAY_WORKSPACE_TOKEN)"
+	@echo "  test-e2e-project   - Run L3 project-scope E2E group (needs RAILWAY_WORKSPACE_TOKEN; mints its own project token)"
+	@echo "  test-smoke      - Build and run smoke E2E test (needs RAILWAY_WORKSPACE_TOKEN, ~1min)"
 	@echo "  fmt             - Format Go code"
 	@echo "  lint            - Run golangci-lint"
 	@echo ""

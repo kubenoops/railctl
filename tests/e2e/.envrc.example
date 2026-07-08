@@ -1,6 +1,14 @@
-# Railway API tokens for E2E testing.
-# You need at least one token. Multiple tokens enable load balancing across test suites.
-# Get tokens from: https://railway.app/account/tokens
-export RAILWAY_TOKEN_1="your-railway-api-token-1"
-# export RAILWAY_TOKEN_2="your-railway-api-token-2"
-# export RAILWAY_TOKEN_3="your-railway-api-token-3"
+# Railway API tokens for the three-layer E2E suite (see tests/e2e/README.md).
+# Each test group preflight-classifies its token against the live API and
+# refuses to run if the scope doesn't match — a mismatched token fails fast,
+# it never produces misleading results.
+
+# L1 (account/ group): personal account token.
+# Create at https://railway.app/account/tokens with NO workspace selected.
+export RAILWAY_ACCOUNT_TOKEN="your-account-token"
+
+# L2 (workspace/ group) + L3 (project/ group): workspace-scoped token.
+# Create at https://railway.app/account/tokens WITH a workspace selected.
+# The project group uses it only to bootstrap: it creates a fixture project,
+# mints a project token, and runs its tests under that.
+export RAILWAY_WORKSPACE_TOKEN="your-workspace-token"
