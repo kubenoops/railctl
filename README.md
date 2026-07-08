@@ -329,8 +329,10 @@ railctl delete variable OLD_KEY -p my-app -e production -s api --yes
 ### Project Tokens
 
 Project tokens are scoped to a single project **and** environment — a much
-smaller blast radius than an account or workspace token. Minting requires an
-account or workspace token (a project-scoped token cannot create tokens).
+smaller blast radius than an account or workspace token. Any token type can
+mint: account/workspace tokens target any project they can see (`-p`/`-e`
+required), while a project token self-mints for its own scope only (flags
+unnecessary; values naming a different scope fail fast).
 
 ```bash
 # Create a token (printed once, to stdout — store it immediately)
