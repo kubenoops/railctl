@@ -32,6 +32,7 @@ func TestContent_CoversTokenModel(t *testing.T) {
 		"DELETE_PROTECTION",    // deletion tripwire
 		"Zero → Hero",          // the canonical operating path
 		"stack.yaml",           // single-manifest doctrine
+		"Drift discipline",     // imperative changes must be reconciled
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("embedded skill is missing expected content: %q", want)

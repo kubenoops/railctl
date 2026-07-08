@@ -31,7 +31,9 @@ rest is mostly mechanics:
 2. **Declarative from day zero.** One manifest (`stack.yaml`) is the source of
    truth for the whole environment; `railctl diff`/`apply`/`delete -f` form
    the reconcile loop. Imperative commands are for inspection, monitoring,
-   and surgical exceptions — not for building up state by hand.
+   and surgical exceptions — and **every imperative change must be reconciled
+   back into the manifest immediately** (see *Drift discipline*, §5): run
+   `diff`, backport the change, get back to exit 0.
 3. **Least privilege, immediately.** The moment a project + environment
    exists, mint a **project token** scoped to exactly that pair and do all
    further work with it. Workspace/account tokens are for provisioning and
@@ -197,7 +199,8 @@ railctl diff  -f stack.yaml            # exit 0: live state matches manifest
 ```
 
 `diff`'s exit code is the CI gate: 0 = in sync, 1 = drift (an expected
-report, not an error — no error styling is printed).
+report, not an error — no error styling is printed). Keep this loop closed:
+after ANY imperative change, reconcile (see *Drift discipline*, §5).
 
 **Step 6 — publish.**
 
@@ -247,8 +250,8 @@ here, so private images come from **your** CI:
    registries require a Railway Pro plan.
 4. Releasing = bump the image tag in `stack.yaml` + `apply --await`
    (hotfix path: `railctl update service app --image ghcr.io/o/app:SHA
-   --await-completion`, then backport the tag to the manifest so `diff`
-   returns to 0).
+   --await-completion`, then reconcile per *Drift discipline*, §5 — the tag
+   goes into the manifest until `diff` returns to 0).
 
 **Step 8 — monitor & operate** (§6: deployments & logs).
 
@@ -352,6 +355,30 @@ services:
   the `[y/N]` prompt.
 - Volumes **cannot change mountPath in place**; a deleted service **orphans**
   its volume.
+
+### Drift discipline — reconcile every imperative change
+
+The manifest is only the source of truth while it matches reality. **Any
+change made imperatively** (`update service --image`, `set variable`,
+`create domain`, `update volume`, …) **creates drift and must be reconciled
+into the manifest immediately**:
+
+```bash
+railctl diff -f stack.yaml       # shows exactly what you changed out-of-band
+$EDITOR stack.yaml               # backport the change (or apply to revert it)
+railctl diff -f stack.yaml       # exit 0 — truth restored
+```
+
+`diff` makes this trivial: it shows the delta field-by-field, so backporting
+is a copy of what it prints. The alternative direction also works — if the
+imperative change was a mistake, `apply` reverts live state to the manifest.
+
+**Known blind spot:** `diff`/`apply` reconcile only what railctl models
+(services, deploy config, variables, volumes + backup schedules, domains,
+TCP proxies). Configuration made in the **Railway console** that railctl does
+not support is invisible to `diff` and will be neither detected nor reverted
+— it silently coexists. Keep unsupported console-side settings to a minimum,
+and document them next to the manifest when unavoidable.
 
 ---
 
