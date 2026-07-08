@@ -61,9 +61,6 @@ services:
     networking:
       domain:
         port: 5678
-      customDomains:
-        - name: n8n-test.innovativerealities.com
-          port: 5678
     variables:
       # Database connection (Railway service references resolve at runtime)
       DB_TYPE: "postgresdb"
