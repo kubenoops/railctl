@@ -49,6 +49,8 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 	client := newAPIClient(tkn)
 
 	// Fast, actionable failure: a project-scoped token cannot mint tokens.
+	// Note: on an IsProjectToken() error we fall through; ResolveContext re-checks
+	// and surfaces it. The err is intentionally not handled here.
 	if isProject, err := client.IsProjectToken(); err == nil && isProject {
 		return fmt.Errorf("creating project tokens requires an account or workspace token; a project-scoped token cannot mint tokens")
 	}
