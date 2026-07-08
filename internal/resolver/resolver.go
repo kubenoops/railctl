@@ -8,14 +8,34 @@ import (
 	"github.com/kubenoops/railctl/internal/types"
 )
 
+// maxAvailable caps how many candidate names ErrNotFound renders before
+// truncating with an ellipsis.
+const maxAvailable = 10
+
 // ErrNotFound indicates a resource was not found.
 type ErrNotFound struct {
 	Resource string
 	Name     string
+	// In optionally names the containing resource, e.g. "in project 'my-app'".
+	In string
+	// Available optionally lists the names that DO exist in the collection
+	// searched, in input order, so the user can pick a valid one.
+	Available []string
 }
 
 func (e ErrNotFound) Error() string {
-	return fmt.Sprintf("%s '%s' not found", e.Resource, e.Name)
+	msg := fmt.Sprintf("%s '%s' not found", e.Resource, e.Name)
+	if e.In != "" {
+		msg += " " + e.In
+	}
+	if len(e.Available) > 0 {
+		names := e.Available
+		if len(names) > maxAvailable {
+			names = append(append([]string{}, names[:maxAvailable]...), "…")
+		}
+		msg += " — available: " + strings.Join(names, ", ")
+	}
+	return msg
 }
 
 // ErrAmbiguous indicates multiple resources matched the name.
@@ -57,7 +77,11 @@ func ResolveProject(projects []types.Project, name string) (types.Project, error
 
 	switch len(matches) {
 	case 0:
-		return types.Project{}, ErrNotFound{Resource: "project", Name: name}
+		available := make([]string, len(projects))
+		for i, p := range projects {
+			available[i] = p.Name
+		}
+		return types.Project{}, ErrNotFound{Resource: "project", Name: name, Available: available}
 	case 1:
 		return matches[0], nil
 	default:
@@ -97,7 +121,11 @@ func ResolveEnvironment(environments []types.Environment, name string) (types.En
 
 	switch len(matches) {
 	case 0:
-		return types.Environment{}, ErrNotFound{Resource: "environment", Name: name}
+		available := make([]string, len(environments))
+		for i, env := range environments {
+			available[i] = env.Name
+		}
+		return types.Environment{}, ErrNotFound{Resource: "environment", Name: name, Available: available}
 	case 1:
 		return matches[0], nil
 	default:
@@ -130,7 +158,11 @@ func ResolveService(services []types.ServiceDetail, name string) (types.ServiceD
 
 	switch len(matches) {
 	case 0:
-		return types.ServiceDetail{}, ErrNotFound{Resource: "service", Name: name}
+		available := make([]string, len(services))
+		for i, svc := range services {
+			available[i] = svc.Name
+		}
+		return types.ServiceDetail{}, ErrNotFound{Resource: "service", Name: name, Available: available}
 	case 1:
 		return matches[0], nil
 	default:
@@ -170,7 +202,11 @@ func ResolveWithName(name string, resources []Resource) (id string, resolvedName
 
 	switch len(matches) {
 	case 0:
-		return "", "", ErrNotFound{Resource: "resource", Name: name}
+		available := make([]string, len(resources))
+		for i, r := range resources {
+			available[i] = r.Name
+		}
+		return "", "", ErrNotFound{Resource: "resource", Name: name, Available: available}
 	case 1:
 		return matches[0].ID, matches[0].Name, nil
 	default:

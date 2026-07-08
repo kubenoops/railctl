@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -112,6 +114,87 @@ func TestErrNotFound_Error(t *testing.T) {
 	expected := "project 'my-app' not found"
 	if err.Error() != expected {
 		t.Errorf("Error() = %q, expected %q", err.Error(), expected)
+	}
+}
+
+func TestErrNotFound_Error_WithAvailable(t *testing.T) {
+	err := ErrNotFound{
+		Resource:  "project",
+		Name:      "foo",
+		Available: []string{"api", "web", "lingo-deployment"},
+	}
+	expected := "project 'foo' not found — available: api, web, lingo-deployment"
+	if err.Error() != expected {
+		t.Errorf("Error() = %q, expected %q", err.Error(), expected)
+	}
+}
+
+func TestErrNotFound_Error_WithInAndAvailable(t *testing.T) {
+	err := ErrNotFound{
+		Resource:  "environment",
+		Name:      "prod",
+		In:        "in project 'my-app'",
+		Available: []string{"production", "staging"},
+	}
+	expected := "environment 'prod' not found in project 'my-app' — available: production, staging"
+	if err.Error() != expected {
+		t.Errorf("Error() = %q, expected %q", err.Error(), expected)
+	}
+}
+
+func TestErrNotFound_Error_AvailableCappedAtTen(t *testing.T) {
+	available := make([]string, 12)
+	for i := range available {
+		available[i] = fmt.Sprintf("svc-%02d", i)
+	}
+	err := ErrNotFound{Resource: "service", Name: "nope", Available: available}
+	expected := "service 'nope' not found — available: svc-00, svc-01, svc-02, svc-03, svc-04, svc-05, svc-06, svc-07, svc-08, svc-09, …"
+	if err.Error() != expected {
+		t.Errorf("Error() = %q, expected %q", err.Error(), expected)
+	}
+	if len(err.Available) != 12 {
+		t.Errorf("rendering must not mutate Available; len = %d, expected 12", len(err.Available))
+	}
+}
+
+func TestResolveNotFound_PopulatesAvailable(t *testing.T) {
+	projects := []types.Project{
+		{ID: "1", Name: "api"},
+		{ID: "2", Name: "web"},
+	}
+	_, err := ResolveProject(projects, "zzz")
+	var nf ErrNotFound
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected ErrNotFound, got %T", err)
+	}
+	if len(nf.Available) != 2 || nf.Available[0] != "api" || nf.Available[1] != "web" {
+		t.Errorf("expected Available [api web] in input order, got %v", nf.Available)
+	}
+
+	envs := []types.Environment{{ID: "e1", Name: "production"}, {ID: "e2", Name: "staging"}}
+	_, err = ResolveEnvironment(envs, "zzz")
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected ErrNotFound, got %T", err)
+	}
+	if len(nf.Available) != 2 || nf.Available[0] != "production" || nf.Available[1] != "staging" {
+		t.Errorf("expected Available [production staging], got %v", nf.Available)
+	}
+
+	svcs := []types.ServiceDetail{{ID: "s1", Name: "api"}, {ID: "s2", Name: "worker"}}
+	_, err = ResolveService(svcs, "zzz")
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected ErrNotFound, got %T", err)
+	}
+	if len(nf.Available) != 2 || nf.Available[0] != "api" || nf.Available[1] != "worker" {
+		t.Errorf("expected Available [api worker], got %v", nf.Available)
+	}
+
+	_, _, err = ResolveWithName("zzz", []Resource{{ID: "r1", Name: "alpha"}, {ID: "r2", Name: "beta"}})
+	if !errors.As(err, &nf) {
+		t.Fatalf("expected ErrNotFound, got %T", err)
+	}
+	if len(nf.Available) != 2 || nf.Available[0] != "alpha" || nf.Available[1] != "beta" {
+		t.Errorf("expected Available [alpha beta], got %v", nf.Available)
 	}
 }
 

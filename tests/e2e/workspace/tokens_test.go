@@ -55,6 +55,9 @@ func TestProjectTokens(t *testing.T) {
 	t.Run("delete_not_found", func(t *testing.T) {
 		r := env.RunFail(t, "token", "delete", "nonexistent-id-xyz", "-p", env.ProjectName, "--yes")
 		harness.AssertContains(t, r.Stderr+r.Stdout, "not found")
+		// The token minted by the create subtest is enumerable, so the
+		// not-found error must list the existing token names.
+		harness.AssertContains(t, r.Stderr+r.Stdout, "available:")
 	})
 
 	t.Run("delete", func(t *testing.T) {

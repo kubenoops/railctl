@@ -34,7 +34,11 @@ func resolveVolumeInstance(client api.APIClient, projectID, environmentID, volum
 
 	switch len(matches) {
 	case 0:
-		return nil, resolver.ErrNotFound{Resource: "volume", Name: volumeNameOrID}
+		available := make([]string, len(volumes))
+		for i := range volumes {
+			available[i] = volumes[i].Volume.Name
+		}
+		return nil, resolver.ErrNotFound{Resource: "volume", Name: volumeNameOrID, Available: available}
 	case 1:
 		return &matches[0], nil
 	default:

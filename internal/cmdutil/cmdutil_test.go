@@ -63,6 +63,86 @@ func TestResolveContext_ProjectNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveContext_ProjectNotFound_ListsAvailable(t *testing.T) {
+	mock := &api.MockClient{
+		ListProjectsFunc: func() ([]types.Project, error) {
+			return []types.Project{
+				{ID: "proj-1", Name: "api"},
+				{ID: "proj-2", Name: "web"},
+				{ID: "proj-3", Name: "lingo-deployment"},
+			}, nil
+		},
+	}
+
+	_, err := ResolveContext(mock, ResolveOpts{ProjectName: "nonexistent"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	want := "project 'nonexistent' not found — available: api, web, lingo-deployment"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestResolveContext_EnvironmentNotFound_ListsAvailableAndProject(t *testing.T) {
+	mock := &api.MockClient{
+		ListProjectsFunc: func() ([]types.Project, error) {
+			return []types.Project{{ID: "proj-1", Name: "my-app"}}, nil
+		},
+		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+			return []types.Environment{
+				{ID: "env-1", Name: "production"},
+				{ID: "env-2", Name: "staging"},
+			}, nil
+		},
+	}
+
+	_, err := ResolveContext(mock, ResolveOpts{
+		ProjectName:     "my-app",
+		EnvironmentName: "nonexistent",
+		NeedEnvironment: true,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	want := "environment 'nonexistent' not found in project 'my-app' — available: production, staging"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestResolveContext_ServiceNotFound_ListsAvailableAndEnvironment(t *testing.T) {
+	mock := &api.MockClient{
+		ListProjectsFunc: func() ([]types.Project, error) {
+			return []types.Project{{ID: "proj-1", Name: "my-app"}}, nil
+		},
+		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+		},
+		ListServicesFunc: func(projectID, environmentID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{
+				{ID: "svc-1", Name: "api"},
+				{ID: "svc-2", Name: "worker"},
+			}, nil
+		},
+	}
+
+	_, err := ResolveContext(mock, ResolveOpts{
+		ProjectName:     "my-app",
+		EnvironmentName: "production",
+		ServiceName:     "nonexistent",
+		NeedEnvironment: true,
+		NeedService:     true,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	want := "service 'nonexistent' not found in environment 'production' — available: api, worker"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestResolveContext_WithEnvironment(t *testing.T) {
 	mock := &api.MockClient{
 		ListProjectsFunc: func() ([]types.Project, error) {

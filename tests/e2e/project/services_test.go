@@ -82,7 +82,11 @@ func TestServices(t *testing.T) {
 	// and were dropped; TestBoundaries covers the flag-ignoring behaviour.
 
 	t.Run("describe_nonexistent", func(t *testing.T) {
-		env.RunFail(t, "describe", "service", "nonexistent-svc-xyz")
+		r := env.RunFail(t, "describe", "service", "nonexistent-svc-xyz")
+		// Not-found errors must list the names that DO exist (error-taxonomy
+		// class 3) — this test's service is enumerable in the baked environment.
+		harness.AssertContains(t, r.Stderr+r.Stdout, "not found")
+		harness.AssertContains(t, r.Stderr+r.Stdout, "available:")
 	})
 
 	t.Run("create_no_image", func(t *testing.T) {

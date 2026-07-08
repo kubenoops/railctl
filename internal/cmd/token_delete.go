@@ -61,7 +61,11 @@ func runTokenDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if found == nil {
-		return resolver.ErrNotFound{Resource: "project token", Name: tokenID}
+		available := make([]string, len(tokens))
+		for i := range tokens {
+			available[i] = tokens[i].Name
+		}
+		return resolver.ErrNotFound{Resource: "project token", Name: tokenID, Available: available}
 	}
 
 	if !tokenDeleteYes {

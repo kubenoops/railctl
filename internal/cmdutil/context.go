@@ -5,12 +5,27 @@
 package cmdutil
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/kubenoops/railctl/internal/types"
 )
+
+// containedIn annotates a resolver.ErrNotFound with its containing resource
+// (e.g. "in project 'my-app'") while preserving the error type — so
+// errors.As(err, &resolver.ErrNotFound{}) keeps working and the available
+// candidate names collected by the resolver keep rendering. Non-ErrNotFound
+// errors (e.g. resolver.ErrAmbiguous) pass through unchanged.
+func containedIn(err error, containerResource, containerName string) error {
+	var nf resolver.ErrNotFound
+	if errors.As(err, &nf) {
+		nf.In = fmt.Sprintf("in %s '%s'", containerResource, containerName)
+		return nf
+	}
+	return err
+}
 
 // Context holds the resolved IDs and metadata for a command execution.
 // It is populated by ResolveContext and provides the resolved project,
@@ -111,7 +126,9 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 		}
 		project, err = resolver.ResolveProject(projects, opts.ProjectName)
 		if err != nil {
-			return nil, fmt.Errorf("project '%s' not found", opts.ProjectName)
+			// ErrNotFound already carries the available project names;
+			// ErrAmbiguous carries the matches. Both read well as-is.
+			return nil, err
 		}
 	}
 	ctx.Project = project
@@ -131,7 +148,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 		env, err := resolver.ResolveEnvironment(environments, opts.EnvironmentName)
 		if err != nil {
-			return nil, fmt.Errorf("environment '%s' not found in project '%s'", opts.EnvironmentName, project.Name)
+			return nil, containedIn(err, "project", project.Name)
 		}
 		ctx.Environment = env
 	}
@@ -149,7 +166,7 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 		svc, err := resolver.ResolveService(services, opts.ServiceName)
 		if err != nil {
-			return nil, fmt.Errorf("service '%s' not found in environment '%s'", opts.ServiceName, ctx.Environment.Name)
+			return nil, containedIn(err, "environment", ctx.Environment.Name)
 		}
 		ctx.Service = &svc
 	}
