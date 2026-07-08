@@ -496,14 +496,14 @@ go run ./cmd/railctl --help
 # Run unit + integration tests
 make test
 
-# Run E2E tests (requires RAILWAY_TOKEN; builds binary first)
-make test-e2e
+# Run E2E tests — three groups keyed to token scope (see tests/e2e/README.md)
+make test-e2e-account     # needs RAILWAY_ACCOUNT_TOKEN
+make test-e2e-workspace   # needs RAILWAY_WORKSPACE_TOKEN
+make test-e2e-project     # needs RAILWAY_WORKSPACE_TOKEN (mints its own project token)
+make test-e2e             # all three, top-down (needs both tokens)
 
-# E2E with verbose output
-E2E_VERBOSE=1 make test-e2e
-
-# E2E keeping resources for debugging
-E2E_KEEP=1 make test-e2e
+# E2E keeping resources on failure for debugging
+E2E_KEEP=1 make test-e2e-project
 
 # Run with coverage
 go test ./... -coverprofile=coverage.out
@@ -560,8 +560,11 @@ railway-cli/
 │   │   └── resolver.go       # Resolve names to IDs
 │   └── types/                # Domain models
 │       └── types.go          # Shared type definitions
-├── tests/e2e/                # End-to-end tests
-│   ├── run.sh                # E2E test suite (~100 tests)
+├── tests/e2e/                # End-to-end tests (three groups by token scope)
+│   ├── harness/              # Shared runner + token-type preflight
+│   ├── account/              # L1 — workspace enumeration (account token)
+│   ├── workspace/            # L2 — lifecycle + minting (workspace token)
+│   ├── project/              # L3 — bulk mechanics (minted project token)
 │   └── README.md             # E2E documentation
 ├── docs/                     # Documentation
 │   ├── testing-architecture.md

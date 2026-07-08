@@ -8,7 +8,7 @@ railctl uses a three-tier testing strategy:
 ┌──────────────────────────────────────────────────────────┐
 │                    E2E Tests (Tier 3)                   │
 │     Live Railway API, real binary, real resources       │
-│                tests/e2e/*.go + run.sh                  │
+│    tests/e2e/{account,workspace,project} + harness/     │
 ├──────────────────────────────────────────────────────────┤
 │              Integration Tests (Tier 2)                 │
 │   Cobra commands + mocked API client + output checks    │
@@ -24,7 +24,7 @@ railctl uses a three-tier testing strategy:
 | --------------- | --------------------- | ---------------- | ----------------- | --------------- |
 | **Unit**        | Functions/methods     | Fast (~ms)       | None              | `internal/*/`   |
 | **Integration** | Commands + mock API   | Medium (~s)      | Mock client       | `internal/cmd/` |
-| **E2E**         | Full CLI binary + API | Slow (~5-10 min) | Railway API token | `tests/e2e/`    |
+| **E2E**         | Full CLI binary + API | Slow (~5-10 min) | Railway tokens (per scope) | `tests/e2e/`    |
 
 ---
 
@@ -109,41 +109,45 @@ Validate the entire CLI binary against the live Railway API. These tests exercis
 
 ### Location
 
+The suite is split into **three groups keyed to Railway token scope** — each
+group runs under exactly its own token type and tests only what is exclusive
+to that layer (see `tests/e2e/README.md` and `docs/token-capability-matrix.md`):
+
 ```text
 tests/e2e/
-├── helpers_test.go
-├── smoke_test.go
-├── projects_test.go
-├── environments_test.go
-├── services_test.go
-├── update_service_test.go
-├── variables_test.go
-├── volumes_test.go
-├── deployments_test.go
-└── edge_cases_test.go
+├── harness/      # shared package: Env/runner/assertions + token-type preflight
+├── account/      # L1 — workspace enumeration & -w disambiguation (RAILWAY_ACCOUNT_TOKEN)
+├── workspace/    # L2 — project/env lifecycle, minting, smoke (RAILWAY_WORKSPACE_TOKEN)
+└── project/      # L3 — the bulk: all in-scope mechanics + boundary fail-fasts
+                  #      (TestMain mints its own project token from RAILWAY_WORKSPACE_TOKEN)
 ```
+
+Each group's `TestMain` classifies its token with the same detection railctl
+uses and refuses to run under a mismatched type.
 
 ### Test Levels
 
-| Test             | What it covers                            | Duration | Command             |
-| ---------------- | ----------------------------------------- | -------- | ------------------- |
-| **TestSmoke**    | Full lifecycle, one assertion per command | ~1 min   | `make test-smoke`   |
-| **TestProjects** | Project CRUD + output formats             | ~2 min   | `-run TestProjects` |
-| **TestServices** | Service CRUD + all flags                  | ~3 min   | `-run TestServices` |
-| **Full suite**   | All test files                            | ~10 min  | `make test-e2e`     |
+| Group / test       | What it covers                                    | Duration | Command                  |
+| ------------------ | ------------------------------------------------- | -------- | ------------------------ |
+| **TestSmoke**      | Full lifecycle, one assertion per command          | ~1 min   | `make test-smoke`        |
+| **account**        | Workspace enumeration, `-w` disambiguation         | ~10 s    | `make test-e2e-account`  |
+| **workspace**      | Project/env lifecycle, token minting, smoke        | ~4 min   | `make test-e2e-workspace`|
+| **project**        | Bulk mechanics + fail-fast boundaries (bulk group) | ~7 min   | `make test-e2e-project`  |
+| **Full suite**     | All three groups, top-down                         | ~12 min  | `make test-e2e`          |
 
 ### Running
 
 ```bash
-# Fast smoke test (~1min)
+# Fast smoke test (~1min, workspace group)
 make test-smoke
 
-# Full E2E suite (~10min)
+# Full E2E suite (~12min; needs RAILWAY_ACCOUNT_TOKEN + RAILWAY_WORKSPACE_TOKEN)
 make test-e2e
 
-# Direct invocation
+# One group / one test directly
 go build -o railctl ./cmd/railctl
-RAILCTL=$(pwd)/railctl go test -tags e2e -v -timeout 10m ./tests/e2e/...
+RAILCTL=$(pwd)/railctl RAILWAY_WORKSPACE_TOKEN=... \
+  go test -tags e2e -v -run TestBoundaries ./tests/e2e/project/...
 ```
 
 ---
