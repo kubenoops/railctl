@@ -74,40 +74,6 @@ func TestRunTokenCreate_Success(t *testing.T) {
 	}
 }
 
-func TestRunTokenCreate_ProjectTokenRejected(t *testing.T) {
-	origAPIClient := newAPIClient
-	origProject := project
-	origToken := token
-	defer func() {
-		newAPIClient = origAPIClient
-		project = origProject
-		token = origToken
-	}()
-
-	minted := false
-	mock := tokenTestMock()
-	mock.IsProjectTokenFunc = func() (bool, error) { return true, nil }
-	mock.CreateProjectTokenFunc = func(projectID, environmentID, name string) (string, error) {
-		minted = true
-		return "should-not-happen", nil
-	}
-
-	token = "test-token"
-	project = "my-project"
-	newAPIClient = func(tkn string) api.APIClient { return mock }
-
-	err := tokenCreateCmd.RunE(tokenCreateCmd, []string{"ci"})
-	if err == nil {
-		t.Fatal("expected an error when run with a project-scoped token")
-	}
-	if !strings.Contains(err.Error(), "account or workspace token") {
-		t.Errorf("error = %q, want it to mention 'account or workspace token'", err.Error())
-	}
-	if minted {
-		t.Error("CreateProjectToken must not be called when using a project token")
-	}
-}
-
 func TestRunTokenList_JSON(t *testing.T) {
 	origAPIClient := newAPIClient
 	origProject := project

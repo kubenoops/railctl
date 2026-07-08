@@ -15,8 +15,9 @@ CLI instead of the dashboard.
 
 Verified live against `backboard.railway.com/graphql/v2`:
 - `projectTokenCreate(input: {projectId, environmentId, name}): String!` — returns the
-  raw token once. **A workspace-scoped token is sufficient to mint** (confirmed with a
-  real mint+revoke round-trip); a project-scoped token cannot.
+  raw token once. **Any token type can mint** (confirmed live via railctl): account and
+  workspace tokens mint for the given project+environment; a project token mints within
+  its own project+environment scope.
 - `projectTokenDelete(id: String!): Boolean!` — revoke by id.
 - `projectTokens(projectId: String!): …` — list; exposes `id`, `name`, `environmentId`,
   `createdAt`, and a masked `displayToken` (never the raw value).
@@ -67,12 +68,15 @@ to a command — no unused surface (the `LockVolumeBackup` dead-code smell is av
 
 ## Auth & error handling
 
-Minting requires a **workspace or account** token; a project-scoped token cannot mint.
-`token create` fails fast and actionable *before* the API call:
+`token create` works with **any** token type. Project/environment resolution goes through
+`cmdutil.ResolveContext`: with an account/workspace token, `-p`/`-e` select the target;
+with a project token, the new token is minted within that token's own project+environment
+(`-p`/`-e` are ignored, per the standard project-token behaviour). Any API error on the
+mutation is wrapped with `fmt.Errorf("...: %w", err)`.
 
-- If `client.IsProjectToken()` → error:
-  `"creating project tokens requires an account or workspace token; a project-scoped token cannot mint tokens"`.
-- Any API `Not Authorized` on the mutation is wrapped with the same guidance.
+> Note: an earlier revision guarded `token create` against project tokens, on the
+> assumption they could not mint. Live testing disproved that — a project token mints
+> within its own scope — so the guard was removed.
 
 ## Secret handling
 
@@ -93,9 +97,9 @@ id is not returned by the mutation; `token list` surfaces ids).
 
 - **Client** (`tokens_client_test.go`, `httptest`): create returns the token; list parses
   the connection; delete fires the mutation with the id.
-- **Command** (`token_test.go`, `MockClient`): create success; create-with-project-token →
-  actionable error (no API call); list `-o json`; delete success; delete **cancelled**
-  (answer `n`); delete **not-found** (unknown id). Table-driven where shapes align.
+- **Command** (`token_test.go`, `MockClient`): create success; create `-o json`; list
+  `-o json`; delete success; delete **cancelled** (answer `n`); delete **not-found**
+  (unknown id). Table-driven where shapes align.
 
 ## Docs (styleguide §7)
 

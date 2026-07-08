@@ -14,8 +14,8 @@ var tokenCreateCmd = &cobra.Command{
 	Long: `Create a project token for a project and environment.
 
 The raw token is printed to stdout and shown only once — store it immediately.
-Minting requires an account or workspace token; a project-scoped token cannot
-create tokens.`,
+Works with any token type; with a project token the new token is minted within
+that token's own project and environment (-p/-e are ignored in that case).`,
 	Args: cobra.ExactArgs(1),
 	Example: `  railctl token create ci --project my-app --environment production
   TOKEN=$(railctl token create ci -p my-app -e production)`,
@@ -47,15 +47,6 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	client := newAPIClient(tkn)
-
-	// Fast, actionable failure: a project-scoped token cannot mint tokens.
-	isProject, err := client.IsProjectToken()
-	if err != nil {
-		return fmt.Errorf("failed to check token type: %w", err)
-	}
-	if isProject {
-		return fmt.Errorf("creating project tokens requires an account or workspace token; a project-scoped token cannot mint tokens")
-	}
 
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),
