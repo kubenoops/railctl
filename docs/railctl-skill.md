@@ -54,19 +54,30 @@ The result is cached for the process; detection runs once per invocation.
 | Create / delete **environments** | yes | yes | no |
 | Services / variables / volumes / backups / domains / logs / deploys | yes | yes | yes — within its one project+environment |
 | `apply` / `diff` (declarative) | yes | yes | yes — its environment only |
-| Mint project tokens | yes | yes | no — a project token cannot create tokens |
-| `-w` / `-p` / `-e` flags | honored | `-w` ignored (warning) | `-w`/`-p`/`-e` ignored (warning) — scope is baked into the token |
+| Deployment **rollback** (`delete deployment`) | yes | yes | yes |
+| Deployment **reactivation** (`update deployment --set-active`) | yes | yes | no — workspace-level capability |
+| Mint project tokens (`token create`) | yes (any project) | yes (any project in its workspace) | yes — **its own project+environment only** |
+| `-w` / `-p` / `-e` flags | honored (selection) | `-w` must match its workspace or the command **errors**; `-p`/`-e` honored | flags must **match** the token's baked scope (then accepted silently) or the command **errors** |
 
-**Key limitations to remember:**
+**Key semantics to remember:**
 
 - A **project token** is pinned to exactly one project **and one environment**
-  at mint time. You cannot point it at another environment with `-e` — the flag
-  is ignored. To operate on staging *and* production you need two tokens.
+  at mint time (the API cannot mint an environment-unbound project token). You
+  cannot point it elsewhere: a `-w`/`-p`/`-e` value that contradicts the baked
+  scope **fails fast** (`token is scoped to … but -e '…' was given — refusing
+  to operate …`); a value matching the scope proceeds silently. To operate on
+  staging *and* production you need two tokens.
 - A **project token** cannot enumerate anything above its project: no
-  `get projects`, no workspace queries, no project/environment lifecycle.
-- A **workspace token** behaves like an account token *inside* its workspace,
-  but cannot see or switch workspaces (`-w` is ignored with a warning).
-- Minting a project token requires an **account or workspace** token.
+  `get projects`, no workspace queries, no project/environment lifecycle —
+  these fail fast (`cannot … with a project token — it is scoped to a single
+  project and environment; use an account or workspace token`).
+- A **workspace token** behaves like an account token *inside* its workspace
+  but cannot see or switch workspaces — a mismatching `-w` **errors**, a
+  matching one is accepted silently. `create project` infers the workspace
+  from the token; no `-w` needed.
+- **Any token can mint project tokens** within its reach: account/workspace
+  tokens target any project they can see (`-p`/`-e` required); a project token
+  self-mints for its own scope only (no flags needed).
 
 ### Which token to use
 
@@ -87,8 +98,11 @@ available (`railctl token --help`).
 ## 2. Context resolution: flags → env vars → token scope
 
 Every command resolves context in the order **flag → `RAILCTL_*` env var →
-default**. With a project token, project/environment come from the token itself
-and those flags are ignored.
+default**. With a project token, project/environment come from the token
+itself; a flag or env var naming the *same* project/environment is accepted
+silently, while a *different* one fails fast (contradiction) — stale
+`RAILCTL_PROJECT`/`RAILCTL_ENVIRONMENT` values cannot silently redirect
+commands to the token's scope.
 
 | Flag | Env var | Meaning |
 |---|---|---|
@@ -105,7 +119,9 @@ railctl get services      # flags now optional
 ```
 
 Name arguments resolve **exact match → case-insensitive substring**; ambiguous
-matches error out listing candidates, so unique prefixes are safe.
+matches error out listing candidates, so unique prefixes are safe. Unknown
+names also list what exists: `project 'foo' not found — available: api, web, …`
+(capped at 10).
 
 ---
 
@@ -178,16 +194,24 @@ railctl restore backup <backup-id> --volume my-data ...
   per kind** (~6 days / 1 month / 3 months), not configurable.
 - **Restore semantics:** Railway stages a new volume — you must **deploy the
   service to finalize**, and backups newer than the restore point are removed.
+- **A backup is welded to its volume instance in its environment** (verified):
+  it cannot be restored onto a different volume, cannot follow an environment
+  name (recreating a same-named environment does not resurrect it), and
+  deleting the environment effectively destroys it. Treat
+  `delete environment` as deleting all its backups too — export data that must
+  survive.
 - Prefer managing schedules declaratively (next section).
 
-### Project tokens (where the `token` command group is available)
+### Project tokens
 ```bash
 railctl token create ci -p my-app -e production   # raw token → stdout, ONCE
 railctl token list -p my-app                      # values masked
 railctl token delete <id> -p my-app --yes
 ```
-Requires an account/workspace token; capture stdout immediately
-(`TOKEN=$(railctl token create ci -p my-app -e production)`).
+Works with any token type; capture stdout immediately
+(`TOKEN=$(railctl token create ci -p my-app -e production)`). Under a project
+token, `token create <name>` self-mints for the token's own scope (flags
+unnecessary; mismatching flags error).
 
 ---
 
