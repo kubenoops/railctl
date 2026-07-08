@@ -4,6 +4,11 @@ name: Docs Guard
 # (a CLI flag or RAILCTL_* env var) but updates no documentation, fail the build.
 # This is a seatbelt for the most common omission (flag/env-var without docs).
 # Bypass with the 'docs-not-needed' label when a change genuinely needs no docs.
+#
+# Second check: the embedded skill (docs/railctl-skill.md, printed by
+# `railctl skill`) is the single source of truth for agents operating railctl.
+# Any PR touching behavior-bearing code must update it (bypass label:
+# 'skill-not-affected').
 
 on:
   pull_request:
@@ -16,7 +21,7 @@ jobs:
   docs-guard:
     runs-on: ubuntu-latest
     # Skip entirely if a maintainer has marked the PR as not needing docs.
-    if: "!contains(github.event.pull_request.labels.*.name, 'docs-not-needed')"
+    if: "!contains(github.event.pull_request.labels.*.name, 'docs-not-needed') && !contains(github.event.pull_request.labels.*.name, 'skill-not-affected')"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -61,3 +66,24 @@ jobs:
           fi
 
           echo "Docs guard passed."
+
+      - name: Check the embedded skill is updated with behavior changes
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "origin/$BASE_REF...HEAD")
+
+          # Behavior-bearing code: command surface, API client, apply engine,
+          # manifest schema, diff semantics. Test files excluded.
+          BEHAVIOR=$(echo "$CHANGED" | grep -E '^internal/(cmd|api|apply|config|diff)/' | grep -v '_test\.go$' || true)
+          SKILL_UPDATED=$(echo "$CHANGED" | grep -c '^docs/railctl-skill\.md$' || true)
+
+          if [ -n "$BEHAVIOR" ] && [ "$SKILL_UPDATED" = "0" ]; then
+            echo "::error::This PR changes behavior-bearing code but does not update docs/railctl-skill.md."
+            echo "::error::The embedded skill (railctl skill) is the single source of truth for agents — update it (then run 'make gen'), or add the 'skill-not-affected' label if the change truly has no user-visible effect."
+            echo "Behavior files changed:"
+            echo "$BEHAVIOR" | sed 's/^/  /'
+            exit 1
+          fi
+          echo "Skill freshness guard passed."

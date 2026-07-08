@@ -113,13 +113,23 @@ but never documented). For **every PR that adds or changes a CLI flag, environme
 variable, command, or user-facing behavior**, explicitly run through this checklist
 and report each item in the review summary — even when the answer is "present":
 
+- **The embedded skill (highest-priority doc)** — `docs/railctl-skill.md`
+  (printed by `railctl skill`, mirrored into `internal/skill/` via `make gen`)
+  is the single source of truth for agents operating railctl. **Any PR that
+  changes behavior-bearing code (`internal/cmd`, `internal/api`,
+  `internal/apply`, `internal/config`, `internal/diff`) must update it** —
+  new/changed commands, flags, semantics, error messages, token-scope
+  behavior, manifest fields all belong there. CI enforces this (docs-guard
+  skill check + `make gen-check`); the reviewer must verify the skill edit is
+  *accurate*, not merely present. A missing or stale skill update is a HIGH
+  finding.
 - **Documentation** — Was `README.md` updated? In particular, a new `RAILCTL_*`
   env var must be added to the env-var table, and a new flag should appear in the
   usage/examples. If the PR adds a surface but touches no `.md` file, call it out
   as a gap.
 - **Behavior docs** — Behavior changes should update the matching file under
-  `docs/`: domain-generation changes → `docs/domain-generation.md`; service-
-  creation semantics → `docs/railway-service-creation-behavior.md`; test approach
+  `docs/`: token-scope semantics → `docs/token-capability-matrix.md`;
+  manifest schema → `docs/declarative-config.md`; test approach
   → `docs/testing-architecture.md`.
 - **Help text** — Does the new flag/command have a clear description, and is the
   command's `Long`/`Example` updated to mention the new capability?

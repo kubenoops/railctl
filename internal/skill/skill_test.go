@@ -25,6 +25,13 @@ func TestContent_CoversTokenModel(t *testing.T) {
 		"Project-Access-Token", // project-token detection detail
 		"project token cannot", // limitation
 		"Capability matrix",    // per-type capabilities
+		"whoami",               // first-contact classification
+		"least-privilege",      // the doctrine, woven through the guide
+		"compute provider",     // the opinionated stance
+		"delete -f",            // declarative teardown verb
+		"DELETE_PROTECTION",    // deletion tripwire
+		"Zero → Hero",          // the canonical operating path
+		"stack.yaml",           // single-manifest doctrine
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("embedded skill is missing expected content: %q", want)

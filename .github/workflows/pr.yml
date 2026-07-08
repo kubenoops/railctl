@@ -24,6 +24,9 @@ jobs:
           go-version: '1.22'
           cache: true
 
+      - name: Verify generated files are in sync (embedded skill)
+        run: make gen-check
+
       - name: Build
         run: make build
 
