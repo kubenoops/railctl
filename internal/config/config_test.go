@@ -571,3 +571,78 @@ networking:
 		t.Fatalf("legacy custom domains = %+v, want [{app.example.com 8080}]", cds)
 	}
 }
+
+func TestValidate_BackupSchedules_Normalized(t *testing.T) {
+	cfg := &Config{
+		Services: []ServiceConfig{
+			{
+				Name:  "db",
+				Image: "postgres:16",
+				Volume: VolumeConfig{
+					MountPath:       "/var/lib/postgresql/data",
+					BackupSchedules: []string{"weekly", "Daily", "daily"},
+				},
+			},
+		},
+	}
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+
+	got := cfg.Services[0].Volume.BackupSchedules
+	want := []string{"DAILY", "WEEKLY"} // normalized, deduped, sorted
+	if len(got) != len(want) {
+		t.Fatalf("backupSchedules = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("backupSchedules[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestValidate_BackupSchedules_Invalid(t *testing.T) {
+	cfg := &Config{
+		Services: []ServiceConfig{
+			{
+				Name:  "db",
+				Image: "postgres:16",
+				Volume: VolumeConfig{
+					MountPath:       "/data",
+					BackupSchedules: []string{"hourly"},
+				},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid backup schedule, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid backupSchedule") {
+		t.Errorf("error = %q, want it to contain 'invalid backupSchedule'", err.Error())
+	}
+}
+
+func TestValidate_BackupSchedules_RequireMountPath(t *testing.T) {
+	cfg := &Config{
+		Services: []ServiceConfig{
+			{
+				Name:  "db",
+				Image: "postgres:16",
+				Volume: VolumeConfig{
+					BackupSchedules: []string{"daily"},
+				},
+			},
+		},
+	}
+
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for backupSchedules without mountPath, got nil")
+	}
+	if !strings.Contains(err.Error(), "require volume.mountPath") {
+		t.Errorf("error = %q, want it to contain 'require volume.mountPath'", err.Error())
+	}
+}

@@ -67,6 +67,8 @@ type TCPProxyConfig struct {
 // VolumeConfig holds volume mount settings for a service.
 type VolumeConfig struct {
 	MountPath string `yaml:"mountPath,omitempty"`
+	// BackupSchedules: daily/weekly/monthly (case-insensitive), reconciled to match.
+	BackupSchedules []string `yaml:"backupSchedules,omitempty"`
 }
 
 // RegistryConfig holds private registry credentials.
@@ -279,6 +281,36 @@ var validRestartPolicies = map[string]bool{
 	"NEVER":      true,
 }
 
+// validBackupScheduleKinds are the allowed backup schedule kinds.
+var validBackupScheduleKinds = map[string]bool{
+	"DAILY":   true,
+	"WEEKLY":  true,
+	"MONTHLY": true,
+}
+
+// normalizeBackupSchedules upper-cases, validates, dedupes, and sorts kinds,
+// returning the canonical list plus any invalid values.
+func normalizeBackupSchedules(kinds []string) (normalized []string, invalid []string) {
+	seen := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		up := strings.ToUpper(strings.TrimSpace(k))
+		if up == "" {
+			continue
+		}
+		if !validBackupScheduleKinds[up] {
+			invalid = append(invalid, k)
+			continue
+		}
+		if seen[up] {
+			continue
+		}
+		seen[up] = true
+		normalized = append(normalized, up)
+	}
+	sort.Strings(normalized)
+	return normalized, invalid
+}
+
 // Validate checks a Config for correctness. It collects all validation errors
 // and returns them joined with newlines.
 func Validate(cfg *Config) error {
@@ -343,6 +375,20 @@ func Validate(cfg *Config) error {
 			}
 			if cd.Port != 0 && (cd.Port < 1 || cd.Port > 65535) {
 				errs = append(errs, fmt.Sprintf("%s: customDomain %q port must be between 1 and 65535, got %d", prefix, cd.Name, cd.Port))
+			}
+		}
+
+		// Backup schedules: valid kinds, and a volume to attach to.
+		if len(svc.Volume.BackupSchedules) > 0 {
+			normalized, invalid := normalizeBackupSchedules(svc.Volume.BackupSchedules)
+			for _, bad := range invalid {
+				errs = append(errs, fmt.Sprintf("%s: invalid backupSchedule %q (must be daily, weekly, or monthly)", prefix, bad))
+			}
+			if svc.Volume.MountPath == "" {
+				errs = append(errs, fmt.Sprintf("%s: backupSchedules require volume.mountPath to be set", prefix))
+			}
+			if len(invalid) == 0 {
+				cfg.Services[i].Volume.BackupSchedules = normalized
 			}
 		}
 	}

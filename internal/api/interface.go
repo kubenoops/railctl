@@ -70,6 +70,15 @@ type APIClient interface {
 	AttachVolume(volumeID, serviceID, environmentID string) error
 	DetachVolume(volumeID, environmentID string) error
 
+	// Volume backups
+	ListVolumeBackupSchedules(volumeInstanceID string) ([]BackupSchedule, error)
+	SetVolumeBackupSchedules(volumeInstanceID string, kinds []string) error
+	ListVolumeBackups(volumeInstanceID string) ([]VolumeBackup, error)
+	CreateVolumeBackup(volumeInstanceID, name string) (string, error)
+	RestoreVolumeBackup(backupID, volumeInstanceID string) error
+	DeleteVolumeBackup(backupID, volumeInstanceID string) error
+	LockVolumeBackup(backupID, volumeInstanceID string) error
+
 	// Workspace
 	GetWorkspaceID() (string, error)
 

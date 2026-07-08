@@ -1008,3 +1008,120 @@ func TestApply_UpdateNoDeployForVolumeOnly(t *testing.T) {
 		t.Error("volume-only change must not trigger a deploy (nothing is staged)")
 	}
 }
+
+func TestApply_CreateServiceWithVolumeBackupSchedules(t *testing.T) {
+	var capturedInstanceID string
+	var capturedKinds []string
+
+	svcID := "svc-1"
+	mock := &api.MockClient{
+		CreateServiceFunc: func(projectID, envID, name, image string, creds *api.RegistryCredentials) (types.Service, error) {
+			return types.Service{ID: "svc-1", Name: name}, nil
+		},
+		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+		},
+		CreateVolumeFunc: func(projectID, envID, serviceID, mountPath string) (api.Volume, error) {
+			return api.Volume{ID: "vol-1", Name: "data"}, nil
+		},
+		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+			return []api.VolumeInstance{
+				{ID: "vi-1", Volume: api.Volume{ID: "vol-1", Name: "data"}, ServiceID: &svcID, MountPath: "/data"},
+			}, nil
+		},
+		SetVolumeBackupSchedulesFunc: func(volumeInstanceID string, kinds []string) error {
+			capturedInstanceID = volumeInstanceID
+			capturedKinds = kinds
+			return nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeCreate,
+				ServiceName: "db",
+				Fields: []diff.FieldDiff{
+					{Path: "image", Desired: "postgres:16"},
+					{Path: "volume.mountPath", Desired: "/data"},
+					{Path: "volume.backupSchedules", Desired: "DAILY,WEEKLY"},
+				},
+			},
+		},
+	}
+
+	configMap := map[string]config.ServiceConfig{
+		"db": {
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY", "WEEKLY"}},
+		},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors, got %v", result.Errors)
+	}
+	if capturedInstanceID != "vi-1" {
+		t.Errorf("expected instance vi-1, got %q", capturedInstanceID)
+	}
+	if len(capturedKinds) != 2 || capturedKinds[0] != "DAILY" || capturedKinds[1] != "WEEKLY" {
+		t.Errorf("expected kinds [DAILY WEEKLY], got %v", capturedKinds)
+	}
+}
+
+func TestApply_UpdateVolumeBackupSchedules(t *testing.T) {
+	var capturedInstanceID string
+	var capturedKinds []string
+
+	svcID := "svc-1"
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
+		},
+		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+			return []api.VolumeInstance{
+				{ID: "vi-1", Volume: api.Volume{ID: "vol-1", Name: "data"}, ServiceID: &svcID, MountPath: "/data"},
+			}, nil
+		},
+		SetVolumeBackupSchedulesFunc: func(volumeInstanceID string, kinds []string) error {
+			capturedInstanceID = volumeInstanceID
+			capturedKinds = kinds
+			return nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "db",
+				Fields: []diff.FieldDiff{
+					{Path: "volume.backupSchedules", Current: "DAILY", Desired: "DAILY,WEEKLY"},
+				},
+			},
+		},
+	}
+
+	configMap := map[string]config.ServiceConfig{
+		"db": {
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY", "WEEKLY"}},
+		},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors, got %v", result.Errors)
+	}
+	if capturedInstanceID != "vi-1" {
+		t.Errorf("expected instance vi-1, got %q", capturedInstanceID)
+	}
+	if len(capturedKinds) != 2 {
+		t.Errorf("expected 2 kinds, got %v", capturedKinds)
+	}
+	if len(result.Updated) != 1 || result.Updated[0] != "db" {
+		t.Errorf("expected Updated=[db], got %v", result.Updated)
+	}
+}

@@ -147,8 +147,19 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	// Create volume.
 	if cfg.Volume.MountPath != "" {
-		if _, err := client.CreateVolume(projectID, envID, svc.ID, cfg.Volume.MountPath); err != nil {
+		vol, err := client.CreateVolume(projectID, envID, svc.ID, cfg.Volume.MountPath)
+		if err != nil {
 			return fmt.Errorf("creating volume: %w", err)
+		}
+		// Backup schedules on the new volume instance.
+		if len(cfg.Volume.BackupSchedules) > 0 {
+			instanceID, err := findVolumeInstanceIDByVolume(client, projectID, envID, vol.ID)
+			if err != nil {
+				return fmt.Errorf("resolving volume instance for backup schedules: %w", err)
+			}
+			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
+				return fmt.Errorf("setting backup schedules: %w", err)
+			}
 		}
 	}
 
@@ -244,7 +255,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 
 	fmt.Fprintf(w, "Updating service '%s'...\n", name)
 
-	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
+	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, backupSchedulesChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
 	// Only staged changes need a deploy. Networking applies immediately and the
 	// volume branch stages nothing, so neither is included.
@@ -291,6 +302,21 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	// Volume changes.
 	if volumeChanged {
 		fmt.Fprintf(w, "  Warning: volume changes detected for '%s' but volumes cannot be updated in place\n", name)
+	}
+
+	// Backup schedules apply immediately (no deploy needed). If the volume
+	// doesn't exist yet (in-place volume creation isn't supported — see above),
+	// warn instead of failing the whole update.
+	if backupSchedulesChanged {
+		instanceID, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
+		if err != nil {
+			fmt.Fprintf(w, "  Warning: cannot set backup schedules for '%s': %v\n", name, err)
+		} else {
+			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
+				return fmt.Errorf("setting backup schedules: %w", err)
+			}
+			fmt.Fprintf(w, "  Backup schedules set to [%s]\n", strings.Join(cfg.Volume.BackupSchedules, ", "))
+		}
 	}
 
 	// Domain changes: reconcile the target port (idempotent).
@@ -452,6 +478,44 @@ func findServiceID(services []types.ServiceDetail, name string) (string, error) 
 	return "", fmt.Errorf("service %q not found", name)
 }
 
+// findServiceVolumeInstanceID returns the instance ID of the volume attached
+// to the given service.
+func findServiceVolumeInstanceID(client api.APIClient, projectID, envID, serviceID string) (string, error) {
+	volumes, err := client.ListVolumes(projectID, envID)
+	if err != nil {
+		return "", fmt.Errorf("listing volumes: %w", err)
+	}
+	for _, vi := range volumes {
+		if vi.ServiceID != nil && *vi.ServiceID == serviceID {
+			return vi.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no volume attached to service")
+}
+
+// findVolumeInstanceIDByVolume returns the instance ID for a volume ID,
+// retrying to absorb propagation lag right after a volume is created.
+func findVolumeInstanceIDByVolume(client api.APIClient, projectID, envID, volumeID string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		volumes, err := client.ListVolumes(projectID, envID)
+		if err != nil {
+			lastErr = fmt.Errorf("listing volumes: %w", err)
+			continue
+		}
+		for _, vi := range volumes {
+			if vi.Volume.ID == volumeID {
+				return vi.ID, nil
+			}
+		}
+		lastErr = fmt.Errorf("volume instance for volume %q not found", volumeID)
+	}
+	return "", lastErr
+}
+
 // registryCreds returns the configured private-registry credentials, or nil
 // when either field is unset.
 func registryCreds(r config.RegistryConfig) *api.RegistryCredentials {
@@ -517,7 +581,7 @@ func buildDeployConfigUpdate(fields []diff.FieldDiff) (startCmd, restartPolicy *
 }
 
 // extractFieldChanges categorizes FieldDiffs by field group.
-func extractFieldChanges(fields []diff.FieldDiff) (imageChanged bool, newImage string, deployFields []diff.FieldDiff, varAdded map[string]string, varRemoved []string, volumeChanged bool, domainChanged bool, tcpChanged bool) {
+func extractFieldChanges(fields []diff.FieldDiff) (imageChanged bool, newImage string, deployFields []diff.FieldDiff, varAdded map[string]string, varRemoved []string, volumeChanged bool, backupSchedulesChanged bool, domainChanged bool, tcpChanged bool) {
 	varAdded = make(map[string]string)
 
 	for _, f := range fields {
@@ -536,6 +600,8 @@ func extractFieldChanges(fields []diff.FieldDiff) (imageChanged bool, newImage s
 				// Variable added or changed.
 				varAdded[varName] = f.Desired
 			}
+		case f.Path == "volume.backupSchedules":
+			backupSchedulesChanged = true
 		case f.Path == "volume.mountPath":
 			volumeChanged = true
 		case f.Path == "networking.domain.port":

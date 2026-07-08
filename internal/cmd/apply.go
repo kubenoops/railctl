@@ -277,9 +277,17 @@ func fetchLiveState(client api.APIClient, projectID, envID string) ([]diff.LiveS
 		// Volumes: filter VolumeInstances for this service.
 		for _, vi := range volumes {
 			if vi.ServiceID != nil && *vi.ServiceID == svc.ID {
-				ls.Volumes = append(ls.Volumes, diff.LiveVolume{
-					MountPath: vi.MountPath,
-				})
+				lv := diff.LiveVolume{
+					MountPath:        vi.MountPath,
+					VolumeInstanceID: vi.ID,
+				}
+				// Best-effort: don't fail apply/diff if schedules can't be read.
+				if schedules, err := client.ListVolumeBackupSchedules(vi.ID); err == nil {
+					for _, s := range schedules {
+						lv.BackupSchedules = append(lv.BackupSchedules, s.Kind)
+					}
+				}
+				ls.Volumes = append(ls.Volumes, lv)
 			}
 		}
 
