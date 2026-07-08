@@ -136,20 +136,6 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// If the plan creates any service, fail fast before mutating anything:
-	// Railway creates service instances in ALL environments, and a project
-	// token cannot clean up the instances it would leak into other
-	// environments. One check covers the whole run — every create targets
-	// the same project + environment.
-	for _, rc := range cs.Changes {
-		if rc.Type == diff.ChangeCreate {
-			if err := cmdutil.GuardServiceCreationScope(client, projectID, ctx.Project.Name, envID, ctx.Environment.Name); err != nil {
-				return err
-			}
-			break
-		}
-	}
-
 	// 7. Render diff so user sees what will change.
 	diff.Render(cs, os.Stdout, useColor)
 	fmt.Fprintln(os.Stdout)

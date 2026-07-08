@@ -289,49 +289,6 @@ railctl create service my-app --image nginx:latest --all-environments
 
 This would skip the cleanup logic and create the service in all non-fork environments.
 
-## Interaction with project tokens (verified 2026-07-08)
-
-The cleanup workaround assumes the token can delete service instances in the
-project's *other* environments. **Project tokens cannot**: they are scoped to a
-single environment, and Railway denies cross-environment access.
-
-### The failure (live-reproduced)
-
-Creating a service with a project token in a multi-environment project:
-
-1. `serviceCreate` succeeds — Railway creates service instances in **all**
-   non-fork environments, as usual.
-2. The post-create cleanup calls `DeleteServiceInstance` for every other
-   environment and gets **"Not Authorized"** for each one (after all retries).
-3. The command merely warns and exits 0 — but the token has now **leaked a
-   service instance into environments it cannot see or clean up**. Only a
-   workspace/account token holder can remove the orphaned instances.
-
-This silently violates the least-privilege point of project tokens: a token
-scoped to one environment ends up mutating every environment in the project.
-
-### The guard
-
-`cmdutil.GuardServiceCreationScope` ([`internal/cmdutil/guard.go`](../internal/cmdutil/guard.go))
-now runs as a preflight before any service creation — both in
-`railctl create service` and in `railctl apply` (when the plan contains
-service creates):
-
-- **Non-project tokens**: pass through unconditionally — they can run the
-  cleanup themselves.
-- **Project token, single-environment project**: allowed — there is no other
-  environment to leak into, so creation is contained.
-- **Project token, multi-environment project**: **fail fast** before calling
-  `serviceCreate`, naming the token's environment and the environments the
-  instances would leak into:
-
-```
-cannot create a service with a project token in a multi-environment project — Railway creates service instances in ALL environments and this token (scoped to 'production') cannot remove the instances it would leak into: staging, dev; use a workspace or account token, or run in a single-environment project
-```
-
-The check uses `ListEnvironments`, which project tokens ARE allowed to call
-for their own project.
-
 ## Related Files
 
 - **API Layer**: [`internal/api/services.go`](../internal/api/services.go)

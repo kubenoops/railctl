@@ -110,13 +110,6 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Fail fast before creating anything: Railway creates service instances
-	// in ALL environments, and a project token cannot clean up the instances
-	// it would leak into other environments.
-	if err := cmdutil.GuardServiceCreationScope(client, ctx.Project.ID, ctx.Project.Name, ctx.Environment.ID, ctx.Environment.Name); err != nil {
-		return err
-	}
-
 	// Build registry credentials if provided
 	var creds *api.RegistryCredentials
 	regUser := createRegistryUsername
