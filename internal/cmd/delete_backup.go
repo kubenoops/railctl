@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kubenoops/railctl/internal/cmdutil"
@@ -61,7 +60,7 @@ func runDeleteBackup(cmd *cobra.Command, args []string) error {
 
 	if !deleteBackupYes {
 		fmt.Printf("Are you sure you want to delete backup '%s' from volume '%s'? [y/N]: ", backupID, vol.Volume.Name)
-		reader := bufio.NewReader(os.Stdin)
+		reader := bufio.NewReader(cmd.InOrStdin())
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read confirmation: %w", err)

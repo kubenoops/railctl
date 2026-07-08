@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kubenoops/railctl/internal/cmdutil"
@@ -65,7 +64,7 @@ func runRestoreBackup(cmd *cobra.Command, args []string) error {
 		fmt.Println("  - A new volume will be staged; deploy the service to finalize the restore.")
 		fmt.Println("  - Backups created after this point in time will be removed.")
 		fmt.Print("Continue? [y/N]: ")
-		reader := bufio.NewReader(os.Stdin)
+		reader := bufio.NewReader(cmd.InOrStdin())
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("failed to read confirmation: %w", err)

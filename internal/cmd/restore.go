@@ -12,6 +12,7 @@ var restoreCmd = &cobra.Command{
 
 Available resources:
   backup    Restore a volume from a backup`,
+	Example: `  railctl restore backup backup-id-123 --volume my-data -p my-project -e production`,
 }
 
 func init() {
