@@ -392,6 +392,7 @@ func TestGetWorkspaceID(t *testing.T) {
 			workspaces: []workspaceEntry{wsPersonal, wsTeam},
 			hint:       "unknown",
 			wantErrIs:  resolver.ErrNotFound{},
+			wantErrMsg: "workspace 'unknown' not found — available: personal, acme",
 		},
 		{
 			name:       "ambiguous substring",
@@ -437,6 +438,9 @@ func TestGetWorkspaceID(t *testing.T) {
 					if !errors.As(err, &target) {
 						t.Errorf("expected ErrAmbiguous, got %T: %v", err, err)
 					}
+				}
+				if tt.wantErrMsg != "" && !strings.Contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrMsg)
 				}
 				return
 			}

@@ -53,7 +53,11 @@ func TestProjects(t *testing.T) {
 	})
 
 	t.Run("describe_nonexistent", func(t *testing.T) {
-		env.RunFail(t, "describe", "project", "nonexistent-project-xyz-999")
+		r := env.RunFail(t, "describe", "project", "nonexistent-project-xyz-999")
+		// Not-found errors must list the names that DO exist (error-taxonomy
+		// class 3) — the fixture project is enumerable with this token.
+		harness.AssertContains(t, r.Stderr+r.Stdout, "not found")
+		harness.AssertContains(t, r.Stderr+r.Stdout, "available:")
 	})
 
 	t.Run("get_bad_token", func(t *testing.T) {

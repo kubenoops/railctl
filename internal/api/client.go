@@ -493,7 +493,8 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		if err != nil {
 			var nf resolver.ErrNotFound
 			if errors.As(err, &nf) {
-				return "", resolver.ErrNotFound{Resource: "workspace", Name: nf.Name}
+				// nf.Available already holds the workspace names (input order).
+				return "", resolver.ErrNotFound{Resource: "workspace", Name: nf.Name, Available: nf.Available}
 			}
 			var amb resolver.ErrAmbiguous
 			if errors.As(err, &amb) {
