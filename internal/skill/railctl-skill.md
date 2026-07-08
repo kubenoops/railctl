@@ -44,6 +44,10 @@ On the first API call railctl probes in order:
 All three probes failing → `token is not authorized` (expired/revoked token).
 The result is cached for the process; detection runs once per invocation.
 
+Check what a token is before using it: `railctl whoami` (`-o json`) prints the
+token's type and scope chain (workspace / project / environment) without ever
+printing the token value.
+
 ### Capability matrix — what each token can and cannot do
 
 | Capability | Account token | Workspace token | Project token |
@@ -67,7 +71,7 @@ The result is cached for the process; detection runs once per invocation.
   scope **fails fast** (`token is scoped to … but -e '…' was given — refusing
   to operate …`); a value matching the scope proceeds silently. To operate on
   staging *and* production you need two tokens.
-- A **project token** cannot enumerate anything above its project: no
+- A **project token cannot** enumerate anything above its project: no
   `get projects`, no workspace queries, no project/environment lifecycle —
   these fail fast (`cannot … with a project token — it is scoped to a single
   project and environment; use an account or workspace token`).

@@ -74,7 +74,8 @@ type MockClient struct {
 	DeleteProjectTokenFunc func(tokenID string) error
 
 	// Workspace
-	GetWorkspaceIDFunc func() (string, error)
+	GetWorkspaceIDFunc  func() (string, error)
+	TokenWorkspacesFunc func() ([]Workspace, error)
 
 	// Token type
 	IsProjectTokenFunc    func() (bool, error)
@@ -211,6 +212,13 @@ func (m *MockClient) GetWorkspaceID() (string, error) {
 		return m.GetWorkspaceIDFunc()
 	}
 	return "mock-workspace-id", nil
+}
+
+func (m *MockClient) TokenWorkspaces() ([]Workspace, error) {
+	if m.TokenWorkspacesFunc != nil {
+		return m.TokenWorkspacesFunc()
+	}
+	return nil, nil
 }
 
 func (m *MockClient) IsProjectToken() (bool, error) {

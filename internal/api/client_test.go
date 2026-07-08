@@ -800,3 +800,115 @@ func TestGetWorkspaceID_Unauthorized(t *testing.T) {
 		})
 	}
 }
+
+// makeAccountIdentityServer simulates an account token: probe 1
+// (me.workspaces) succeeds, and the apiToken introspection returns all of the
+// account's workspaces. The apiToken dispatch must come before the me
+// dispatch — both query bodies contain "workspaces".
+func makeAccountIdentityServer(t *testing.T, workspaces []workspaceEntry) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+
+		if strings.Contains(bodyStr, "apiToken") {
+			var resp apiTokenWorkspacesResponse
+			resp.APIToken.Workspaces = workspaces
+			json.NewEncoder(w).Encode(map[string]any{"data": resp})
+			return
+		}
+
+		// Detection probe 1 (me.workspaces) succeeds → account token.
+		var resp workspaceResponse
+		resp.Me.Workspaces = workspaces
+		json.NewEncoder(w).Encode(map[string]any{"data": resp})
+	}))
+}
+
+func TestTokenWorkspaces(t *testing.T) {
+	t.Run("account token returns all workspaces", func(t *testing.T) {
+		server := makeAccountIdentityServer(t, []workspaceEntry{
+			{ID: "ws-1", Name: "acme"},
+			{ID: "ws-2", Name: "globex"},
+		})
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		got, err := c.TokenWorkspaces()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []Workspace{{ID: "ws-1", Name: "acme"}, {ID: "ws-2", Name: "globex"}}
+		if len(got) != len(want) {
+			t.Fatalf("got %d workspaces, want %d: %+v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("workspace[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("workspace token returns its one workspace", func(t *testing.T) {
+		server := makeWorkspaceIdentityServer(t, "ws-123", "acme", true)
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		got, err := c.TokenWorkspaces()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "ws-123" || got[0].Name != "acme" {
+			t.Errorf("got %+v, want exactly [{ws-123 acme}]", got)
+		}
+	})
+
+	t.Run("project token resolves its containing workspace", func(t *testing.T) {
+		server := makeProjectTokenIdentityServer(t, "ws-123", "acme")
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		got, err := c.TokenWorkspaces()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != "ws-123" || got[0].Name != "acme" {
+			t.Errorf("got %+v, want exactly [{ws-123 acme}]", got)
+		}
+	})
+
+	t.Run("unauthorized token returns detection error", func(t *testing.T) {
+		server := makeUnauthorizedWorkspaceServer(t)
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		if _, err := c.TokenWorkspaces(); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	t.Run("empty introspection returns no workspaces", func(t *testing.T) {
+		server := makeWorkspaceIdentityServer(t, "", "", false)
+		defer server.Close()
+
+		c := NewClient("test-token")
+		c.apiURL = server.URL
+
+		got, err := c.TokenWorkspaces()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %+v, want no workspaces", got)
+		}
+	})
+}
