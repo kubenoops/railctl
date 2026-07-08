@@ -84,6 +84,7 @@ type APIClient interface {
 
 	// Workspace
 	GetWorkspaceID() (string, error)
+	TokenWorkspaces() ([]Workspace, error)
 
 	// Token type
 	IsProjectToken() (bool, error)

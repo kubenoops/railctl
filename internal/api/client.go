@@ -726,6 +726,54 @@ func (c *Client) currentWorkspace() (id, name string, err error) {
 	return c.wsIdentityID, c.wsIdentityName, nil
 }
 
+// Workspace is a workspace identity (id, name) visible to the current token.
+type Workspace struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TokenWorkspaces returns the workspaces the current token is scoped to:
+// an account token sees all of the account's workspaces, a workspace token
+// exactly the one workspace it is bound to, and a project token the single
+// workspace containing its project (resolved via the nested projectToken
+// chain, since the apiToken query is denied for project tokens). Triggers
+// lazy token-type detection on first call.
+func (c *Client) TokenWorkspaces() ([]Workspace, error) {
+	if !c.tokenTypeResolved {
+		if _, err := c.detectTokenType(); err != nil {
+			return nil, err
+		}
+	}
+	if c.tokenTypeErr != nil {
+		return nil, c.tokenTypeErr
+	}
+
+	if c.ProjectToken != "" {
+		id, name, err := c.currentWorkspace()
+		if err != nil {
+			return nil, err
+		}
+		if id == "" && name == "" {
+			return nil, nil
+		}
+		return []Workspace{{ID: id, Name: name}}, nil
+	}
+
+	data, err := c.execute(apiTokenWorkspacesQuery, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to introspect the token's workspaces: %w", err)
+	}
+	var resp apiTokenWorkspacesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse workspace introspection response: %w", err)
+	}
+	workspaces := make([]Workspace, len(resp.APIToken.Workspaces))
+	for i, ws := range resp.APIToken.Workspaces {
+		workspaces[i] = Workspace{ID: ws.ID, Name: ws.Name}
+	}
+	return workspaces, nil
+}
+
 // checkWorkspaceHint validates the -w/RAILCTL_WORKSPACE value against the
 // workspace the token is actually scoped to. A matching value (by ID, exact
 // name, or unique substring) proceeds silently; a mismatch is a
