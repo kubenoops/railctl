@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -63,7 +64,10 @@ Examples:
   railctl describe project my-app -w my-team
   railctl get services -p my-app -e production`,
 	SilenceUsage: true,
-	Version:      version,
+	// Errors are printed once by Execute() below — without this, cobra prints
+	// its own "Error: …" line first and every failure appears twice.
+	SilenceErrors: true,
+	Version:       version,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -76,6 +80,11 @@ func Execute() {
 	})
 
 	if err := rootCmd.Execute(); err != nil {
+		// `diff` with differences is an expected report: exit 1, no error
+		// styling (the diff and summary were already printed).
+		if errors.Is(err, errDiffChanges) {
+			os.Exit(1)
+		}
 		// Display the error to stderr
 		fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
 		os.Exit(1)

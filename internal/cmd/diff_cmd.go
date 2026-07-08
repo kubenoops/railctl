@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -10,6 +11,11 @@ import (
 	"github.com/kubenoops/railctl/internal/config"
 	"github.com/kubenoops/railctl/internal/diff"
 )
+
+// errDiffChanges signals that differences exist: the command must exit
+// non-zero (script/CI-friendly, like `git diff --exit-code`), but this is an
+// expected report, not a failure — Execute() exits 1 without error styling.
+var errDiffChanges = errors.New("differences detected")
 
 var (
 	diffFile    string
@@ -100,9 +106,9 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// 7. Print summary.
 	fmt.Fprintf(os.Stdout, "\n%s\n", cs.Summary())
 
-	// 8. If changes exist, return error so rootCmd exits with code 1.
+	// 8. If changes exist, exit with code 1 (expected report, not a failure).
 	if cs.HasChanges() {
-		return fmt.Errorf("differences detected")
+		return errDiffChanges
 	}
 
 	return nil
