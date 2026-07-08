@@ -190,10 +190,15 @@ and no command can touch anything outside it.
 (schema in §5). Secrets stay out of the file via `$env(VAR)`; cross-service
 wiring uses Railway references `${{service.VAR}}`.
 
-**Step 5 — the reconcile loop.**
+**Step 5 — the reconcile loop. Diff first, always.**
+
+Never apply blind: **always run `diff` before `apply`** — interactively at the
+console *and* in CI. It costs one command and shows exactly what is about to
+change (creates, field-level updates, prune deletions), with secrets masked.
+An apply whose diff you haven't read is an unreviewed change to production.
 
 ```bash
-railctl diff  -f stack.yaml            # exit 1 while anything would change
+railctl diff  -f stack.yaml            # READ THIS — exit 1 while anything would change
 railctl apply -f stack.yaml --await    # create/update + wait for SUCCESS
 railctl diff  -f stack.yaml            # exit 0: live state matches manifest
 ```
@@ -255,9 +260,22 @@ here, so private images come from **your** CI:
 
 **Step 8 — monitor & operate** (§6: deployments & logs).
 
-**Step 9 — protect & housekeep** (§7): set `DELETE_PROTECTION` on the
-environment, declare `backupSchedules` on stateful volumes, rotate tokens,
-tear down with `delete -f` when the environment is disposable.
+**Step 9 — protect & housekeep.** The moment an environment is worth
+anything (production from day one; staging once real data lands), arm the
+deletion tripwire:
+
+1. Railway dashboard → the project → the environment → **Shared Variables**
+   → add `DELETE_PROTECTION` = `true`. (Shared/environment-level — not on a
+   service. The CLI cannot set shared variables yet, so this is a dashboard
+   step; railctl reads and enforces it.)
+2. Verify: `railctl delete environment <env> --yes` must refuse with
+   `environment '…' is delete-protected` — and so must `delete project`.
+
+There is **no bypass flag**; the only way to delete is consciously unsetting
+the variable first — which is exactly the two-step friction you want on
+critical environments. Also: declare `backupSchedules` on stateful volumes,
+rotate tokens periodically (§6 Tokens), and tear down disposable
+environments with `delete -f`.
 
 ---
 
@@ -539,10 +557,13 @@ railctl get domains -s web                                 # where it's publishe
 railctl logs web --tail 50                                 # it's alive
 ```
 
-**CI deploy gate** (project token in CI secrets; no flags anywhere):
+**CI deploy gate** (project token in CI secrets; no flags anywhere). Diff
+first even in CI — its output in the job log is the reviewable change record:
 ```bash
 export RAILWAY_TOKEN="$RAILWAY_PROJECT_TOKEN"
-railctl diff -f stack.yaml || railctl apply -f stack.yaml --await
+if ! railctl diff -f stack.yaml; then      # prints the pending changes to the log
+  railctl apply -f stack.yaml --await
+fi
 ```
 
 **Private image end-to-end**: CI builds & pushes `ghcr.io/owner/app:$SHA` →
