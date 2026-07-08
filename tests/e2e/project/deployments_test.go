@@ -15,9 +15,39 @@ import (
 // flags; -s kept). Creating the service triggers the first deployment.
 //
 //	go test -tags e2e -v -run TestDeployments ./tests/e2e/project/...
+//
+// waitForDeployments polls `get deployments -o json` until at least min
+// deployments are visible. Railway registers the first deployment
+// asynchronously after service creation, so listing too early legitimately
+// returns an empty list. Returns the count seen (may be < min on timeout).
+func waitForDeployments(t *testing.T, env *harness.Env, svc string, min int) int {
+	t.Helper()
+	seen := 0
+	for i := 0; i < 20; i++ {
+		r := env.Run("get", "deployments", "-o", "json", "-s", svc)
+		var deps []map[string]interface{}
+		if r.ExitCode == 0 && json.Unmarshal([]byte(r.Stdout), &deps) == nil {
+			seen = len(deps)
+			if seen >= min {
+				t.Logf("%d deployment(s) visible after %d poll(s)", seen, i+1)
+				return seen
+			}
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return seen
+}
+
 func TestDeployments(t *testing.T) {
 	env := fixtureEnv(t)
 	svc := createService(t, env)
+	// `create service` does not trigger a deployment itself (Railway may or
+	// may not auto-deploy asynchronously) — create one explicitly so the
+	// listing subtests have deterministic content.
+	env.RunOK(t, "create", "deployment", "-s", svc)
+	if got := waitForDeployments(t, env, svc, 1); got < 1 {
+		t.Fatal("no deployment became visible within 60s of explicit create deployment")
+	}
 
 	t.Run("get_table", func(t *testing.T) {
 		env.RunOK(t, "get", "deployments", "-s", svc)
@@ -99,12 +129,20 @@ func TestDeploymentLifecycle(t *testing.T) {
 	env := fixtureEnv(t)
 	svc := createService(t, env)
 
+	// First deployment: explicit (create service does not deploy by itself).
+	env.RunOK(t, "create", "deployment", "-s", svc)
+	if got := waitForDeployments(t, env, svc, 1); got < 1 {
+		t.Skip("first deployment not visible within 60s")
+	}
+
 	// Generate a second deployment by updating the image
 	t.Log("Updating service image to create a second deployment...")
 	env.RunOK(t, "update", "service", svc, "--image", "nginx:1.26-alpine")
-	time.Sleep(5 * time.Second)
 
-	// Get deployment list — need at least 2
+	// Poll until both deployments are visible (registration is async).
+	if got := waitForDeployments(t, env, svc, 2); got < 2 {
+		t.Skipf("need at least 2 deployments for lifecycle tests (have %d)", got)
+	}
 	r := env.RunOK(t, "get", "deployments", "-o", "json", "-s", svc)
 	var deps []map[string]interface{}
 	if err := json.Unmarshal([]byte(r.Stdout), &deps); err != nil || len(deps) < 2 {
