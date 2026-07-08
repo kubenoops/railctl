@@ -404,6 +404,21 @@ func TestValidate_InvalidPort(t *testing.T) {
 			},
 			want: "tcpProxy port must be between 1 and 65535",
 		},
+		{
+			name: "custom domain port too high",
+			cfg: &Config{
+				Services: []ServiceConfig{
+					{
+						Name:  "api",
+						Image: "img",
+						Networking: NetworkingConfig{
+							CustomDomains: []CustomDomainConfig{{Name: "app.example.com", Port: 70000}},
+						},
+					},
+				},
+			},
+			want: "customDomain \"app.example.com\" port must be between 1 and 65535",
+		},
 	}
 
 	for _, tt := range tests {
@@ -493,5 +508,66 @@ services:
 	}
 	if !strings.Contains(err.Error(), "conflicting project") {
 		t.Errorf("error = %q, want it to contain 'conflicting project'", err.Error())
+	}
+}
+
+func TestLoad_CustomDomains(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+project: my-project
+services:
+  - name: web
+    image: web:latest
+    networking:
+      customDomains:
+        - name: app.example.com
+          port: 8080
+        - name: www.example.com
+`
+	path := filepath.Join(dir, "web.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cds := cfg.Services[0].Networking.CustomDomains
+	if len(cds) != 2 {
+		t.Fatalf("expected 2 custom domains, got %d", len(cds))
+	}
+	if cds[0].Name != "app.example.com" || cds[0].Port != 8080 {
+		t.Errorf("cd[0] = %+v, want {app.example.com 8080}", cds[0])
+	}
+	if cds[1].Name != "www.example.com" || cds[1].Port != 0 {
+		t.Errorf("cd[1] = %+v, want {www.example.com 0}", cds[1])
+	}
+}
+
+func TestConvertLegacy_CustomDomains(t *testing.T) {
+	dir := t.TempDir()
+	// Legacy single-service format nests customDomains under networking.
+	content := `
+service:
+  name: web
+  image: web:latest
+networking:
+  customDomains:
+    - name: app.example.com
+      port: 8080
+`
+	path := filepath.Join(dir, "web.yaml")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cds := cfg.Services[0].Networking.CustomDomains
+	if len(cds) != 1 || cds[0].Name != "app.example.com" || cds[0].Port != 8080 {
+		t.Fatalf("legacy custom domains = %+v, want [{app.example.com 8080}]", cds)
 	}
 }

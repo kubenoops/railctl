@@ -71,13 +71,14 @@ func (cs *ChangeSet) Summary() string {
 // LiveService represents the current state of a service in Railway.
 // This is populated from the API before diffing.
 type LiveService struct {
-	Name       string
-	Image      string
-	Deploy     LiveDeployConfig
-	Variables  map[string]string // current variable values
-	Volumes    []LiveVolume
-	Domains    []LiveDomain
-	TCPProxies []LiveTCPProxy
+	Name          string
+	Image         string
+	Deploy        LiveDeployConfig
+	Variables     map[string]string // current variable values
+	Volumes       []LiveVolume
+	Domains       []LiveDomain
+	CustomDomains []LiveDomain
+	TCPProxies    []LiveTCPProxy
 }
 
 // LiveDeployConfig holds the current deploy configuration for a live service.
@@ -183,6 +184,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 	}
 	if d.Networking.TCPProxy.Port != 0 {
 		fields = append(fields, FieldDiff{Path: "networking.tcpProxy.port", Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port)})
+	}
+	for _, cd := range d.Networking.CustomDomains {
+		fields = append(fields, FieldDiff{Path: "customDomain." + cd.Name, Desired: cd.Name})
 	}
 
 	return ResourceChange{
@@ -345,44 +349,74 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
 	}
 
-	// Domain port: check if any live domain matches the desired port.
-	liveDomainPort := 0
-	for _, dom := range ls.Domains {
-		if dom.Port == d.Networking.Domain.Port {
-			liveDomainPort = dom.Port
-			break
+	// Port 0 is unmanaged; diffing it would perma-diff (apply skips port 0).
+	if d.Networking.Domain.Port > 0 {
+		liveDomainPort := 0
+		for _, dom := range ls.Domains {
+			if dom.Port == d.Networking.Domain.Port {
+				liveDomainPort = dom.Port
+				break
+			}
 		}
-	}
-	// If no match found, use the first domain's port as the "current" value for the diff.
-	if liveDomainPort == 0 && len(ls.Domains) > 0 {
-		liveDomainPort = ls.Domains[0].Port
-	}
-	if d.Networking.Domain.Port != liveDomainPort {
-		fields = append(fields, FieldDiff{
-			Path:    "networking.domain.port",
-			Current: fmt.Sprintf("%d", liveDomainPort),
-			Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
-		})
+		// If no match found, use the first domain's port as the "current" value for the diff.
+		if liveDomainPort == 0 && len(ls.Domains) > 0 {
+			liveDomainPort = ls.Domains[0].Port
+		}
+		if d.Networking.Domain.Port != liveDomainPort {
+			fields = append(fields, FieldDiff{
+				Path:    "networking.domain.port",
+				Current: fmt.Sprintf("%d", liveDomainPort),
+				Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
+			})
+		}
 	}
 
-	// TCP proxy port: check if any live proxy matches the desired port.
-	liveTCPPort := 0
-	for _, tp := range ls.TCPProxies {
-		if tp.ApplicationPort == d.Networking.TCPProxy.Port {
-			liveTCPPort = tp.ApplicationPort
-			break
+	// Port 0 is unmanaged, same as domain port above.
+	if d.Networking.TCPProxy.Port > 0 {
+		liveTCPPort := 0
+		for _, tp := range ls.TCPProxies {
+			if tp.ApplicationPort == d.Networking.TCPProxy.Port {
+				liveTCPPort = tp.ApplicationPort
+				break
+			}
+		}
+		// If no match found, use the first proxy's port as the "current" value for the diff.
+		if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
+			liveTCPPort = ls.TCPProxies[0].ApplicationPort
+		}
+		if d.Networking.TCPProxy.Port != liveTCPPort {
+			fields = append(fields, FieldDiff{
+				Path:    "networking.tcpProxy.port",
+				Current: fmt.Sprintf("%d", liveTCPPort),
+				Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
+			})
 		}
 	}
-	// If no match found, use the first proxy's port as the "current" value for the diff.
-	if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
-		liveTCPPort = ls.TCPProxies[0].ApplicationPort
-	}
-	if d.Networking.TCPProxy.Port != liveTCPPort {
-		fields = append(fields, FieldDiff{
-			Path:    "networking.tcpProxy.port",
-			Current: fmt.Sprintf("%d", liveTCPPort),
-			Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
-		})
+
+	// Custom domains: diff absent (create) and port drift. Port defaults to domain.port.
+	for _, cd := range d.Networking.CustomDomains {
+		desiredPort := cd.Port
+		if desiredPort == 0 {
+			desiredPort = d.Networking.Domain.Port
+		}
+		var live *LiveDomain
+		for i := range ls.CustomDomains {
+			if ls.CustomDomains[i].Domain == cd.Name {
+				live = &ls.CustomDomains[i]
+				break
+			}
+		}
+		if live == nil {
+			fields = append(fields, FieldDiff{Path: "customDomain." + cd.Name, Desired: cd.Name})
+			continue
+		}
+		if desiredPort > 0 && live.Port != desiredPort {
+			fields = append(fields, FieldDiff{
+				Path:    "customDomain." + cd.Name + ".port",
+				Current: fmt.Sprintf("%d", live.Port),
+				Desired: fmt.Sprintf("%d", desiredPort),
+			})
+		}
 	}
 
 	// Creds can't be diffed (never returned), so re-assert them when the service

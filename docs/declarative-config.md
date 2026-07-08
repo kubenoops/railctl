@@ -76,6 +76,9 @@ services:
         port: 3000 # Generate a Railway domain on this port
       tcpProxy:
         port: 5432 # Application port for TCP proxy
+      customDomains: # User-owned domains; railctl prints the DNS record to add
+        - name: app.example.com
+          port: 3000 # optional; defaults to domain.port
 
     volume:
       mountPath: /app/data
@@ -142,6 +145,15 @@ Network configuration for the service.
 | Field  | Type | Default | Description                                                      |
 | ------ | ---- | ------- | ---------------------------------------------------------------- |
 | `port` | int  | 0       | Application port to expose via TCP proxy. Must be 1-65535 if set |
+
+##### `services[].networking.customDomains` (optional, array)
+
+User-owned domains (e.g. `app.example.com`). railctl creates each declared domain and prints the DNS record(s) you must add — Railway may return more than one (e.g. a `CNAME`/`A` for routing and a `TXT` for verification), each printed with its type. **Verification is manual** (DNS propagation). The target port of an existing domain is reconciled when it drifts; removal is not supported here — use the dashboard.
+
+| Field  | Type   | Default          | Description                                              |
+| ------ | ------ | ---------------- | -------------------------------------------------------- |
+| `name` | string | (required)       | The custom domain, e.g. `app.example.com`                |
+| `port` | int    | `domain.port`    | Application port traffic routes to. Must be 1-65535 if set |
 
 #### `services[].volume` (optional, object)
 
@@ -237,6 +249,7 @@ variables:
 | `deploy.restartPolicyMaxRetries` | `services[].deploy.maxRetries`        |
 | `deploy.numReplicas`             | `services[].deploy.replicas`          |
 | `networking.tcpProxyPort`        | `services[].networking.tcpProxy.port` |
+| `networking.customDomains`       | `services[].networking.customDomains` |
 | `domain.port`                    | `services[].networking.domain.port`   |
 
 ## Directory Loading

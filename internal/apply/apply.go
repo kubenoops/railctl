@@ -166,8 +166,70 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
+	// Custom domains (none exist yet on a new service).
+	if err := reconcileCustomDomains(client, projectID, envID, svc.ID, cfg.Networking, nil, w); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(w, "✓ Service '%s' created\n", name)
 	return nil
+}
+
+// reconcileCustomDomains creates absent declared domains (printing DNS) and
+// updates the port of existing ones. Port defaults to domain.port.
+func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID string, net config.NetworkingConfig, live []api.CustomDomain, w io.Writer) error {
+	byName := make(map[string]api.CustomDomain, len(live))
+	for _, cd := range live {
+		byName[cd.Domain] = cd
+	}
+	for _, cd := range net.CustomDomains {
+		port := cd.Port
+		if port == 0 {
+			port = net.Domain.Port
+		}
+		existing, ok := byName[cd.Name]
+		if !ok {
+			created, err := client.CreateCustomDomain(projectID, envID, serviceID, cd.Name, port)
+			if err != nil {
+				return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
+			}
+			printCustomDomainDNS(created, w)
+			byName[cd.Name] = created // avoid re-creating on duplicate declaration
+			continue
+		}
+		if port > 0 && (existing.TargetPort == nil || *existing.TargetPort != port) {
+			if err := client.UpdateCustomDomainPort(existing.ID, envID, port); err != nil {
+				return fmt.Errorf("setting custom domain %q port: %w", cd.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// printCustomDomainDNS prints the DNS records to configure: the routing record(s)
+// (CNAME/A) from dnsRecords, plus the verification TXT, which Railway exposes
+// separately as verificationDnsHost/verificationToken rather than in dnsRecords.
+func printCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
+	fmt.Fprintf(w, "  Custom domain '%s' created — add the following DNS record(s):\n", cd.Domain)
+	if cd.Status == nil {
+		fmt.Fprintf(w, "    (no DNS records returned; check the Railway dashboard)\n")
+		return
+	}
+	for _, r := range cd.Status.DNSRecords {
+		// Railway returns verbose enums (DNS_RECORD_TYPE_CNAME, DNS_RECORD_PURPOSE_TRAFFIC_ROUTE).
+		recordType := strings.TrimPrefix(r.RecordType, "DNS_RECORD_TYPE_")
+		line := fmt.Sprintf("    %-6s %s  →  %s", recordType, r.Hostlabel, r.RequiredValue)
+		if p := strings.ToLower(strings.TrimPrefix(r.Purpose, "DNS_RECORD_PURPOSE_")); p != "" {
+			line += fmt.Sprintf("  (%s)", p)
+		}
+		fmt.Fprintln(w, line)
+	}
+	if !cd.Status.Verified && cd.Status.VerificationToken != "" {
+		fmt.Fprintf(w, "    %-6s %s  →  %s  (verification)\n", "TXT", cd.Status.VerificationDNSHost, cd.Status.VerificationToken)
+	}
+	if len(cd.Status.DNSRecords) == 0 && cd.Status.VerificationToken == "" {
+		fmt.Fprintf(w, "    (no DNS records returned; check the Railway dashboard)\n")
+	}
 }
 
 // applyUpdate handles a single ChangeUpdate operation.
@@ -238,16 +300,9 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			return fmt.Errorf("listing domains: %w", err)
 		}
 
+		// domain.port governs the service domain; custom domains reconcile below.
 		port := cfg.Networking.Domain.Port
 		switch {
-		// Custom domains take priority, matching generateServiceDomain.
-		case len(domains.CustomDomains) > 0:
-			cd := domains.CustomDomains[0]
-			if cd.TargetPort == nil || *cd.TargetPort != port {
-				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
-					return fmt.Errorf("setting custom domain port: %w", err)
-				}
-			}
 		case len(domains.ServiceDomains) > 0:
 			sd := domains.ServiceDomains[0]
 			if sd.TargetPort == nil || *sd.TargetPort != port {
@@ -255,10 +310,36 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 					return fmt.Errorf("setting domain port: %w", err)
 				}
 			}
+		case len(domains.CustomDomains) > 0:
+			// No service domain — fall back to an existing custom domain.
+			cd := domains.CustomDomains[0]
+			if cd.TargetPort == nil || *cd.TargetPort != port {
+				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
+					return fmt.Errorf("setting custom domain port: %w", err)
+				}
+			}
 		default:
 			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
 				return fmt.Errorf("creating domain: %w", err)
 			}
+		}
+	}
+
+	// Only when the diff touched a custom domain, to skip an extra ListDomains call.
+	customDomainChanged := false
+	for _, f := range rc.Fields {
+		if strings.HasPrefix(f.Path, "customDomain.") {
+			customDomainChanged = true
+			break
+		}
+	}
+	if customDomainChanged && len(cfg.Networking.CustomDomains) > 0 {
+		domains, err := client.ListDomains(projectID, envID, serviceID)
+		if err != nil {
+			return fmt.Errorf("listing domains: %w", err)
+		}
+		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, domains.CustomDomains, w); err != nil {
+			return err
 		}
 	}
 

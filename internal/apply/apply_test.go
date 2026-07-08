@@ -797,11 +797,129 @@ func TestApply_UpdateDomainPortUsesCustomDomainMutation(t *testing.T) {
 	}
 }
 
-func TestApply_UpdateDomainPortPrefersCustomDomainWhenBothExist(t *testing.T) {
-	// When both a service domain and a custom domain exist, the custom domain wins,
-	// matching generateServiceDomain's precedence.
-	var customPort int
-	serviceDomainCalled := false
+func TestApply_UpdateCreatesCustomDomainAndPrintsDNS(t *testing.T) {
+	// A declared custom domain absent from live is created, and its DNS record
+	// is printed for the user to configure.
+	var createdName string
+	var createdPort int
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) { return api.DomainList{}, nil },
+		CreateCustomDomainFunc: func(proj, env, svc, domain string, port int) (api.CustomDomain, error) {
+			createdName, createdPort = domain, port
+			return api.CustomDomain{ID: "cd-1", Domain: domain, Status: &api.CustomDomainStatus{
+				Verified:            false,
+				VerificationDNSHost: "_railway-verify.app",
+				VerificationToken:   "railway-verify=token123",
+				// Railway puts only the routing CNAME here; the verification TXT is separate.
+				DNSRecords: []api.DNSRecord{
+					{RecordType: "DNS_RECORD_TYPE_CNAME", Purpose: "DNS_RECORD_PURPOSE_TRAFFIC_ROUTE", Hostlabel: "app", RequiredValue: "abc.up.railway.app"},
+				},
+			}}, nil
+		},
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "customDomain.app.example.com", Desired: "app.example.com"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{
+		Domain:        config.DomainConfig{Port: 8080},
+		CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+	}}}
+	var out bytes.Buffer
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: &out})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected apply errors: %v", result.Errors)
+	}
+	if createdName != "app.example.com" {
+		t.Errorf("expected custom domain app.example.com created, got %q", createdName)
+	}
+	if createdPort != 8080 {
+		t.Errorf("expected port to default to the service domain port 8080, got %d", createdPort)
+	}
+	for _, want := range []string{"CNAME", "abc.up.railway.app", "(traffic_route)", "TXT", "_railway-verify.app", "railway-verify=token123", "(verification)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("expected output to contain %q, got:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "DNS_RECORD_TYPE_") || strings.Contains(out.String(), "DNS_RECORD_PURPOSE_") {
+		t.Errorf("raw enum prefixes must be stripped, got:\n%s", out.String())
+	}
+}
+
+func TestApply_UpdateSkipsExistingCustomDomain(t *testing.T) {
+	// A custom domain already present must not be recreated.
+	createCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{CustomDomains: []api.CustomDomain{{ID: "cd-1", Domain: "app.example.com"}}}, nil
+		},
+		CreateCustomDomainFunc: func(proj, env, svc, domain string, port int) (api.CustomDomain, error) {
+			createCalled = true
+			return api.CustomDomain{}, nil
+		},
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "image", Current: "node:18", Desired: "node:20"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{
+		CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com"}},
+	}}}
+	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if createCalled {
+		t.Error("must not recreate an existing custom domain")
+	}
+}
+
+func TestApply_UpdateExistingCustomDomainPortWhenDrifted(t *testing.T) {
+	// A declared custom domain that already exists but whose live port differs
+	// must be updated in place, not recreated.
+	livePort := 3000
+	var updatedPort int
+	createCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListDomainsFunc: func(p, e, s string) (api.DomainList, error) {
+			return api.DomainList{CustomDomains: []api.CustomDomain{{ID: "cd-1", Domain: "app.example.com", TargetPort: &livePort}}}, nil
+		},
+		CreateCustomDomainFunc: func(proj, env, svc, domain string, port int) (api.CustomDomain, error) {
+			createCalled = true
+			return api.CustomDomain{}, nil
+		},
+		UpdateCustomDomainPortFunc: func(id, envID string, port int) error { updatedPort = port; return nil },
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "customDomain.app.example.com.port", Current: "3000", Desired: "9000"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "node:20", Networking: config.NetworkingConfig{
+		CustomDomains: []config.CustomDomainConfig{{Name: "app.example.com", Port: 9000}},
+	}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected apply errors: %v", result.Errors)
+	}
+	if createCalled {
+		t.Error("must not recreate an existing custom domain")
+	}
+	if updatedPort != 9000 {
+		t.Errorf("expected UpdateCustomDomainPort with port 9000, got %d", updatedPort)
+	}
+}
+
+func TestApply_UpdateDomainPortPrefersServiceDomainWhenBothExist(t *testing.T) {
+	// networking.domain.port governs the Railway service domain, so when both a
+	// service domain and an undeclared custom domain exist, the service domain wins.
+	var servicePort int
+	customDomainCalled := false
 	mock := &api.MockClient{
 		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
 			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
@@ -812,8 +930,8 @@ func TestApply_UpdateDomainPortPrefersCustomDomainWhenBothExist(t *testing.T) {
 				CustomDomains:  []api.CustomDomain{{ID: "cdom-1", Domain: "app.example.com"}},
 			}, nil
 		},
-		UpdateCustomDomainPortFunc:  func(id, envID string, port int) error { customPort = port; return nil },
-		UpdateServiceDomainPortFunc: func(id, domain, envID, svcID string, port int) error { serviceDomainCalled = true; return nil },
+		UpdateCustomDomainPortFunc:  func(id, envID string, port int) error { customDomainCalled = true; return nil },
+		UpdateServiceDomainPortFunc: func(id, domain, envID, svcID string, port int) error { servicePort = port; return nil },
 	}
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
 		Type: diff.ChangeUpdate, ServiceName: "web",
@@ -824,11 +942,11 @@ func TestApply_UpdateDomainPortPrefersCustomDomainWhenBothExist(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("unexpected apply errors: %v", result.Errors)
 	}
-	if serviceDomainCalled {
-		t.Error("must not call UpdateServiceDomainPort when a custom domain exists")
+	if customDomainCalled {
+		t.Error("must not call UpdateCustomDomainPort for an undeclared custom domain when a service domain exists")
 	}
-	if customPort != 8080 {
-		t.Errorf("expected UpdateCustomDomainPort with port 8080, got %d", customPort)
+	if servicePort != 8080 {
+		t.Errorf("expected UpdateServiceDomainPort with port 8080, got %d", servicePort)
 	}
 }
 
