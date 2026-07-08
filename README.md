@@ -326,6 +326,30 @@ railctl set variable FEATURE_FLAG=enabled --skip-deployment -p my-app -e product
 railctl delete variable OLD_KEY -p my-app -e production -s api --yes
 ```
 
+### Project Tokens
+
+Project tokens are scoped to a single project **and** environment — a much
+smaller blast radius than an account or workspace token. Minting requires an
+account or workspace token (a project-scoped token cannot create tokens).
+
+```bash
+# Create a token (printed once, to stdout — store it immediately)
+railctl token create ci -p my-app -e production
+TOKEN=$(railctl token create ci -p my-app -e production)   # capture for scripts
+
+# List a project's tokens (values are masked)
+railctl token list -p my-app
+railctl token list -p my-app -e production   # filter by environment
+railctl token list -p my-app -o wide         # include the masked token column
+
+# Delete (revoke) a token by ID
+railctl token delete <id> -p my-app
+railctl token delete <id> -p my-app --yes    # skip confirmation
+```
+
+> The raw token value is shown **only once**, at creation. `token list` never
+> displays it — store it securely when you create it.
+
 ### Using Environment Variables for Context
 
 Avoid repeating flags by setting context variables:
