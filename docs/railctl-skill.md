@@ -347,6 +347,133 @@ services:
       password: "$env(REGISTRY_PASS)"
 ```
 
+### A complete worked example (n8n queue-mode, four services)
+
+The schema above, exercised for real — a production-shaped stack (database,
+cache, web app with a public domain, horizontally scaled workers) in one
+manifest. This exact file is live-verified by railctl's example suite:
+
+```yaml
+# n8n queue-mode stack — single declarative manifest (railctl apply/diff).
+#
+# The declarative equivalent of configs/01..04: postgres + redis + n8n primary
+# + n8n workers, one file. Deploy with:
+#
+#   railctl diff  -f stack.yaml           # show what would change (exit != 0 if any)
+#   railctl apply -f stack.yaml           # reconcile live state to this manifest
+#   railctl delete -f stack.yaml --yes    # teardown: delete these services + declared volumes
+#
+# Works flag-free under a project token (scope is baked into the token);
+# with a workspace/account token pass -p/-e as usual.
+#
+# Secrets come from the local environment at apply time ($env(...)):
+#   N8N_POSTGRES_PASSWORD, N8N_REDIS_PASSWORD, N8N_ENCRYPTION_KEY
+
+services:
+  - name: n8n-postgres
+    image: ghcr.io/railwayapp-templates/postgres-ssl:16
+    deploy:
+      startCommand: "/bin/sh -c 'unset PGPORT; docker-entrypoint.sh postgres --port=5432'"
+      restartPolicy: ON_FAILURE
+      maxRetries: 10
+    networking:
+      tcpProxy:
+        port: 5432
+    volume:
+      mountPath: /var/lib/postgresql/data
+      backupSchedules: [daily]
+    variables:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "$env(N8N_POSTGRES_PASSWORD)"
+      POSTGRES_DB: "n8n"
+      PGUSER: "${{n8n-postgres.POSTGRES_USER}}"
+      PGPASSWORD: "${{n8n-postgres.POSTGRES_PASSWORD}}"
+      PGDATABASE: "${{n8n-postgres.POSTGRES_DB}}"
+      PGHOST: "${{RAILWAY_PRIVATE_DOMAIN}}"
+      PGPORT: "5432"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+      DATABASE_URL: "postgresql://${{n8n-postgres.POSTGRES_USER}}:${{n8n-postgres.POSTGRES_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:5432/${{n8n-postgres.POSTGRES_DB}}"
+
+  - name: n8n-redis
+    image: redis:7-alpine
+    deploy:
+      restartPolicy: ON_FAILURE
+      maxRetries: 10
+    volume:
+      mountPath: /data
+    variables:
+      REDIS_PASSWORD: "$env(N8N_REDIS_PASSWORD)"
+      REDISHOST: "${{RAILWAY_PRIVATE_DOMAIN}}"
+      REDISPORT: "6379"
+      REDISUSER: "default"
+      REDIS_URL: "redis://${{n8n-redis.REDISUSER}}:${{n8n-redis.REDIS_PASSWORD}}@${{RAILWAY_PRIVATE_DOMAIN}}:6379"
+
+  - name: n8n-primary
+    image: n8nio/n8n:latest
+    deploy:
+      startCommand: "n8n start"
+      restartPolicy: ON_FAILURE
+      maxRetries: 10
+    networking:
+      domain:
+        port: 5678
+    variables:
+      # Database connection (Railway service references resolve at runtime)
+      DB_TYPE: "postgresdb"
+      DB_POSTGRESDB_DATABASE: "${{n8n-postgres.POSTGRES_DB}}"
+      DB_POSTGRESDB_HOST: "${{n8n-postgres.PGHOST}}"
+      DB_POSTGRESDB_PASSWORD: "${{n8n-postgres.POSTGRES_PASSWORD}}"
+      DB_POSTGRESDB_PORT: "${{n8n-postgres.PGPORT}}"
+      DB_POSTGRESDB_USER: "${{n8n-postgres.POSTGRES_USER}}"
+      # Redis connection for queue mode
+      QUEUE_BULL_REDIS_HOST: "${{n8n-redis.REDISHOST}}"
+      QUEUE_BULL_REDIS_PORT: "${{n8n-redis.REDISPORT}}"
+      QUEUE_BULL_REDIS_USERNAME: "${{n8n-redis.REDISUSER}}"
+      QUEUE_BULL_REDIS_PASSWORD: "${{n8n-redis.REDIS_PASSWORD}}"
+      # n8n configuration
+      EXECUTIONS_MODE: "queue"
+      N8N_ENCRYPTION_KEY: "$env(N8N_ENCRYPTION_KEY)"
+      N8N_EDITOR_BASE_URL: "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+      WEBHOOK_URL: "https://${{RAILWAY_PUBLIC_DOMAIN}}"
+      PORT: "5678"
+
+  - name: n8n-worker
+    image: n8nio/n8n:latest
+    deploy:
+      startCommand: "n8n worker"
+      restartPolicy: ON_FAILURE
+      maxRetries: 10
+      replicas: 2
+    variables:
+      # Database connection
+      DB_TYPE: "postgresdb"
+      DB_POSTGRESDB_DATABASE: "${{n8n-postgres.POSTGRES_DB}}"
+      DB_POSTGRESDB_HOST: "${{n8n-postgres.PGHOST}}"
+      DB_POSTGRESDB_PASSWORD: "${{n8n-postgres.POSTGRES_PASSWORD}}"
+      DB_POSTGRESDB_PORT: "${{n8n-postgres.PGPORT}}"
+      DB_POSTGRESDB_USER: "${{n8n-postgres.POSTGRES_USER}}"
+      # Redis connection for queue mode
+      QUEUE_BULL_REDIS_HOST: "${{n8n-redis.REDISHOST}}"
+      QUEUE_BULL_REDIS_PORT: "${{n8n-redis.REDISPORT}}"
+      QUEUE_BULL_REDIS_USERNAME: "${{n8n-redis.REDISUSER}}"
+      QUEUE_BULL_REDIS_PASSWORD: "${{n8n-redis.REDIS_PASSWORD}}"
+      # Worker configuration
+      EXECUTIONS_MODE: "queue"
+      N8N_ENCRYPTION_KEY: "${{n8n-primary.N8N_ENCRYPTION_KEY}}"
+      WEBHOOK_URL: "https://${{n8n-primary.RAILWAY_PUBLIC_DOMAIN}}"
+      PORT: "5678"
+```
+
+Deploy it with a project token and three secrets in the environment —
+nothing else:
+
+```bash
+export RAILWAY_TOKEN=<project token>   # scope baked in; no -p/-e anywhere
+export N8N_POSTGRES_PASSWORD=… N8N_REDIS_PASSWORD=… N8N_ENCRYPTION_KEY=…
+railctl diff  -f stack.yaml
+railctl apply -f stack.yaml --await
+```
+
 ### The three verbs
 
 | Command | Does | Exit |

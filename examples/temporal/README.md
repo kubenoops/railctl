@@ -6,6 +6,22 @@ Temporal is a durable execution platform for running reliable, long-running
 workflows. This example deploys the full Temporal stack — server, UI, and a
 template for your own worker.
 
+## Declarative alternative (one manifest)
+
+The four configs collapse into a single declarative manifest,
+[`stack.yaml`](stack.yaml), reconciled by `railctl apply`:
+
+```bash
+source .envrc                      # token + secrets (see above)
+railctl diff  -f stack.yaml        # ALWAYS diff first — exit != 0 while drift exists
+railctl apply -f stack.yaml --await
+railctl delete -f stack.yaml --yes # declarative teardown
+```
+
+With a project token no `-p`/`-e` flags are needed — the token carries its
+scope. The manifest also manages the postgres volume's daily backup schedule
+declaratively.
+
 ## Architecture
 
 ```
