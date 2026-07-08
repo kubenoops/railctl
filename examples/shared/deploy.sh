@@ -119,12 +119,14 @@ check_dependencies() {
         echo "  Build: cd <repo-root> && go build -o railctl ./cmd/railctl"
     fi
 
-    for var in RAILWAY_TOKEN RAILCTL_PROJECT RAILCTL_ENVIRONMENT; do
-        if [ -z "${!var:-}" ]; then
-            missing+=("$var")
-            log_error "$var is not set"
-        fi
-    done
+    # Only the token is unconditionally required. With a project token the
+    # project/environment are baked in and derived via `railctl whoami`;
+    # workspace/account tokens still need RAILCTL_PROJECT/RAILCTL_ENVIRONMENT
+    # (validated after the token preflight below).
+    if [ -z "${RAILWAY_TOKEN:-}" ]; then
+        missing+=("RAILWAY_TOKEN")
+        log_error "RAILWAY_TOKEN is not set"
+    fi
 
     if [ ${#missing[@]} -gt 0 ]; then
         echo ""
@@ -137,8 +139,47 @@ check_dependencies() {
 
 check_dependencies
 
+# ── Token preflight ──────────────────────────────────────────────────
+# Classify the token before doing anything. A project token is pinned to one
+# project+environment: it cannot provision (Phase 0 is skipped — the target
+# must already exist) and railctl fails fast if RAILCTL_PROJECT/-ENVIRONMENT
+# contradict the token's baked scope.
+WHOAMI_JSON=$($RAILCTL whoami -o json 2>/dev/null) || {
+    log_error "Token check failed — is RAILWAY_TOKEN valid? (railctl whoami)"
+    exit 1
+}
+TOKEN_TYPE=$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["type"])')
+
+if [ "$TOKEN_TYPE" = "project" ]; then
+    TOKEN_PROJECT=$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["project"]["name"])')
+    TOKEN_ENV=$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["environment"]["name"])')
+    # The token IS the scope: derive project/environment from it. If the user
+    # also set the env vars, railctl itself fails fast on any contradiction.
+    RAILCTL_PROJECT="${RAILCTL_PROJECT:-$TOKEN_PROJECT}"
+    RAILCTL_ENVIRONMENT="${RAILCTL_ENVIRONMENT:-$TOKEN_ENV}"
+    if [ "$RAILCTL_PROJECT" != "$TOKEN_PROJECT" ] || [ "$RAILCTL_ENVIRONMENT" != "$TOKEN_ENV" ]; then
+        log_error "Token is scoped to '$TOKEN_PROJECT/$TOKEN_ENV' but RAILCTL_PROJECT/RAILCTL_ENVIRONMENT say '$RAILCTL_PROJECT/$RAILCTL_ENVIRONMENT'"
+        exit 1
+    fi
+    log_info "Project token scoped to '$TOKEN_PROJECT/$TOKEN_ENV' — provisioning phase will be skipped"
+else
+    log_info "Token type: $TOKEN_TYPE"
+    for var in RAILCTL_PROJECT RAILCTL_ENVIRONMENT; do
+        if [ -z "${!var:-}" ]; then
+            log_error "$var is required with a $TOKEN_TYPE token (set it, or use a project token whose scope is baked in)"
+            exit 1
+        fi
+    done
+fi
+
 # ── Common flags ─────────────────────────────────────────────────────
-RAILCTL_FLAGS=(-p "$RAILCTL_PROJECT" -e "$RAILCTL_ENVIRONMENT")
+# A project token carries its own scope — no -p/-e needed (and none passed:
+# the flag-free invocation is the disambiguation working as designed).
+if [ "$TOKEN_TYPE" = "project" ]; then
+    RAILCTL_FLAGS=()
+else
+    RAILCTL_FLAGS=(-p "$RAILCTL_PROJECT" -e "$RAILCTL_ENVIRONMENT")
+fi
 declare -a DEPLOYED_SERVICES=()
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -303,20 +344,26 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # ── Phase 0: Ensure project & environment exist ──────────────────────
 log_step "Phase 0: Project & Environment"
 
-if $RAILCTL describe project "$RAILCTL_PROJECT" &>/dev/null; then
-    log_success "Project '$RAILCTL_PROJECT' exists"
+if [ "$TOKEN_TYPE" = "project" ]; then
+    # A project token cannot list/create projects or environments (workspace-
+    # scope operations), and its scope is verified above — nothing to do.
+    log_success "Scope '$RAILCTL_PROJECT/$RAILCTL_ENVIRONMENT' baked into the token — skipping provisioning"
 else
-    log_info "Creating project '$RAILCTL_PROJECT'..."
-    $RAILCTL create project "$RAILCTL_PROJECT"
-    log_success "Project created"
-fi
+    if $RAILCTL describe project "$RAILCTL_PROJECT" &>/dev/null; then
+        log_success "Project '$RAILCTL_PROJECT' exists"
+    else
+        log_info "Creating project '$RAILCTL_PROJECT'..."
+        $RAILCTL create project "$RAILCTL_PROJECT"
+        log_success "Project created"
+    fi
 
-if $RAILCTL get environments -p "$RAILCTL_PROJECT" 2>/dev/null | grep -q "$RAILCTL_ENVIRONMENT"; then
-    log_success "Environment '$RAILCTL_ENVIRONMENT' exists"
-else
-    log_info "Creating environment '$RAILCTL_ENVIRONMENT'..."
-    $RAILCTL create environment "$RAILCTL_ENVIRONMENT" -p "$RAILCTL_PROJECT"
-    log_success "Environment created"
+    if $RAILCTL get environments -p "$RAILCTL_PROJECT" 2>/dev/null | grep -q "$RAILCTL_ENVIRONMENT"; then
+        log_success "Environment '$RAILCTL_ENVIRONMENT' exists"
+    else
+        log_info "Creating environment '$RAILCTL_ENVIRONMENT'..."
+        $RAILCTL create environment "$RAILCTL_ENVIRONMENT" -p "$RAILCTL_PROJECT"
+        log_success "Environment created"
+    fi
 fi
 
 # ── Phase 1: Deploy configs ──────────────────────────────────────────
