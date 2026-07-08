@@ -52,7 +52,7 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 
 	tokens, err := client.ListProjectTokens(ctx.Project.ID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list project tokens: %w", err)
 	}
 
 	if needEnv {

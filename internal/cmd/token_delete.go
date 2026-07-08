@@ -7,6 +7,7 @@ import (
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
+	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +51,7 @@ func runTokenDelete(cmd *cobra.Command, args []string) error {
 	// Resolve the token within the project for a friendly prompt + not-found error.
 	tokens, err := client.ListProjectTokens(ctx.Project.ID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to list project tokens: %w", err)
 	}
 	var found *api.ProjectToken
 	for i := range tokens {
@@ -60,7 +61,7 @@ func runTokenDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if found == nil {
-		return fmt.Errorf("project token '%s' not found in project '%s'", tokenID, ctx.Project.Name)
+		return resolver.ErrNotFound{Resource: "project token", Name: tokenID}
 	}
 
 	if !tokenDeleteYes {
