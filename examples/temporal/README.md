@@ -126,9 +126,9 @@ chmod +x cleanup.sh
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RAILWAY_TOKEN` | ✅ | Railway API token |
-| `RAILCTL_PROJECT` | ✅ | Project name on Railway |
-| `RAILCTL_ENVIRONMENT` | ✅ | Environment name |
+| `RAILWAY_TOKEN` | ✅ | Railway API token (any type; a **project token** is recommended — least privilege) |
+| `RAILCTL_PROJECT` | with workspace/account tokens | Project name — **optional with a project token** (scope derived via `railctl whoami`) |
+| `RAILCTL_ENVIRONMENT` | with workspace/account tokens | Environment name — **optional with a project token** |
 | `TEMPORAL_POSTGRES_PASSWORD` | ✅ | PostgreSQL password |
 | `TEMPORAL_WORKER_IMAGE` | Worker only | Your worker container image |
 | `REGISTRY_USERNAME` | Worker only | Container registry username |

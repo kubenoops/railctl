@@ -126,3 +126,17 @@ go test ./internal/cmd -run 'TestGenerateServiceDomain|TestRemoveServiceDomain|T
 go build -o railctl ./cmd/railctl
 RAILCTL=$(pwd)/railctl go test -tags e2e -v -timeout 10m ./tests/e2e/...
 ```
+
+## Imperative domain commands
+
+Alongside the declarative `customDomains` block, domains are manageable
+imperatively:
+
+```bash
+railctl get domains -s api            # railway + custom domains, verification status
+railctl create domain app.example.com -s api [--port N]   # prints the DNS records
+railctl delete domain app.example.com -s api --yes
+```
+
+Custom-domain **removal is imperative-only by design** — `apply` never removes
+a live domain, so a manifest edit cannot cause an accidental outage.
