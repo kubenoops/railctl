@@ -58,6 +58,21 @@ func TestBoundaries(t *testing.T) {
 		harness.AssertNotContains(t, r.Stderr, "ignored")
 	})
 
+	t.Run("create_environment_denied", func(t *testing.T) {
+		// Environment lifecycle is workspace-scope: the RequireWorkspaceScope
+		// guard fails fast before any API mutation.
+		r := env.RunFail(t, "create", "environment", "should-not-exist")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to a single project")
+	})
+
+	t.Run("delete_project_denied", func(t *testing.T) {
+		// Project lifecycle is workspace-scope: guard fails fast, and the
+		// fixture project must remain untouched (asserted implicitly — every
+		// later test still runs against it).
+		r := env.RunFail(t, "delete", "project", env.ProjectName, "--yes")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to a single project")
+	})
+
 	t.Run("w_flag_mismatch_fails", func(t *testing.T) {
 		// internal/api/client.go GetProjectContext → checkWorkspaceHint: a
 		// -w value naming a different workspace than the one containing the
