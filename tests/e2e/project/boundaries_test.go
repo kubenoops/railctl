@@ -60,8 +60,10 @@ func TestBoundaries(t *testing.T) {
 
 	t.Run("create_environment_denied", func(t *testing.T) {
 		// Environment lifecycle is workspace-scope: the RequireWorkspaceScope
-		// guard fails fast before any API mutation.
-		r := env.RunFail(t, "create", "environment", "should-not-exist")
+		// guard fails fast before any API mutation. -p is required by the
+		// command's flag validation (which runs before the guard), so pass the
+		// fixture project — a matching -p is not a contradiction.
+		r := env.RunFail(t, "create", "environment", "should-not-exist", "-p", env.ProjectName)
 		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to a single project")
 	})
 
