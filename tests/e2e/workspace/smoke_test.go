@@ -1,10 +1,12 @@
 //go:build e2e
 
-package e2e
+package workspace
 
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/kubenoops/railctl/tests/e2e/harness"
 )
 
 // TestSmoke is a fast, linear walk through the full CLI lifecycle.
@@ -12,24 +14,24 @@ import (
 // exercises describe/get on each, then tears everything down.
 // No permutations, no table-driven subtests — just the happy path.
 //
-//	go test -tags e2e -v -run TestSmoke -timeout 3m ./tests/e2e/...
+//	go test -tags e2e -v -run TestSmoke -timeout 3m ./tests/e2e/workspace/...
 func TestSmoke(t *testing.T) {
-	env := SetupProject(t) // creates project, registers cleanup
+	env := harness.SetupProject(t, token) // creates project, registers cleanup
 
 	// ── List projects ────────────────────────────────────────
 	r := env.RunOK(t, "get", "projects")
-	AssertContains(t, r.Stdout, env.ProjectName)
+	harness.AssertContains(t, r.Stdout, env.ProjectName)
 
 	// ── Describe project ─────────────────────────────────────
 	r = env.RunOK(t, env.WithP("describe", "project", env.ProjectName)...)
-	AssertContains(t, r.Stdout, env.ProjectName)
+	harness.AssertContains(t, r.Stdout, env.ProjectName)
 
 	// ── Create environment ───────────────────────────────────
 	env.RunOK(t, "create", "environment", env.EnvName, "-p", env.ProjectName)
 
 	// ── List environments ────────────────────────────────────
 	r = env.RunOK(t, env.WithP("get", "environments")...)
-	AssertContains(t, r.Stdout, env.EnvName)
+	harness.AssertContains(t, r.Stdout, env.EnvName)
 
 	// ── Create service ───────────────────────────────────────
 	env.RunOK(t, "create", "service", env.ServiceName,
@@ -38,30 +40,30 @@ func TestSmoke(t *testing.T) {
 
 	// ── List services ────────────────────────────────────────
 	r = env.RunOK(t, env.WithPE("get", "services")...)
-	AssertContains(t, r.Stdout, env.ServiceName)
+	harness.AssertContains(t, r.Stdout, env.ServiceName)
 
 	// ── Get services JSON ────────────────────────────────────
 	r = env.RunOK(t, env.WithPE("get", "services", "-o", "json")...)
-	AssertValidJSON(t, r.Stdout)
+	harness.AssertValidJSON(t, r.Stdout)
 
 	// ── Set variable ─────────────────────────────────────────
 	env.RunOK(t, env.WithPES("set", "variable", "SMOKE_KEY=smoke_value", "--skip-deployment")...)
 
 	// ── Get variables ────────────────────────────────────────
 	r = env.RunOK(t, env.WithPES("get", "variables")...)
-	AssertContains(t, r.Stdout, "SMOKE_KEY")
+	harness.AssertContains(t, r.Stdout, "SMOKE_KEY")
 
 	// ── Create volume ────────────────────────────────────────
 	env.RunOK(t, env.WithPES("create", "volume", "smoke-vol", "--mount-path", "/data")...)
 
 	// ── List volumes ─────────────────────────────────────────
 	r = env.RunOK(t, env.WithPES("get", "volumes")...)
-	AssertContains(t, r.Stdout, "/data")
-	AssertContains(t, r.Stdout, "smoke-vol")
+	harness.AssertContains(t, r.Stdout, "/data")
+	harness.AssertContains(t, r.Stdout, "smoke-vol")
 
 	// ── Get deployments ──────────────────────────────────────
 	r = env.RunOK(t, env.WithPES("get", "deployments", "-o", "json")...)
-	AssertValidJSON(t, r.Stdout)
+	harness.AssertValidJSON(t, r.Stdout)
 
 	var deps []map[string]interface{}
 	if err := json.Unmarshal([]byte(r.Stdout), &deps); err == nil && len(deps) > 0 {
@@ -78,11 +80,11 @@ func TestSmoke(t *testing.T) {
 
 	// ── Verify variable gone ─────────────────────────────────
 	r = env.RunOK(t, env.WithPES("get", "variables")...)
-	AssertNotContains(t, r.Stdout, "SMOKE_KEY")
+	harness.AssertNotContains(t, r.Stdout, "SMOKE_KEY")
 
 	// ── Error handling: invalid output format ────────────────
 	r = env.RunFail(t, "get", "projects", "-o", "nope")
-	AssertContains(t, r.Stderr, "invalid output format")
+	harness.AssertContains(t, r.Stderr, "invalid output format")
 
 	t.Log("✅ Smoke test passed — full lifecycle exercised")
 }
