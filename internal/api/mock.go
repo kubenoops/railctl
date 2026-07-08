@@ -68,6 +68,10 @@ type MockClient struct {
 	CreateVolumeBackupFunc        func(volumeInstanceID, name string) (string, error)
 	RestoreVolumeBackupFunc       func(backupID, volumeInstanceID string) error
 	DeleteVolumeBackupFunc        func(backupID, volumeInstanceID string) error
+	// Project tokens
+	CreateProjectTokenFunc func(projectID, environmentID, name string) (string, error)
+	ListProjectTokensFunc  func(projectID string) ([]ProjectToken, error)
+	DeleteProjectTokenFunc func(tokenID string) error
 
 	// Workspace
 	GetWorkspaceIDFunc func() (string, error)
@@ -450,6 +454,27 @@ func (m *MockClient) CreateTCPProxy(applicationPort int, environmentID, serviceI
 func (m *MockClient) DeleteTCPProxy(id string) error {
 	if m.DeleteTCPProxyFunc != nil {
 		return m.DeleteTCPProxyFunc(id)
+	}
+	return nil
+}
+
+func (m *MockClient) CreateProjectToken(projectID, environmentID, name string) (string, error) {
+	if m.CreateProjectTokenFunc != nil {
+		return m.CreateProjectTokenFunc(projectID, environmentID, name)
+	}
+	return "", nil
+}
+
+func (m *MockClient) ListProjectTokens(projectID string) ([]ProjectToken, error) {
+	if m.ListProjectTokensFunc != nil {
+		return m.ListProjectTokensFunc(projectID)
+	}
+	return nil, nil
+}
+
+func (m *MockClient) DeleteProjectToken(tokenID string) error {
+	if m.DeleteProjectTokenFunc != nil {
+		return m.DeleteProjectTokenFunc(tokenID)
 	}
 	return nil
 }
