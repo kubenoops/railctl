@@ -14,7 +14,7 @@ import (
 // deletion. No -p/-e flags anywhere: the token carries the scope; only -s
 // selects the service.
 //
-// The domains use a placeholder apex (.railctl-example.test) — Railway
+// The domains use a placeholder apex (.railctl-e2e.example.com) — Railway
 // registers them and returns DNS records without requiring ownership, and
 // they are never verified, so nothing routes.
 //
@@ -23,10 +23,10 @@ func TestDomains(t *testing.T) {
 	env := fixtureEnv(t)
 	svcName := createService(t, env)
 
-	domainName := harness.UniqueName() + ".railctl-example.test"
+	domainName := harness.UniqueName() + ".railctl-e2e.example.com"
 	// A second custom domain stays behind after the delete subtests so the
 	// delete-again error has an "available:" list to render.
-	otherDomain := harness.UniqueName() + ".railctl-example.test"
+	otherDomain := harness.UniqueName() + ".railctl-e2e.example.com"
 
 	t.Run("create", func(t *testing.T) {
 		r := env.RunOK(t, "create", "domain", domainName, "-s", svcName, "--port", "8080")
