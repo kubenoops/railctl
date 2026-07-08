@@ -221,6 +221,66 @@ variables:
 	harness.AssertContains(t, r.Stdout, svcName)
 }
 
+// TestApplyDelete_Roundtrip tests the declarative teardown counterpart of
+// apply: apply a two-service config, then `delete -f` the same config and
+// verify the services are gone and diff reports creates again.
+//
+//	go test -tags e2e -v -run TestApplyDelete_Roundtrip ./tests/e2e/project/...
+func TestApplyDelete_Roundtrip(t *testing.T) {
+	e := fixtureEnv(t)
+	svcA := harness.UniqueName()
+	svcB := harness.UniqueName()
+	t.Cleanup(func() {
+		// Belt-and-braces: the declarative delete below should already have
+		// removed both.
+		e.Run("delete", "service", svcA, "--yes")
+		e.Run("delete", "service", svcB, "--yes")
+	})
+
+	cfgDir := t.TempDir()
+	cfgFile := filepath.Join(cfgDir, "stack.yaml")
+	cfgData := fmt.Sprintf(`services:
+  - name: %s
+    image: nginx:1.25-alpine
+  - name: %s
+    image: redis:7-alpine
+`, svcA, svcB)
+	if err := os.WriteFile(cfgFile, []byte(cfgData), 0644); err != nil {
+		t.Fatalf("writing config file: %v", err)
+	}
+
+	// Apply — creates both services.
+	r := e.RunOK(t, "apply", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "Created")
+
+	time.Sleep(3 * time.Second)
+
+	// Verify both exist.
+	r = e.RunOK(t, "get", "services")
+	harness.AssertContains(t, r.Stdout, svcA)
+	harness.AssertContains(t, r.Stdout, svcB)
+
+	// Declarative delete of the same config.
+	r = e.RunOK(t, "delete", "-f", cfgFile, "--yes")
+	harness.AssertContains(t, r.Stdout, "2 services deleted")
+
+	time.Sleep(3 * time.Second)
+
+	// Verify both are gone.
+	r = e.RunOK(t, "get", "services")
+	harness.AssertNotContains(t, r.Stdout, svcA)
+	harness.AssertNotContains(t, r.Stdout, svcB)
+
+	// diff against the same config shows creates again (exit non-zero).
+	r = e.Run("diff", "-f", cfgFile)
+	if r.ExitCode == 0 {
+		t.Fatalf("expected diff to exit non-zero after delete -f, got 0\nstdout: %s", r.Stdout)
+	}
+	harness.AssertContains(t, r.Stdout, "create")
+	harness.AssertContains(t, r.Stdout, svcA)
+	harness.AssertContains(t, r.Stdout, svcB)
+}
+
 // TestApplyDiff_Directory tests applying from a directory of configs.
 //
 //	go test -tags e2e -v -run TestApplyDiff_Directory ./tests/e2e/project/...
