@@ -198,20 +198,3 @@ func (c *Client) DeleteVolumeBackup(backupID, volumeInstanceID string) error {
 	_, err := c.execute(mutation, variables)
 	return err
 }
-
-// LockVolumeBackup prevents a backup from expiring.
-func (c *Client) LockVolumeBackup(backupID, volumeInstanceID string) error {
-	mutation := `
-		mutation VolumeBackupLock($volumeInstanceBackupId: String!, $volumeInstanceId: String!) {
-			volumeInstanceBackupLock(volumeInstanceBackupId: $volumeInstanceBackupId, volumeInstanceId: $volumeInstanceId)
-		}
-	`
-
-	variables := map[string]any{
-		"volumeInstanceBackupId": backupID,
-		"volumeInstanceId":       volumeInstanceID,
-	}
-
-	_, err := c.execute(mutation, variables)
-	return err
-}

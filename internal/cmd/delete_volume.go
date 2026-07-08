@@ -52,27 +52,13 @@ func runDeleteVolume(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get volumes to find the volume
-	volumes, err := client.ListVolumes(ctx.Project.ID, ctx.Environment.ID)
+	// Find volume by name or ID
+	vol, err := resolveVolumeInstance(client, ctx.Project.ID, ctx.Environment.ID, volumeNameOrID)
 	if err != nil {
 		return err
 	}
-
-	// Find volume by name or ID
-	var volumeID, volumeName string
-	found := false
-	for _, vol := range volumes {
-		if vol.Volume.Name == volumeNameOrID || vol.Volume.ID == volumeNameOrID {
-			volumeID = vol.Volume.ID
-			volumeName = vol.Volume.Name
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("volume '%s' not found in environment", volumeNameOrID)
-	}
+	volumeID := vol.Volume.ID
+	volumeName := vol.Volume.Name
 
 	// Confirm deletion unless --yes is specified
 	if !deleteVolumeYes {

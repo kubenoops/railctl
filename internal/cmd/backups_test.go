@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/kubenoops/railctl/internal/types"
 )
 
@@ -351,4 +352,65 @@ func TestRunDeleteBackup_VolumeNotFound(t *testing.T) {
 	if err := deleteBackupCmd.RunE(deleteBackupCmd, []string{"b-1"}); err == nil {
 		t.Error("expected error for unknown volume")
 	}
+}
+
+func TestResolveVolumeInstance(t *testing.T) {
+	svcID := "svc-1"
+	multiVol := func() api.APIClient {
+		return &api.MockClient{
+			ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+				return []api.VolumeInstance{
+					{ID: "vi-1", Volume: api.Volume{ID: "vol-1", Name: "data"}, ServiceID: &svcID},
+					{ID: "vi-2", Volume: api.Volume{ID: "vol-2", Name: "database"}, ServiceID: &svcID},
+					{ID: "vi-3", Volume: api.Volume{ID: "vol-3", Name: "cache"}, ServiceID: &svcID},
+				}, nil
+			},
+		}
+	}
+
+	t.Run("exact name wins over substring", func(t *testing.T) {
+		// "data" is a substring of "database", but exact match must win.
+		vi, err := resolveVolumeInstance(multiVol(), "p", "e", "data")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if vi.ID != "vi-1" {
+			t.Errorf("expected vi-1, got %q", vi.ID)
+		}
+	})
+
+	t.Run("exact ID", func(t *testing.T) {
+		vi, err := resolveVolumeInstance(multiVol(), "p", "e", "vol-3")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if vi.ID != "vi-3" {
+			t.Errorf("expected vi-3, got %q", vi.ID)
+		}
+	})
+
+	t.Run("unique substring", func(t *testing.T) {
+		vi, err := resolveVolumeInstance(multiVol(), "p", "e", "cach")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if vi.ID != "vi-3" {
+			t.Errorf("expected vi-3, got %q", vi.ID)
+		}
+	})
+
+	t.Run("ambiguous substring", func(t *testing.T) {
+		// "dat" matches both "data" and "database".
+		_, err := resolveVolumeInstance(multiVol(), "p", "e", "dat")
+		if _, ok := err.(resolver.ErrAmbiguous); !ok {
+			t.Fatalf("expected resolver.ErrAmbiguous, got %v (%T)", err, err)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		_, err := resolveVolumeInstance(multiVol(), "p", "e", "nope")
+		if _, ok := err.(resolver.ErrNotFound); !ok {
+			t.Fatalf("expected resolver.ErrNotFound, got %v (%T)", err, err)
+		}
+	})
 }

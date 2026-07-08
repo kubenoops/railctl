@@ -68,7 +68,6 @@ type MockClient struct {
 	CreateVolumeBackupFunc        func(volumeInstanceID, name string) (string, error)
 	RestoreVolumeBackupFunc       func(backupID, volumeInstanceID string) error
 	DeleteVolumeBackupFunc        func(backupID, volumeInstanceID string) error
-	LockVolumeBackupFunc          func(backupID, volumeInstanceID string) error
 
 	// Workspace
 	GetWorkspaceIDFunc func() (string, error)
@@ -381,13 +380,6 @@ func (m *MockClient) RestoreVolumeBackup(backupID, volumeInstanceID string) erro
 func (m *MockClient) DeleteVolumeBackup(backupID, volumeInstanceID string) error {
 	if m.DeleteVolumeBackupFunc != nil {
 		return m.DeleteVolumeBackupFunc(backupID, volumeInstanceID)
-	}
-	return nil
-}
-
-func (m *MockClient) LockVolumeBackup(backupID, volumeInstanceID string) error {
-	if m.LockVolumeBackupFunc != nil {
-		return m.LockVolumeBackupFunc(backupID, volumeInstanceID)
 	}
 	return nil
 }

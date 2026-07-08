@@ -85,7 +85,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	envID := ctx.Environment.ID
 
 	// 4. Fetch live state.
-	liveServices, err := fetchLiveState(client, projectID, envID)
+	liveServices, err := fetchLiveState(client, projectID, envID, cfg.Services)
 	if err != nil {
 		return fmt.Errorf("fetching live state: %w", err)
 	}

@@ -113,7 +113,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	envID := ctx.Environment.ID
 
 	// 4. Fetch live state.
-	liveServices, err := fetchLiveState(client, projectID, envID)
+	liveServices, err := fetchLiveState(client, projectID, envID, cfg.Services)
 	if err != nil {
 		return fmt.Errorf("fetching live state: %w", err)
 	}
@@ -237,7 +237,18 @@ func loadConfig(path string) (*config.Config, error) {
 
 // fetchLiveState retrieves the current state of all services in the given
 // project/environment from the Railway API and returns them as LiveService structs.
-func fetchLiveState(client api.APIClient, projectID, envID string) ([]diff.LiveService, error) {
+// desired is the declared config; it is used to limit backup-schedule reads to
+// volumes actually under declarative management (services declaring a volume).
+func fetchLiveState(client api.APIClient, projectID, envID string, desired []config.ServiceConfig) ([]diff.LiveService, error) {
+	// Services that declare a volume — only these need their live backup
+	// schedules read (avoids an N+1 for volumes not under management).
+	managesVolume := make(map[string]bool, len(desired))
+	for _, d := range desired {
+		if d.Volume.MountPath != "" {
+			managesVolume[d.Name] = true
+		}
+	}
+
 	// Get all services.
 	services, err := client.ListServices(projectID, envID)
 	if err != nil {
@@ -281,10 +292,16 @@ func fetchLiveState(client api.APIClient, projectID, envID string) ([]diff.LiveS
 					MountPath:        vi.MountPath,
 					VolumeInstanceID: vi.ID,
 				}
-				// Best-effort: don't fail apply/diff if schedules can't be read.
-				if schedules, err := client.ListVolumeBackupSchedules(vi.ID); err == nil {
-					for _, s := range schedules {
-						lv.BackupSchedules = append(lv.BackupSchedules, s.Kind)
+				// Only read schedules for volumes under declarative management.
+				// Warn (don't fail) on error so a transient read doesn't present
+				// a degraded state as truth.
+				if managesVolume[svc.Name] {
+					if schedules, err := client.ListVolumeBackupSchedules(vi.ID); err == nil {
+						for _, s := range schedules {
+							lv.BackupSchedules = append(lv.BackupSchedules, s.Kind)
+						}
+					} else {
+						fmt.Fprintf(os.Stderr, "Warning: could not read backup schedules for volume %q; treating as none: %v\n", vi.Volume.Name, err)
 					}
 				}
 				ls.Volumes = append(ls.Volumes, lv)

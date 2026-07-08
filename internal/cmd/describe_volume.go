@@ -73,23 +73,10 @@ func runDescribeVolume(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("environment '%s' not found in project", envFlag)
 	}
 
-	// Get volumes to find the specific volume
-	volumes, err := client.ListVolumes(project.ID, env.ID)
+	// Find volume by name or ID
+	volume, err := resolveVolumeInstance(client, project.ID, env.ID, volumeNameOrID)
 	if err != nil {
 		return err
-	}
-
-	// Find volume by name or ID
-	var volume *api.VolumeInstance
-	for i := range volumes {
-		if volumes[i].Volume.Name == volumeNameOrID || volumes[i].Volume.ID == volumeNameOrID {
-			volume = &volumes[i]
-			break
-		}
-	}
-
-	if volume == nil {
-		return fmt.Errorf("volume '%s' not found in environment", volumeNameOrID)
 	}
 
 	// Get service name if attached

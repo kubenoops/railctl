@@ -310,7 +310,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if backupSchedulesChanged {
 		instanceID, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
 		if err != nil {
-			fmt.Fprintf(w, "  Warning: cannot set backup schedules for '%s': %v\n", name, err)
+			fmt.Fprintf(w, "  Warning: backup schedules not applied for '%s' (no volume yet): re-run 'apply' after the volume is created to set them\n", name)
 		} else {
 			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
 				return fmt.Errorf("setting backup schedules: %w", err)

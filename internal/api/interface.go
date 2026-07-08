@@ -77,7 +77,6 @@ type APIClient interface {
 	CreateVolumeBackup(volumeInstanceID, name string) (string, error)
 	RestoreVolumeBackup(backupID, volumeInstanceID string) error
 	DeleteVolumeBackup(backupID, volumeInstanceID string) error
-	LockVolumeBackup(backupID, volumeInstanceID string) error
 
 	// Workspace
 	GetWorkspaceID() (string, error)

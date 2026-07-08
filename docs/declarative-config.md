@@ -182,6 +182,12 @@ volume:
   backupSchedules: [daily, weekly]
 ```
 
+> **Note:** When a volume is *added* to an existing service in the same `apply`,
+> Railway can't create it in place — so the schedules can't attach on that run.
+> `apply` warns and continues; run `apply` again once the volume exists (after
+> the deploy) to set the schedules. Scripted callers should account for this
+> second run.
+
 Manual backups (create/list/restore/delete) are operational actions, not
 declarative state — use the `railctl {get,create,restore,delete} backup`
 commands for those.
