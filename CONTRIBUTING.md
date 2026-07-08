@@ -31,9 +31,10 @@ make test
 # Lint (the canonical lint gate)
 golangci-lint run
 
-# E2E tests (requires your own Railway API token)
-export RAILWAY_TOKEN_1="your-railway-api-token"
-RAILCTL=$(pwd)/railctl go test -tags e2e -v -timeout 10m ./tests/e2e/...
+# E2E tests — three groups keyed to Railway token scope (see tests/e2e/README.md)
+export RAILWAY_ACCOUNT_TOKEN="your-account-token"      # L1 group
+export RAILWAY_WORKSPACE_TOKEN="your-workspace-token"  # L2 + L3 groups
+make test-e2e            # all three groups, or test-e2e-{account,workspace,project}
 ```
 
 ## Development Workflow
@@ -135,16 +136,18 @@ already provides:
 
 E2E tests run against the live Railway API. To run them locally:
 
-1. Create a Railway account and generate an API token
+1. Create a Railway account; generate an **account token** (no workspace
+   selected) and a **workspace token** — each e2e group runs under exactly its
+   token type and refuses a mismatched one (preflight).
 2. Set environment variables:
    ```bash
-   export RAILWAY_TOKEN_1="your-token"
-   # Optionally set RAILWAY_TOKEN_2 and RAILWAY_TOKEN_3 for load balancing
+   export RAILWAY_ACCOUNT_TOKEN="..."     # account group
+   export RAILWAY_WORKSPACE_TOKEN="..."   # workspace + project groups (the
+                                          # project group mints its own token)
    ```
-3. Build and run:
+3. Run:
    ```bash
-   make build
-   RAILCTL=$(pwd)/railctl go test -tags e2e -v -timeout 10m ./tests/e2e/...
+   make test-e2e        # or test-e2e-account / test-e2e-workspace / test-e2e-project
    ```
 
 > **Note:** E2E tests create and delete Railway projects. Use a dedicated account or team to avoid impacting production resources.

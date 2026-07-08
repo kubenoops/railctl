@@ -233,7 +233,11 @@ go test ./...
 
 #### E2E Test Suite
 
-**Location:** `tests/e2e/run.sh`
+**Location:** `tests/e2e/{account,workspace,project}` — three Go test groups
+keyed to Railway token scope (shared harness in `tests/e2e/harness/`); see
+`tests/e2e/README.md`. Pick the group by what the token type can do: workspace
+enumeration → `account/`, project/env lifecycle + minting → `workspace/`,
+everything in-scope + boundary fail-fasts → `project/` (the bulk).
 
 **When to update E2E tests:**
 - Adding a new command (e.g., `railctl get foo`)
@@ -247,19 +251,20 @@ go test ./...
 # Build the binary
 go build -o railctl ./cmd/railctl
 
-# Set up token
-export RAILWAY_TOKEN="your-railway-api-token"
-# OR
-export RAILWAY_TOKEN="your-token-here"
+# Set up tokens (each group runs under exactly its token type)
+export RAILWAY_ACCOUNT_TOKEN="..."
+export RAILWAY_WORKSPACE_TOKEN="..."
 
-# Run the test suite
-./tests/e2e/run.sh
+# Run the suite (or one group)
+make test-e2e
+make test-e2e-project
 
-# With verbose output for debugging
-E2E_VERBOSE=1 ./tests/e2e/run.sh
+# One test directly
+RAILCTL=$(pwd)/railctl RAILWAY_WORKSPACE_TOKEN=... \
+  go test -tags e2e -v -run TestBoundaries ./tests/e2e/project/...
 
-# Keep resources for manual inspection
-E2E_KEEP=1 ./tests/e2e/run.sh
+# Keep resources on failure for manual inspection
+E2E_KEEP=1 make test-e2e-project
 ```
 
 **What to add when creating a new command:**
@@ -669,9 +674,9 @@ fi
 - [ ] Support JSON/YAML/table output
 - [ ] Add examples to command help
 - [ ] Write/update unit tests
-- [ ] **Update E2E test suite** (`tests/e2e/run.sh`) for new commands/flags
+- [ ] **Update the E2E suite** (`tests/e2e/{account,workspace,project}`) for new commands/flags — and `docs/railctl-skill.md` (CI enforces it)
 - [ ] Build and test manually
-- [ ] Run E2E tests: `./tests/e2e/run.sh`
+- [ ] Run E2E tests: `make test-e2e`
 - [ ] Update README if needed
 - [ ] Commit with conventional commit message
 

@@ -103,6 +103,20 @@ All workflow files live in `.github/workflows/`.
 
 ---
 
+### 1b. Docs Guard (`docs-guard.yml`)
+
+Two deterministic completeness checks on every PR:
+- **CLI surface → docs**: a PR adding a flag or `RAILCTL_*` env var must touch
+  documentation (bypass label: `docs-not-needed`).
+- **Behavior code → embedded skill**: a PR changing `internal/{cmd,api,apply,
+  config,diff}` (tests excluded) must update `docs/railctl-skill.md` — the
+  agent-facing source of truth printed by `railctl skill` (bypass label:
+  `skill-not-affected`).
+
+PR Tests additionally run `make gen-check` to guarantee the embedded copy
+(`internal/skill/railctl-skill.md`) is regenerated and committed alongside the
+source.
+
 ### 2. Release (`release.yml`)
 
 **Purpose:** Automate the release lifecycle with a two-phase approach.

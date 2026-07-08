@@ -128,9 +128,9 @@ chmod +x cleanup.sh
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `RAILWAY_TOKEN` | ✅ | Railway API token |
-| `RAILCTL_PROJECT` | ✅ | Project name on Railway |
-| `RAILCTL_ENVIRONMENT` | ✅ | Environment name (e.g., `production`) |
+| `RAILWAY_TOKEN` | ✅ | Railway API token (any type; a **project token** is recommended — least privilege) |
+| `RAILCTL_PROJECT` | with workspace/account tokens | Project name — **optional with a project token** (scope derived via `railctl whoami`) |
+| `RAILCTL_ENVIRONMENT` | with workspace/account tokens | Environment name — **optional with a project token** (e.g., `production`) |
 | `N8N_POSTGRES_PASSWORD` | ✅ | PostgreSQL password |
 | `N8N_REDIS_PASSWORD` | ✅ | Redis password |
 | `N8N_ENCRYPTION_KEY` | ✅ | n8n encryption key for credentials |
