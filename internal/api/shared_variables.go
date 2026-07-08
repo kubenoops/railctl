@@ -49,7 +49,7 @@ func (c *Client) GetSharedVariables(projectID, environmentID string) (map[string
 		Variables map[string]string `json:"variables"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse shared variables: %w", err)
 	}
 
 	// Return empty map if nil (no shared variables)
@@ -74,7 +74,7 @@ func (c *Client) SetSharedVariables(projectID, environmentID string, variables m
 
 	var resp variableCollectionUpsertResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return err
+		return fmt.Errorf("failed to parse shared variables response: %w", err)
 	}
 
 	if !resp.VariableCollectionUpsert {
