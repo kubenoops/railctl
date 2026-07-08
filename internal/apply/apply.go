@@ -318,7 +318,16 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
 				return fmt.Errorf("setting backup schedules: %w", err)
 			}
-			fmt.Fprintf(w, "  Backup schedules set to [%s]\n", strings.Join(cfg.Volume.BackupSchedules, ", "))
+			if len(cfg.Volume.BackupSchedules) == 0 {
+				// Clearing schedules is destructive — warn and name what was removed.
+				if prev := fieldCurrent(rc.Fields, "volume.backupSchedules"); prev != "" {
+					fmt.Fprintf(w, "  Warning: backup schedules for '%s' cleared (were: %s)\n", name, strings.ReplaceAll(prev, ",", ", "))
+				} else {
+					fmt.Fprintf(w, "  Warning: backup schedules for '%s' cleared\n", name)
+				}
+			} else {
+				fmt.Fprintf(w, "  Backup schedules set to [%s]\n", strings.Join(cfg.Volume.BackupSchedules, ", "))
+			}
 		}
 	}
 
@@ -582,6 +591,17 @@ func buildDeployConfigUpdate(fields []diff.FieldDiff) (startCmd, restartPolicy *
 		}
 	}
 	return
+}
+
+// fieldCurrent returns the Current value of the FieldDiff with the given path,
+// or "" when no such field is present.
+func fieldCurrent(fields []diff.FieldDiff, path string) string {
+	for _, f := range fields {
+		if f.Path == path {
+			return f.Current
+		}
+	}
+	return ""
 }
 
 // extractFieldChanges categorizes FieldDiffs by field group.

@@ -1198,3 +1198,55 @@ func TestApply_UpdateBackupSchedules_ListError(t *testing.T) {
 		t.Fatal("expected an error to propagate from ListVolumes failure")
 	}
 }
+
+func TestApply_ClearVolumeBackupSchedules(t *testing.T) {
+	var capturedKinds []string
+
+	svcID := "svc-1"
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
+		},
+		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+			return []api.VolumeInstance{
+				{ID: "vi-1", Volume: api.Volume{ID: "vol-1", Name: "data"}, ServiceID: &svcID, MountPath: "/data"},
+			}, nil
+		},
+		SetVolumeBackupSchedulesFunc: func(volumeInstanceID string, kinds []string) error {
+			capturedKinds = kinds
+			return nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "db",
+				Fields: []diff.FieldDiff{
+					{Path: "volume.backupSchedules", Current: "DAILY,WEEKLY", Desired: ""},
+				},
+			},
+		},
+	}
+
+	configMap := map[string]config.ServiceConfig{
+		"db": {
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data"}, // no schedules declared → clear
+		},
+	}
+
+	var out bytes.Buffer
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: &out})
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors, got %v", result.Errors)
+	}
+	if len(capturedKinds) != 0 {
+		t.Errorf("expected schedules to be cleared (empty kinds), got %v", capturedKinds)
+	}
+	if !strings.Contains(out.String(), "cleared (were: DAILY, WEEKLY)") {
+		t.Errorf("expected clear warning naming previous schedules, got:\n%s", out.String())
+	}
+}
