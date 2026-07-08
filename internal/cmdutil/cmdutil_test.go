@@ -1,7 +1,11 @@
 package cmdutil
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/kubenoops/railctl/internal/api"
@@ -237,6 +241,154 @@ func TestResolveContext_ServiceNotFound(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// projectTokenMock returns a MockClient simulating a project token baked to
+// project proj-1 ("my-app") and environment env-1 ("production"). The
+// project has a second environment (env-2, "staging") the token is NOT
+// scoped to.
+func projectTokenMock() *api.MockClient {
+	return &api.MockClient{
+		IsProjectTokenFunc:    func() (bool, error) { return true, nil },
+		GetProjectContextFunc: func() (string, string, error) { return "proj-1", "env-1", nil },
+		GetProjectFunc: func(id string) (types.Project, error) {
+			return types.Project{ID: "proj-1", Name: "my-app"}, nil
+		},
+		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+			return []types.Environment{
+				{ID: "env-1", Name: "production"},
+				{ID: "env-2", Name: "staging"},
+			}, nil
+		},
+	}
+}
+
+// captureStderr runs fn while capturing everything written to os.Stderr.
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	w.Close()
+	os.Stderr = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestResolveContext_ProjectToken_MatchingProjectFlag(t *testing.T) {
+	for _, flag := range []string{"my-app", "proj-1", "my-a"} {
+		t.Run(flag, func(t *testing.T) {
+			var ctx *Context
+			var err error
+			stderr := captureStderr(t, func() {
+				ctx, err = ResolveContext(projectTokenMock(), ResolveOpts{ProjectName: flag})
+			})
+			if err != nil {
+				t.Fatalf("unexpected error for matching -p %q: %v", flag, err)
+			}
+			if ctx.Project.ID != "proj-1" {
+				t.Errorf("expected project ID 'proj-1', got %q", ctx.Project.ID)
+			}
+			if stderr != "" {
+				t.Errorf("expected no warning output for matching -p, got: %q", stderr)
+			}
+		})
+	}
+}
+
+func TestResolveContext_ProjectToken_MismatchedProjectFlag(t *testing.T) {
+	_, err := ResolveContext(projectTokenMock(), ResolveOpts{ProjectName: "other-app"})
+	if err == nil {
+		t.Fatal("expected contradiction error for mismatched -p, got nil")
+	}
+	for _, want := range []string{"scoped to project", "my-app", "proj-1", "other-app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+}
+
+func TestResolveContext_ProjectToken_MatchingEnvironmentFlag(t *testing.T) {
+	for _, flag := range []string{"production", "env-1", "prod"} {
+		t.Run(flag, func(t *testing.T) {
+			var ctx *Context
+			var err error
+			stderr := captureStderr(t, func() {
+				ctx, err = ResolveContext(projectTokenMock(), ResolveOpts{
+					EnvironmentName: flag,
+					NeedEnvironment: true,
+				})
+			})
+			if err != nil {
+				t.Fatalf("unexpected error for matching -e %q: %v", flag, err)
+			}
+			if ctx.Environment.ID != "env-1" {
+				t.Errorf("expected environment ID 'env-1', got %q", ctx.Environment.ID)
+			}
+			if stderr != "" {
+				t.Errorf("expected no warning output for matching -e, got: %q", stderr)
+			}
+		})
+	}
+}
+
+func TestResolveContext_ProjectToken_MismatchedEnvironmentFlag(t *testing.T) {
+	// "staging" exists in the project but is NOT the environment the token
+	// is scoped to — still a contradiction.
+	_, err := ResolveContext(projectTokenMock(), ResolveOpts{
+		EnvironmentName: "staging",
+		NeedEnvironment: true,
+	})
+	if err == nil {
+		t.Fatal("expected contradiction error for mismatched -e, got nil")
+	}
+	for _, want := range []string{"scoped to environment", "production", "env-1", "staging"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+}
+
+func TestResolveContext_ProjectToken_EnvironmentFlagWithoutNeedEnvironment(t *testing.T) {
+	// No environment target to contradict: a stray -e keeps being ignored.
+	var err error
+	stderr := captureStderr(t, func() {
+		_, err = ResolveContext(projectTokenMock(), ResolveOpts{EnvironmentName: "some-other-env"})
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(stderr, "scoped to environment") {
+		t.Errorf("expected no contradiction error output, got: %q", stderr)
+	}
+}
+
+func TestResolveContext_ProjectToken_SingleEnvironmentListing(t *testing.T) {
+	// The contradiction check's environment listing is reused by the
+	// resolution step — exactly one ListEnvironments call.
+	mock := projectTokenMock()
+	calls := 0
+	inner := mock.ListEnvironmentsFunc
+	mock.ListEnvironmentsFunc = func(projectID string) ([]types.Environment, error) {
+		calls++
+		return inner(projectID)
+	}
+	_, err := ResolveContext(mock, ResolveOpts{
+		EnvironmentName: "production",
+		NeedEnvironment: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly 1 ListEnvironments call, got %d", calls)
 	}
 }
 
