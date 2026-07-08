@@ -112,7 +112,7 @@ copy lives beside the code). Regenerate the copy with `make gen`; a CI check
 
 - **[CI/CD & Build Setup](docs/ci-build-setup.md)** - Build system, GitHub Actions workflows, release lifecycle, and dependency management
 - **[Testing Architecture](docs/testing-architecture.md)** - Three-tier testing strategy, mock patterns, E2E test harness, and coverage matrix
-- **[Railway Service Creation Behavior](docs/railway-service-creation-behavior.md)** - Understanding Railway's automatic service instance creation and our workaround
+- **[Token Capability Matrix](docs/token-capability-matrix.md)** - Verified capabilities and boundaries of account, workspace, and project tokens
 
 ## Declarative Configuration
 
@@ -566,7 +566,7 @@ railway-cli/
 ├── docs/                     # Documentation
 │   ├── testing-architecture.md
 │   ├── ci-build-setup.md
-│   └── railway-service-creation-behavior.md
+│   └── token-capability-matrix.md
 ├── Makefile                  # Build automation
 ├── SKILL.md                  # Development guidelines
 ├── go.mod                    # Go module definition

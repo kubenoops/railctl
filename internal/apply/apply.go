@@ -127,9 +127,6 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		return fmt.Errorf("creating service: %w", err)
 	}
 
-	// Clean up instances in other environments (Railway quirk).
-	cleanupOtherEnvironments(client, projectID, envID, svc.ID, w)
-
 	// Apply deploy config if any fields are non-zero.
 	startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout := buildDeployConfigFromConfig(cfg.Deploy)
 	if startCmd != nil || restartPolicy != nil || maxRetries != nil || replicas != nil || hcPath != nil || hcTimeout != nil {
@@ -444,41 +441,11 @@ func applyDelete(client api.APIClient, rc diff.ResourceChange, services []types.
 	return nil
 }
 
-// cleanupOtherEnvironments removes service instances from non-target environments.
-// Railway creates services in all environments by default.
-func cleanupOtherEnvironments(client api.APIClient, projectID, targetEnvID, serviceID string, w io.Writer) {
-	time.Sleep(500 * time.Millisecond)
-
-	allEnvs, err := client.ListEnvironments(projectID)
-	if err != nil {
-		fmt.Fprintf(w, "Warning: could not list environments for cleanup: %v\n", err)
-		return
-	}
-
-	for _, env := range allEnvs {
-		if env.ID == targetEnvID {
-			continue
-		}
-
-		maxRetries := 3
-		var lastErr error
-		for attempt := 0; attempt < maxRetries; attempt++ {
-			if attempt > 0 {
-				backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-				time.Sleep(backoff)
-			}
-
-			lastErr = client.DeleteServiceInstance(serviceID, env.ID)
-			if lastErr == nil {
-				break
-			}
-		}
-
-		if lastErr != nil {
-			fmt.Fprintf(w, "Warning: could not remove service instance from environment '%s': %v\n", env.Name, lastErr)
-		}
-	}
-}
+// NOTE: apply previously ran a post-create cleanup loop (see the matching note
+// in internal/cmd/create_service.go) deleting service instances from all
+// non-target environments — a workaround for Railway's fork-era behavior of
+// creating instances everywhere. Re-verified 2026-07-08: serviceCreate targets
+// a single environment, so the workaround was removed.
 
 // findServiceID looks up a service ID by name from a list of services.
 func findServiceID(services []types.ServiceDetail, name string) (string, error) {

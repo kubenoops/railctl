@@ -39,7 +39,6 @@ one. There is no "all environments" variant (verified: mint without
 | Create/delete environment | ✅ | ✅ | ❌ guard | `workspace/TestEnvironments` |
 | Describe project (by name) | ✅ | ✅ | ❌ guard (needs enumeration) | `workspace/TestProjects/describe_*` |
 | Services / variables / volumes / backups / deployments / logs / apply / diff | ✅ | ✅ | ✅ within its (project, environment), flag-free | entire `project/` group |
-| Create service in a **multi-environment** project | ✅ (cleanup works) | ✅ (cleanup works) | ❌ guard: would leak instances (see below) | `project/` leak-guard boundary test |
 | Deployment rollback (`delete deployment`) | ✅ | ✅ | ✅ | `project/TestDeploymentLifecycle` |
 | Deployment **reactivation** (`update deployment --set-active`) | ✅ | ✅ | ❌ `Not Authorized` (workspace-reserved) | `project/.../reactivate_previous_denied`, `workspace/TestDeploymentReactivate` |
 | Mint project token (`token create`) | ✅ any project | ✅ any project in workspace | ✅ **its own scope only** (self-mint) | `workspace/TestProjectTokens`, `project/TestBoundaries/self_mint` |
@@ -87,17 +86,27 @@ Because bound tokens self-identify, railctl distinguishes three error classes:
    child that doesn't exist): `project 'foo' not found — available: api, web, …`
    (candidates capped at 10). Never a raw API `Not Authorized`.
 
-## The service-creation leak (the multi-environment footgun)
+## The service / instance model (verified 2026-07-08)
 
-Railway's `serviceCreate` creates instances in **all non-fork environments**
-regardless of `environmentId` (see `railway-service-creation-behavior.md`).
-railctl compensates by deleting non-target instances after creation — but a
-**project token gets `Not Authorized` for every sibling environment**, so the
-cleanup structurally cannot work: the token would leak a service instance
-into environments it cannot see or remove (live-reproduced 2026-07-08).
-railctl therefore **fails fast** on `create service` / `apply`-creation under
-a project token when the project has other environments. Single-environment
-projects are unaffected.
+- A **service is a project-level entity**; its **name is unique per project**
+  (creating a same-named service targeting a second environment fails with
+  "already exists in this project"). Environments hold **instances** of it.
+- `serviceCreate(environmentId)` creates the entity plus an instance **in the
+  target environment only**. The historical fork-era behavior of creating
+  instances in every environment is **fixed upstream** (Railway deprecated
+  forked environments in January 2024 in favor of isolated environments;
+  cross-environment changes now happen only via the manual, staged Sync).
+  railctl's old post-create cleanup workaround was removed accordingly.
+- Instances appear in multiple environments only **deliberately** (duplicate
+  environment / Sync). `serviceDelete(id, environmentId)` removes exactly one
+  environment's instance, **symmetrically** — deleting the original
+  environment's instance does not affect duplicates and vice versa; the
+  project-level entity survives. `serviceDelete(id)` without an environment
+  removes the whole service.
+- Caution when interpreting probe results: Railway **auth-masks**
+  cross-environment access for project tokens — `Not Authorized` is returned
+  whether the target exists or not. A failed cross-env delete is not evidence
+  that anything was there.
 
 ## Notes
 

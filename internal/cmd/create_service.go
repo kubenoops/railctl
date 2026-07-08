@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
@@ -17,7 +16,7 @@ var createServiceCmd = &cobra.Command{
 	Aliases: []string{"svc"},
 	Short:   "Create a new service in a project from a Docker image",
 	Long: `Create a new service in a project from a Docker image.
-The service will be deployed to all environments in the project.
+The service is created in the target environment only.
 
 For private Docker registries, use --registry-username and --registry-password
 flags, or set RAILCTL_REGISTRY_USERNAME and RAILCTL_REGISTRY_PASSWORD environment
@@ -158,9 +157,6 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Service '%s' created with image '%s' (ID: %s)\n", svc.Name, serviceImage, svc.ID)
 	}
 
-	// Clean up service instances in other environments
-	cleanupOtherEnvironments(client, ctx.Project.ID, ctx.Environment, svc)
-
 	// Apply deployment configuration if any flags were provided
 	if hasDeployConfigFlags(cmd) {
 		err = applyDeployConfig(cmd, client, svc.ID, ctx.Environment)
@@ -192,51 +188,13 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func cleanupOtherEnvironments(client api.APIClient, projectID string, targetEnv types.Environment, svc types.Service) {
-	// Railway creates services in all non-fork environments by default,
-	// so we need to explicitly remove instances from non-target environments
-	time.Sleep(500 * time.Millisecond)
-
-	allEnvs, err := client.ListEnvironments(projectID)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Could not list environments for cleanup: %v\n", err)
-		return
-	}
-
-	cleanupErrors := []string{}
-	for _, otherEnv := range allEnvs {
-		if otherEnv.ID != targetEnv.ID {
-			// Retry cleanup with exponential backoff
-			maxRetries := 3
-			var lastErr error
-			for attempt := 0; attempt < maxRetries; attempt++ {
-				if attempt > 0 {
-					backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-					time.Sleep(backoff)
-				}
-
-				lastErr = client.DeleteServiceInstance(svc.ID, otherEnv.ID)
-				if lastErr == nil {
-					break
-				}
-			}
-
-			if lastErr != nil {
-				errMsg := fmt.Sprintf("environment '%s': %v (after %d retries)", otherEnv.Name, lastErr, maxRetries)
-				cleanupErrors = append(cleanupErrors, errMsg)
-			}
-		}
-	}
-
-	if len(cleanupErrors) > 0 {
-		fmt.Fprintf(os.Stderr, "\n⚠️  Warning: Could not remove service from other environments:\n")
-		for _, errMsg := range cleanupErrors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", errMsg)
-		}
-		fmt.Fprintf(os.Stderr, "\nThe service was created successfully in '%s', but may also exist in other environments.\n", targetEnv.Name)
-		fmt.Fprintf(os.Stderr, "You can manually delete unwanted instances using: railctl delete service %s -e <environment>\n\n", svc.Name)
-	}
-}
+// NOTE: create service previously ran a post-create cleanup loop that deleted
+// service instances from all non-target environments, working around Railway's
+// fork-era behavior of creating instances everywhere. Re-verified 2026-07-08:
+// serviceCreate now creates the instance in the target environment only
+// (isolated-environments model), so the workaround was removed (see
+// docs/token-capability-matrix.md). DeleteServiceInstance remains in use by
+// `delete service -e` for pruning a single environment's instance.
 
 func hasDeployConfigFlags(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("start-command") ||
