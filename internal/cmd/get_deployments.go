@@ -61,12 +61,17 @@ func runGetDeployments(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	if len(deployments) == 0 {
-		fmt.Println("No deployments found")
-		return nil
-	}
-
 	printer := output.NewPrinter(format)
+
+	if len(deployments) == 0 {
+		// Structured formats must stay machine-readable: emit [] / empty list,
+		// not prose (matching cmdutil.PrintResult's empty handling).
+		if !printer.IsStructured() {
+			fmt.Println("No deployments found")
+			return nil
+		}
+		deployments = []api.Deployment{}
+	}
 
 	if printer.IsStructured() {
 		if format == output.FormatJSON {

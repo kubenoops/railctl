@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -165,6 +168,67 @@ func TestRunGetDeployments_EmptyList(t *testing.T) {
 
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestRunGetDeployments_EmptyListJSON verifies that -o json stays machine-readable
+// on an empty list: it must emit a valid JSON array ([]), not prose.
+func TestRunGetDeployments_EmptyListJSON(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origEnvironment := environment
+	origService := service
+	origToken := token
+	origFormat := outputFormat
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		environment = origEnvironment
+		service = origService
+		token = origToken
+		outputFormat = origFormat
+	}()
+
+	token = "test-token"
+	outputFormat = "json"
+	newAPIClient = func(tkn string) api.APIClient {
+		return &api.MockClient{
+			ListProjectsFunc: func() ([]types.Project, error) {
+				return []types.Project{{ID: "proj-1", Name: "my-project"}}, nil
+			},
+			ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+				return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+			},
+			ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+				return []types.ServiceDetail{{ID: "svc-1", Name: "api"}}, nil
+			},
+			ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {
+				return []api.Deployment{}, nil
+			},
+		}
+	}
+	project = "my-project"
+	environment = "production"
+	service = "api"
+
+	// The JSON printer writes to os.Stdout — capture it via a pipe.
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := getDeploymentsCmd.RunE(getDeploymentsCmd, []string{})
+	w.Close()
+	os.Stdout = oldStdout
+	out, _ := io.ReadAll(r)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got []api.Deployment
+	if jsonErr := json.Unmarshal(out, &got); jsonErr != nil {
+		t.Fatalf("-o json on empty list is not valid JSON: %v\noutput: %s", jsonErr, out)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty JSON array, got %d items", len(got))
 	}
 }
 
