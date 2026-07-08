@@ -49,19 +49,41 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Dependency checks ────────────────────────────────────────────────
-for var in RAILWAY_TOKEN RAILCTL_PROJECT RAILCTL_ENVIRONMENT; do
-    if [ -z "${!var:-}" ]; then
-        log_error "$var is not set"
-        exit 1
-    fi
-done
+# Only the token is unconditionally required; with a project token the
+# project/environment are derived from the token via `railctl whoami`.
+if [ -z "${RAILWAY_TOKEN:-}" ]; then
+    log_error "RAILWAY_TOKEN is not set"
+    exit 1
+fi
 
 if [ ! -f "$RAILCTL" ] && ! command -v railctl &>/dev/null; then
     log_error "railctl not found"
     exit 1
 fi
 
-RAILCTL_FLAGS=(-p "$RAILCTL_PROJECT" -e "$RAILCTL_ENVIRONMENT")
+# ── Token preflight ──────────────────────────────────────────────────
+# Service/volume deletion works with any token type (in-scope for a project
+# token, no -p/-e needed). Environment/project deletion is workspace-scope:
+# those prompts are skipped for project tokens.
+WHOAMI_JSON=$($RAILCTL whoami -o json 2>/dev/null) || {
+    log_error "Token check failed — is RAILWAY_TOKEN valid? (railctl whoami)"
+    exit 1
+}
+TOKEN_TYPE=$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["type"])')
+
+if [ "$TOKEN_TYPE" = "project" ]; then
+    RAILCTL_PROJECT="${RAILCTL_PROJECT:-$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["project"]["name"])')}"
+    RAILCTL_ENVIRONMENT="${RAILCTL_ENVIRONMENT:-$(echo "$WHOAMI_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["environment"]["name"])')}"
+    RAILCTL_FLAGS=()
+else
+    for var in RAILCTL_PROJECT RAILCTL_ENVIRONMENT; do
+        if [ -z "${!var:-}" ]; then
+            log_error "$var is required with a $TOKEN_TYPE token"
+            exit 1
+        fi
+    done
+    RAILCTL_FLAGS=(-p "$RAILCTL_PROJECT" -e "$RAILCTL_ENVIRONMENT")
+fi
 
 # ── Header ───────────────────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -128,7 +150,9 @@ else
 fi
 
 # ── Optional: delete environment & project ───────────────────────────
-if [ "$AUTO_YES" != true ]; then
+if [ "$TOKEN_TYPE" = "project" ]; then
+    log_info "Project token: environment/project deletion requires a workspace or account token — skipping"
+elif [ "$AUTO_YES" != true ]; then
     echo ""
     read -p "Delete environment '$RAILCTL_ENVIRONMENT'? [y/N] " -n 1 -r
     echo
