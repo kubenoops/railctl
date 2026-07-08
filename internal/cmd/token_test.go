@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -241,6 +244,80 @@ func TestRunTokenDelete_NotFound(t *testing.T) {
 
 	if err := tokenDeleteCmd.RunE(tokenDeleteCmd, []string{"nonexistent"}); err == nil {
 		t.Error("expected error for unknown token id")
+	}
+}
+
+func TestRunTokenCreate_JSON(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origEnvironment := environment
+	origToken := token
+	origOutput := outputFormat
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		environment = origEnvironment
+		token = origToken
+		outputFormat = origOutput
+	}()
+
+	mock := tokenTestMock()
+	mock.CreateProjectTokenFunc = func(projectID, environmentID, name string) (string, error) {
+		return "tok-secret-value", nil
+	}
+
+	token = "test-token"
+	project = "my-project"
+	environment = "production"
+	outputFormat = "json"
+	newAPIClient = func(tkn string) api.APIClient { return mock }
+
+	// The JSON payload is written by output.NewPrinter, which targets the real
+	// os.Stdout — not cmd.OutOrStdout(). Redirect os.Stdout through a pipe so we
+	// can capture it. stderr still flows through the cobra command's sink.
+	var stderr bytes.Buffer
+	tokenCreateCmd.SetErr(&stderr)
+	defer func() { tokenCreateCmd.SetOut(nil); tokenCreateCmd.SetErr(nil) }()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	runErr := tokenCreateCmd.RunE(tokenCreateCmd, []string{"ci"})
+
+	// Restore stdout, then close the writer and drain the pipe.
+	os.Stdout = oldStdout
+	if cerr := w.Close(); cerr != nil {
+		t.Fatalf("closing pipe writer: %v", cerr)
+	}
+	out, readErr := io.ReadAll(r)
+	if readErr != nil {
+		t.Fatalf("reading pipe: %v", readErr)
+	}
+
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
+	}
+
+	// The JSON payload (with the token) must be on stdout and parseable.
+	var got struct {
+		Name          string `json:"name"`
+		ProjectID     string `json:"projectId"`
+		EnvironmentID string `json:"environmentId"`
+		Token         string `json:"token"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\n%s", err, string(out))
+	}
+	if got.Token != "tok-secret-value" || got.Name != "ci" || got.ProjectID != "proj-1" || got.EnvironmentID != "env-1" {
+		t.Errorf("unexpected JSON payload: %+v", got)
+	}
+	// The token must never leak to stderr.
+	if strings.Contains(stderr.String(), "tok-secret-value") {
+		t.Errorf("stderr leaked the token value: %q", stderr.String())
 	}
 }
 
