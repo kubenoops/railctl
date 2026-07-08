@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/output"
@@ -72,23 +73,10 @@ func runDescribeVolume(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("environment '%s' not found in project", envFlag)
 	}
 
-	// Get volumes to find the specific volume
-	volumes, err := client.ListVolumes(project.ID, env.ID)
+	// Find volume by name or ID
+	volume, err := resolveVolumeInstance(client, project.ID, env.ID, volumeNameOrID)
 	if err != nil {
 		return err
-	}
-
-	// Find volume by name or ID
-	var volume *api.VolumeInstance
-	for i := range volumes {
-		if volumes[i].Volume.Name == volumeNameOrID || volumes[i].Volume.ID == volumeNameOrID {
-			volume = &volumes[i]
-			break
-		}
-	}
-
-	if volume == nil {
-		return fmt.Errorf("volume '%s' not found in environment", volumeNameOrID)
 	}
 
 	// Get service name if attached
@@ -108,35 +96,44 @@ func runDescribeVolume(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Backup schedules (best-effort; don't fail describe if unavailable).
+	var schedules []string
+	if scheds, err := client.ListVolumeBackupSchedules(volume.ID); err == nil {
+		for _, s := range scheds {
+			schedules = append(schedules, s.Kind)
+		}
+	}
+
 	switch format {
 	case output.FormatJSON:
-		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name)
+		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name, schedules)
 		out, _ := json.MarshalIndent(data, "", "  ")
 		fmt.Println(string(out))
 	case output.FormatYAML:
-		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name)
+		data := buildVolumeDetail(volume, serviceName, project.Name, env.Name, schedules)
 		out, _ := yaml.Marshal(data)
 		fmt.Print(string(out))
 	default:
-		printVolumeDetail(volume, serviceName, project.Name, env.Name)
+		printVolumeDetail(volume, serviceName, project.Name, env.Name, schedules)
 	}
 
 	return nil
 }
 
 type volumeDetail struct {
-	Name          string  `json:"name" yaml:"name"`
-	ID            string  `json:"id" yaml:"id"`
-	Project       string  `json:"project" yaml:"project"`
-	Environment   string  `json:"environment" yaml:"environment"`
-	MountPath     string  `json:"mountPath" yaml:"mountPath"`
-	AttachedTo    string  `json:"attachedTo,omitempty" yaml:"attachedTo,omitempty"`
-	CurrentSizeMB float64 `json:"currentSizeMB" yaml:"currentSizeMB"`
-	TotalSizeMB   int     `json:"totalSizeMB" yaml:"totalSizeMB"`
-	UsagePercent  float64 `json:"usagePercent" yaml:"usagePercent"`
+	Name            string   `json:"name" yaml:"name"`
+	ID              string   `json:"id" yaml:"id"`
+	Project         string   `json:"project" yaml:"project"`
+	Environment     string   `json:"environment" yaml:"environment"`
+	MountPath       string   `json:"mountPath" yaml:"mountPath"`
+	AttachedTo      string   `json:"attachedTo,omitempty" yaml:"attachedTo,omitempty"`
+	CurrentSizeMB   float64  `json:"currentSizeMB" yaml:"currentSizeMB"`
+	TotalSizeMB     int      `json:"totalSizeMB" yaml:"totalSizeMB"`
+	UsagePercent    float64  `json:"usagePercent" yaml:"usagePercent"`
+	BackupSchedules []string `json:"backupSchedules,omitempty" yaml:"backupSchedules,omitempty"`
 }
 
-func buildVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string) volumeDetail {
+func buildVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string, schedules []string) volumeDetail {
 	attachedTo := ""
 	if serviceName != "" {
 		attachedTo = serviceName
@@ -150,19 +147,20 @@ func buildVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envNam
 	}
 
 	return volumeDetail{
-		Name:          vol.Volume.Name,
-		ID:            vol.Volume.ID,
-		Project:       projectName,
-		Environment:   envName,
-		MountPath:     vol.MountPath,
-		AttachedTo:    attachedTo,
-		CurrentSizeMB: vol.CurrentSizeMB,
-		TotalSizeMB:   vol.SizeMB,
-		UsagePercent:  usagePercent,
+		Name:            vol.Volume.Name,
+		ID:              vol.Volume.ID,
+		Project:         projectName,
+		Environment:     envName,
+		MountPath:       vol.MountPath,
+		AttachedTo:      attachedTo,
+		CurrentSizeMB:   vol.CurrentSizeMB,
+		TotalSizeMB:     vol.SizeMB,
+		UsagePercent:    usagePercent,
+		BackupSchedules: schedules,
 	}
 }
 
-func printVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string) {
+func printVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envName string, schedules []string) {
 	table := output.NewTable("FIELD", "VALUE")
 
 	table.AddRow("Name", vol.Volume.Name)
@@ -189,6 +187,12 @@ func printVolumeDetail(vol *api.VolumeInstance, serviceName, projectName, envNam
 	table.AddRow("Size Used", usedSize)
 	table.AddRow("Size Total", totalSize)
 	table.AddRow("Usage", fmt.Sprintf("%.1f%%", usagePercent))
+
+	if len(schedules) > 0 {
+		table.AddRow("Backup Schedules", strings.Join(schedules, ", "))
+	} else {
+		table.AddRow("Backup Schedules", "-")
+	}
 
 	fmt.Println(table.Render())
 }

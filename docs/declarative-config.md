@@ -82,6 +82,7 @@ services:
 
     volume:
       mountPath: /app/data
+      backupSchedules: [daily, weekly] # optional; daily/weekly/monthly
 
     variables:
       PORT: "3000"
@@ -159,9 +160,37 @@ User-owned domains (e.g. `app.example.com`). railctl creates each declared domai
 
 Persistent volume configuration. One volume per service.
 
-| Field       | Type   | Default | Description                                                      |
-| ----------- | ------ | ------- | ---------------------------------------------------------------- |
-| `mountPath` | string | (none)  | Filesystem path where the volume is mounted inside the container |
+| Field             | Type       | Default | Description                                                      |
+| ----------------- | ---------- | ------- | ---------------------------------------------------------------- |
+| `mountPath`       | string     | (none)  | Filesystem path where the volume is mounted inside the container |
+| `backupSchedules` | []string   | (none)  | Automated backup schedules: `daily`, `weekly`, and/or `monthly`  |
+
+`backupSchedules` is applied declaratively: the volume's live schedules are
+reconciled to exactly match the declared list. Values are case-insensitive.
+Retention is fixed by Railway per kind (daily → 6 days, weekly → 1 month,
+monthly → 3 months) and is not configurable.
+
+Because schedules attach to a volume, `backupSchedules` requires `mountPath` to
+be set. For a **managed** volume (one with `mountPath` declared), the declared
+list is authoritative — omitting `backupSchedules` (or setting it to `[]`)
+clears any existing schedules on the next `apply`. A service with no `volume`
+block is left untouched.
+
+```yaml
+volume:
+  mountPath: /var/lib/postgresql/data
+  backupSchedules: [daily, weekly]
+```
+
+> **Note:** When a volume is *added* to an existing service in the same `apply`,
+> Railway can't create it in place — so the schedules can't attach on that run.
+> `apply` warns and continues; run `apply` again once the volume exists (after
+> the deploy) to set the schedules. Scripted callers should account for this
+> second run.
+
+Manual backups (create/list/restore/delete) are operational actions, not
+declarative state — use the `railctl {get,create,restore,delete} backup`
+commands for those.
 
 #### `services[].variables` (optional, map[string]string)
 
@@ -311,6 +340,7 @@ services:
         port: 5432
     volume:
       mountPath: /var/lib/postgresql/data
+      backupSchedules: [daily]
     variables:
       POSTGRES_USER: "app"
       POSTGRES_PASSWORD: "$env(POSTGRES_PASSWORD)"

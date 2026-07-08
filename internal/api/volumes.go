@@ -11,8 +11,10 @@ type Volume struct {
 	Name string `json:"name"`
 }
 
-// VolumeInstance represents a volume instance in an environment
+// VolumeInstance represents a volume instance in an environment. ID is the
+// volumeInstanceId used by backup operations.
 type VolumeInstance struct {
+	ID            string  `json:"id"`
 	Volume        Volume  `json:"volume"`
 	MountPath     string  `json:"mountPath"`
 	ServiceID     *string `json:"serviceId"`
@@ -32,6 +34,7 @@ func (c *Client) ListVolumes(projectID, environmentID string) ([]VolumeInstance,
 							volumeInstances {
 								edges {
 									node {
+										id
 										volume {
 											id
 											name

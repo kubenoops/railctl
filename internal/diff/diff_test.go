@@ -857,3 +857,116 @@ func TestCompute_DomainPortUndeclaredNoDiff(t *testing.T) {
 		t.Errorf("expected no changes when domain.port is undeclared, got %+v", cs.Changes)
 	}
 }
+
+func fieldByPath(fields []FieldDiff, path string) (FieldDiff, bool) {
+	for _, f := range fields {
+		if f.Path == path {
+			return f, true
+		}
+	}
+	return FieldDiff{}, false
+}
+
+func TestCompute_BackupSchedules_Add(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY", "WEEKLY"}},
+		},
+	}
+	live := []LiveService{
+		{
+			Name:    "db",
+			Image:   "postgres:16",
+			Volumes: []LiveVolume{{MountPath: "/data"}},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 1 {
+		t.Fatalf("expected 1 change, got %d", len(cs.Changes))
+	}
+	f, ok := fieldByPath(cs.Changes[0].Fields, "volume.backupSchedules")
+	if !ok {
+		t.Fatal("expected volume.backupSchedules diff")
+	}
+	if f.Current != "" || f.Desired != "DAILY,WEEKLY" {
+		t.Errorf("backupSchedules: expected '' → 'DAILY,WEEKLY', got %q → %q", f.Current, f.Desired)
+	}
+}
+
+func TestCompute_BackupSchedules_OrderInsensitive(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"WEEKLY", "DAILY"}},
+		},
+	}
+	live := []LiveService{
+		{
+			Name:    "db",
+			Image:   "postgres:16",
+			Volumes: []LiveVolume{{MountPath: "/data", BackupSchedules: []string{"DAILY", "WEEKLY"}}},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	if cs.HasChanges() {
+		t.Errorf("expected no changes for reordered schedules, got %d", len(cs.Changes))
+	}
+}
+
+func TestCompute_BackupSchedules_Clear(t *testing.T) {
+	desired := []config.ServiceConfig{
+		{
+			Name:   "db",
+			Image:  "postgres:16",
+			Volume: config.VolumeConfig{MountPath: "/data"}, // no schedules declared
+		},
+	}
+	live := []LiveService{
+		{
+			Name:    "db",
+			Image:   "postgres:16",
+			Volumes: []LiveVolume{{MountPath: "/data", BackupSchedules: []string{"DAILY"}}},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	f, ok := fieldByPath(cs.Changes[0].Fields, "volume.backupSchedules")
+	if !ok {
+		t.Fatal("expected volume.backupSchedules diff to clear schedules")
+	}
+	if f.Current != "DAILY" || f.Desired != "" {
+		t.Errorf("backupSchedules clear: expected 'DAILY' → '', got %q → %q", f.Current, f.Desired)
+	}
+}
+
+func TestCompute_BackupSchedules_UnmanagedVolume(t *testing.T) {
+	// No mountPath declared → volume is unmanaged → schedules left untouched.
+	desired := []config.ServiceConfig{
+		{Name: "db", Image: "postgres:16"},
+	}
+	live := []LiveService{
+		{
+			Name:    "db",
+			Image:   "postgres:16",
+			Volumes: []LiveVolume{{MountPath: "/data", BackupSchedules: []string{"DAILY"}}},
+		},
+	}
+
+	cs := Compute(desired, live, false)
+	if _, ok := fieldByPath(changesFields(cs), "volume.backupSchedules"); ok {
+		t.Error("did not expect backupSchedules diff for unmanaged volume")
+	}
+}
+
+func changesFields(cs *ChangeSet) []FieldDiff {
+	var all []FieldDiff
+	for _, c := range cs.Changes {
+		all = append(all, c.Fields...)
+	}
+	return all
+}

@@ -61,6 +61,14 @@ type MockClient struct {
 	AttachVolumeFunc          func(volumeID, serviceID, environmentID string) error
 	DetachVolumeFunc          func(volumeID, environmentID string) error
 
+	// Volume backups
+	ListVolumeBackupSchedulesFunc func(volumeInstanceID string) ([]BackupSchedule, error)
+	SetVolumeBackupSchedulesFunc  func(volumeInstanceID string, kinds []string) error
+	ListVolumeBackupsFunc         func(volumeInstanceID string) ([]VolumeBackup, error)
+	CreateVolumeBackupFunc        func(volumeInstanceID, name string) (string, error)
+	RestoreVolumeBackupFunc       func(backupID, volumeInstanceID string) error
+	DeleteVolumeBackupFunc        func(backupID, volumeInstanceID string) error
+
 	// Workspace
 	GetWorkspaceIDFunc func() (string, error)
 
@@ -330,6 +338,48 @@ func (m *MockClient) AttachVolume(volumeID, serviceID, environmentID string) err
 func (m *MockClient) DetachVolume(volumeID, environmentID string) error {
 	if m.DetachVolumeFunc != nil {
 		return m.DetachVolumeFunc(volumeID, environmentID)
+	}
+	return nil
+}
+
+func (m *MockClient) ListVolumeBackupSchedules(volumeInstanceID string) ([]BackupSchedule, error) {
+	if m.ListVolumeBackupSchedulesFunc != nil {
+		return m.ListVolumeBackupSchedulesFunc(volumeInstanceID)
+	}
+	return nil, nil
+}
+
+func (m *MockClient) SetVolumeBackupSchedules(volumeInstanceID string, kinds []string) error {
+	if m.SetVolumeBackupSchedulesFunc != nil {
+		return m.SetVolumeBackupSchedulesFunc(volumeInstanceID, kinds)
+	}
+	return nil
+}
+
+func (m *MockClient) ListVolumeBackups(volumeInstanceID string) ([]VolumeBackup, error) {
+	if m.ListVolumeBackupsFunc != nil {
+		return m.ListVolumeBackupsFunc(volumeInstanceID)
+	}
+	return nil, nil
+}
+
+func (m *MockClient) CreateVolumeBackup(volumeInstanceID, name string) (string, error) {
+	if m.CreateVolumeBackupFunc != nil {
+		return m.CreateVolumeBackupFunc(volumeInstanceID, name)
+	}
+	return "", nil
+}
+
+func (m *MockClient) RestoreVolumeBackup(backupID, volumeInstanceID string) error {
+	if m.RestoreVolumeBackupFunc != nil {
+		return m.RestoreVolumeBackupFunc(backupID, volumeInstanceID)
+	}
+	return nil
+}
+
+func (m *MockClient) DeleteVolumeBackup(backupID, volumeInstanceID string) error {
+	if m.DeleteVolumeBackupFunc != nil {
+		return m.DeleteVolumeBackupFunc(backupID, volumeInstanceID)
 	}
 	return nil
 }

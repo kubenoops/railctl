@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/spf13/cobra"
@@ -85,23 +84,10 @@ func runUpdateVolume(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Get volumes to find the volume
-	volumes, err := client.ListVolumes(ctx.Project.ID, ctx.Environment.ID)
+	// Find volume by name or ID
+	volume, err := resolveVolumeInstance(client, ctx.Project.ID, ctx.Environment.ID, volumeNameOrID)
 	if err != nil {
 		return err
-	}
-
-	// Find volume by name or ID
-	var volume *api.VolumeInstance
-	for i := range volumes {
-		if volumes[i].Volume.Name == volumeNameOrID || volumes[i].Volume.ID == volumeNameOrID {
-			volume = &volumes[i]
-			break
-		}
-	}
-
-	if volume == nil {
-		return fmt.Errorf("volume '%s' not found in environment", volumeNameOrID)
 	}
 
 	// Perform updates

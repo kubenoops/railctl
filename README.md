@@ -258,6 +258,34 @@ railctl delete volume my-data -p my-app -e production
 railctl delete volume my-data --yes -p my-app -e production  # Skip confirmation
 ```
 
+### Volume Backups
+
+Railway can back up a volume manually or on an automated schedule (daily,
+weekly, or monthly — retention is fixed by Railway per kind). Backup schedules
+are best managed declaratively via the `backupSchedules` field (see
+[Declarative Configuration](docs/declarative-config.md)); the commands below
+cover manual operations.
+
+```bash
+# List a volume's backups
+railctl get backups my-data -p my-app -e production
+railctl get backups my-data -o wide          # include IDs and referenced size
+railctl get backups my-data --schedules      # list automated schedules instead
+
+# Create a manual backup
+railctl create backup my-data -p my-app -e production
+railctl create backup my-data --name pre-migration -p my-app -e production
+
+# Delete a backup (scoped to its volume)
+railctl delete backup <backup-id> --volume my-data -p my-app -e production
+railctl delete backup <backup-id> --volume my-data --yes -p my-app -e production
+
+# Restore a volume from a backup
+# Note: Railway stages a new volume — deploy the service to finalize the
+# restore. Backups created after the restored point in time are removed.
+railctl restore backup <backup-id> --volume my-data -p my-app -e production
+```
+
 ### Environment Variables
 
 ```bash

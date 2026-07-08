@@ -93,7 +93,17 @@ type LiveDeployConfig struct {
 
 // LiveVolume represents a volume attached to a live service.
 type LiveVolume struct {
-	MountPath string
+	MountPath        string
+	VolumeInstanceID string   // used for backup operations
+	BackupSchedules  []string // current schedule kinds (e.g. DAILY)
+}
+
+// sortedKinds returns a sorted copy so diffs are order-independent.
+func sortedKinds(kinds []string) []string {
+	out := make([]string, len(kinds))
+	copy(out, kinds)
+	sort.Strings(out)
+	return out
 }
 
 // LiveDomain represents a domain attached to a live service.
@@ -176,6 +186,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 	// Volume.
 	if d.Volume.MountPath != "" {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Desired: d.Volume.MountPath})
+		if len(d.Volume.BackupSchedules) > 0 {
+			fields = append(fields, FieldDiff{Path: "volume.backupSchedules", Desired: strings.Join(sortedKinds(d.Volume.BackupSchedules), ",")})
+		}
 	}
 
 	// Networking.
@@ -302,6 +315,9 @@ func buildDeleteChange(ls LiveService) ResourceChange {
 		if v.MountPath != "" {
 			fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: v.MountPath})
 		}
+		if len(v.BackupSchedules) > 0 {
+			fields = append(fields, FieldDiff{Path: "volume.backupSchedules", Current: strings.Join(sortedKinds(v.BackupSchedules), ",")})
+		}
 	}
 
 	// Domains.
@@ -347,6 +363,19 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 	}
 	if d.Volume.MountPath != liveMountPath {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
+	}
+
+	// Backup schedules: only for managed volumes (mountPath declared). The
+	// declared list is authoritative; empty clears, undeclared is left alone.
+	if d.Volume.MountPath != "" {
+		desiredSched := strings.Join(sortedKinds(d.Volume.BackupSchedules), ",")
+		liveSched := ""
+		if len(ls.Volumes) > 0 {
+			liveSched = strings.Join(sortedKinds(ls.Volumes[0].BackupSchedules), ",")
+		}
+		if desiredSched != liveSched {
+			fields = append(fields, FieldDiff{Path: "volume.backupSchedules", Current: liveSched, Desired: desiredSched})
+		}
 	}
 
 	// Port 0 is unmanaged; diffing it would perma-diff (apply skips port 0).
