@@ -925,15 +925,19 @@ func TestRunDescribeEnvironment_NoEnvName(t *testing.T) {
 	environment = ""
 	os.Unsetenv("RAILCTL_ENVIRONMENT")
 
-	mock := &api.MockClient{}
+	mock := &api.MockClient{
+		ListProjectsFunc: func() ([]types.Project, error) {
+			return []types.Project{{ID: "proj-1", Name: "my-app"}}, nil
+		},
+	}
 
 	withMockClient(mock, func() {
 		err := runDescribeEnvironment(nil, []string{})
 		if err == nil {
 			t.Error("expected error for missing env name")
 		}
-		if !strings.Contains(err.Error(), "environment name is required") {
-			t.Errorf("expected 'environment name is required' error, got %q", err.Error())
+		if !strings.Contains(err.Error(), "-e/--environment is required") {
+			t.Errorf("expected '-e/--environment is required' error, got %q", err.Error())
 		}
 	})
 }
@@ -957,8 +961,8 @@ func TestRunDescribeEnvironment_NoProject(t *testing.T) {
 		if err == nil {
 			t.Error("expected error for missing project")
 		}
-		if !strings.Contains(err.Error(), "project required") {
-			t.Errorf("expected 'project required' error, got %q", err.Error())
+		if !strings.Contains(err.Error(), "-p/--project is required") {
+			t.Errorf("expected '-p/--project is required' error, got %q", err.Error())
 		}
 	})
 }

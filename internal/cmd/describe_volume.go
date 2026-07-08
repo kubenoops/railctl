@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/output"
-	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -39,39 +39,20 @@ func runDescribeVolume(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectFlag := getProject()
-	if projectFlag == "" {
-		return fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
-	}
-
-	envFlag := getEnvironment()
-	if envFlag == "" {
-		return fmt.Errorf("-e/--environment is required. Use -e flag or set RAILCTL_ENVIRONMENT")
-	}
-
 	client := newAPIClient(token)
 
-	// Resolve project name to ID
-	projects, err := client.ListProjects()
+	// Resolve project and environment (derived from the token when it is
+	// project-scoped, resolved by name otherwise).
+	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
+		ProjectName:     getProject(),
+		EnvironmentName: getEnvironment(),
+		NeedEnvironment: true,
+	})
 	if err != nil {
 		return err
 	}
-
-	project, err := resolver.ResolveProject(projects, projectFlag)
-	if err != nil {
-		return fmt.Errorf("project '%s' not found", projectFlag)
-	}
-
-	// Resolve environment name to ID
-	environments, err := client.ListEnvironments(project.ID)
-	if err != nil {
-		return err
-	}
-
-	env, err := resolver.ResolveEnvironment(environments, envFlag)
-	if err != nil {
-		return fmt.Errorf("environment '%s' not found in project", envFlag)
-	}
+	project := ctx.Project
+	env := ctx.Environment
 
 	// Find volume by name or ID
 	volume, err := resolveVolumeInstance(client, project.ID, env.ID, volumeNameOrID)

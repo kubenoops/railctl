@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/output"
-	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/kubenoops/railctl/internal/types"
 )
 
@@ -41,15 +41,6 @@ func runDescribeEnvironment(cmd *cobra.Command, args []string) error {
 		envName = getEnvironment()
 	}
 
-	if envName == "" {
-		return fmt.Errorf("environment name is required: railctl describe environment <name> -p <project>")
-	}
-
-	projectName := getProject()
-	if projectName == "" {
-		return fmt.Errorf("project required: use -p flag or set RAILCTL_PROJECT")
-	}
-
 	format, err := getOutputFormat()
 	if err != nil {
 		return err
@@ -62,27 +53,19 @@ func runDescribeEnvironment(cmd *cobra.Command, args []string) error {
 
 	client := newAPIClient(tkn)
 
-	// Resolve project name to ID
-	projects, err := client.ListProjects()
+	// Resolve project and environment. With a project token both are derived
+	// from the token itself; a conflicting <name> argument is warned about and
+	// ignored (the token is bound to a single environment).
+	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
+		ProjectName:     getProject(),
+		EnvironmentName: envName,
+		NeedEnvironment: true,
+	})
 	if err != nil {
 		return err
 	}
-
-	project, err := resolver.ResolveProject(projects, projectName)
-	if err != nil {
-		return err
-	}
-
-	// Get environments and resolve the name
-	environments, err := client.ListEnvironments(project.ID)
-	if err != nil {
-		return fmt.Errorf("failed to list environments: %w", err)
-	}
-
-	env, err := resolver.ResolveEnvironment(environments, envName)
-	if err != nil {
-		return err
-	}
+	project := ctx.Project
+	env := ctx.Environment
 
 	printer := output.NewPrinter(format)
 

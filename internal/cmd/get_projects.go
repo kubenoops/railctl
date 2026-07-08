@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/output"
 	"github.com/kubenoops/railctl/internal/types"
 )
@@ -47,12 +47,8 @@ func runGetProjects(cmd *cobra.Command, args []string) error {
 
 	client := newAPIClient(tkn)
 
-	isProjectToken, err := client.IsProjectToken()
-	if err != nil {
+	if err := cmdutil.RequireWorkspaceScope(client, "list projects"); err != nil {
 		return err
-	}
-	if isProjectToken {
-		return fmt.Errorf("project tokens are scoped to a single project — use 'railctl get services' to list services")
 	}
 
 	projects, err := client.ListProjects()

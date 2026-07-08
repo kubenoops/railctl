@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,10 @@ func runCreateEnvironment(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	client := newAPIClient(token)
+
+	if err := cmdutil.RequireWorkspaceScope(client, "create an environment"); err != nil {
+		return err
+	}
 
 	// Resolve project name to ID
 	projects, err := client.ListProjects()

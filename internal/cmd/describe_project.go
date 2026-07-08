@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/output"
 	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/kubenoops/railctl/internal/types"
@@ -59,6 +60,10 @@ func runDescribeProject(cmd *cobra.Command, args []string) error {
 	}
 
 	client := newAPIClient(tkn)
+
+	if err := cmdutil.RequireWorkspaceScope(client, "describe a project by name"); err != nil {
+		return err
+	}
 
 	// List all projects and resolve by name
 	projects, err := client.ListProjects()

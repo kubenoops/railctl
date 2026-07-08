@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/resolver"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +45,10 @@ func runDeleteEnvironment(cmd *cobra.Command, args []string) error {
 
 	name := args[0]
 	client := newAPIClient(token)
+
+	if err := cmdutil.RequireWorkspaceScope(client, "delete an environment"); err != nil {
+		return err
+	}
 
 	// Resolve project name to ID
 	projects, err := client.ListProjects()

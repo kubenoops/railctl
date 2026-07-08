@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/kubenoops/railctl/internal/resolver"
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/spf13/cobra"
 )
 
@@ -47,66 +47,25 @@ func runCreateDeployment(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	projectFlag := getProject()
-	if projectFlag == "" {
-		return fmt.Errorf("-p/--project is required. Use -p flag or set RAILCTL_PROJECT")
-	}
-
-	envFlag := getEnvironment()
-	if envFlag == "" {
-		return fmt.Errorf("-e/--environment is required. Use -e flag or set RAILCTL_ENVIRONMENT")
-	}
-
-	serviceFlag := getService()
-	if serviceFlag == "" {
-		return fmt.Errorf("-s/--service is required. Use -s flag or set RAILCTL_SERVICE")
-	}
-
 	client := newAPIClient(token)
 
-	// Resolve project
-	projects, err := client.ListProjects()
+	// Resolve project, environment, and service. With a project token the
+	// project and environment are derived from the token itself.
+	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
+		ProjectName:     getProject(),
+		EnvironmentName: getEnvironment(),
+		ServiceName:     getService(),
+		NeedEnvironment: true,
+		NeedService:     true,
+	})
 	if err != nil {
 		return err
 	}
-	project, err := resolver.ResolveProject(projects, projectFlag)
-	if err != nil {
-		return fmt.Errorf("project '%s' not found", projectFlag)
-	}
-
-	// Resolve environment
-	environments, err := client.ListEnvironments(project.ID)
-	if err != nil {
-		return err
-	}
-	env, err := resolver.ResolveEnvironment(environments, envFlag)
-	if err != nil {
-		return fmt.Errorf("environment '%s' not found in project", envFlag)
-	}
-
-	// Resolve service
-	services, err := client.ListServices(project.ID, env.ID)
-	if err != nil {
-		return err
-	}
-	svcResources := make([]resolver.Resource, len(services))
-	var serviceName string
-	for i, s := range services {
-		svcResources[i] = resolver.Resource{ID: s.ID, Name: s.Name}
-	}
-	serviceID, err := resolver.Resolve(serviceFlag, svcResources)
-	if err != nil {
-		return fmt.Errorf("service '%s' not found in environment", serviceFlag)
-	}
-	for _, s := range services {
-		if s.ID == serviceID {
-			serviceName = s.Name
-			break
-		}
-	}
+	serviceID := ctx.Service.ID
+	serviceName := ctx.Service.Name
 
 	// Trigger deployment
-	deploymentID, err := client.DeployServiceInstance(serviceID, env.ID)
+	deploymentID, err := client.DeployServiceInstance(serviceID, ctx.Environment.ID)
 	if err != nil {
 		return fmt.Errorf("failed to trigger deployment: %w", err)
 	}
@@ -115,7 +74,7 @@ func runCreateDeployment(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Deployment ID: %s\n", deploymentID)
 
 	if createDeplAwait {
-		return awaitDeployment(client, project.ID, env.ID, serviceID, deploymentID, serviceName, createDeplTimeout)
+		return awaitDeployment(client, ctx.Project.ID, ctx.Environment.ID, serviceID, deploymentID, serviceName, createDeplTimeout)
 	}
 	return nil
 }
