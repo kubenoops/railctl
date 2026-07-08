@@ -2,8 +2,9 @@
 
 // Package project holds the L3 e2e test group: the bulk in-scope mechanics a
 // project-scoped token can perform inside its own project/environment, plus
-// the boundary fail-fasts (cannot enumerate projects, -p/-e ignored,
-// self-minting). See docs/designs/2026-07-08-e2e-token-layers.md.
+// the boundary fail-fasts (cannot enumerate projects, -p/-e/-w
+// contradictions fail, self-minting). See
+// docs/designs/2026-07-08-e2e-token-layers.md.
 //
 // TestMain builds the shared fixture with a workspace token (the bootstrap
 // credential), mints a project token for it — that mint is itself the proof

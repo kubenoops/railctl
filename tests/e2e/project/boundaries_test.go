@@ -11,8 +11,9 @@ import (
 )
 
 // TestBoundaries proves the project-token fail-fasts and guardrails: project
-// enumeration is denied, -p/-e cannot re-aim the token, and the token can
-// self-mint sibling tokens within its own scope.
+// enumeration is denied, -p/-e/-w contradictions fail fast (matching values
+// proceed silently), and the token can self-mint sibling tokens within its
+// own scope.
 //
 //	go test -tags e2e -v -run TestBoundaries ./tests/e2e/project/...
 func TestBoundaries(t *testing.T) {
@@ -27,20 +28,42 @@ func TestBoundaries(t *testing.T) {
 		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to a single project")
 	})
 
-	t.Run("p_flag_ignored", func(t *testing.T) {
-		// internal/cmdutil/context.go: "Warning: -p/RAILCTL_PROJECT ignored
-		// — project token is already scoped to a specific project". The
-		// command must still succeed, operating on the token's own project.
-		r := env.RunOK(t, "get", "services", "-p", "some-other-project")
-		harness.AssertContains(t, r.Stderr, "-p/RAILCTL_PROJECT ignored")
+	t.Run("p_flag_mismatch_fails", func(t *testing.T) {
+		// internal/cmdutil/context.go: a -p value naming a different project
+		// than the token's baked scope is a contradiction and fails fast —
+		// never warn-and-proceed on the token's own project.
+		r := env.RunFail(t, "get", "services", "-p", "some-other-project")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to project")
 	})
 
-	t.Run("e_flag_ignored", func(t *testing.T) {
-		// internal/cmdutil/context.go: "Warning: -e/RAILCTL_ENVIRONMENT
-		// ignored — project token is already scoped to a specific
-		// environment". Fires because `get services` sets NeedEnvironment.
-		r := env.RunOK(t, "get", "services", "-e", "some-other-env")
-		harness.AssertContains(t, r.Stderr, "-e/RAILCTL_ENVIRONMENT ignored")
+	t.Run("p_flag_match_ok", func(t *testing.T) {
+		// A -p value naming the token's OWN project is consistent: the
+		// command proceeds silently, without any "ignored" warning.
+		r := env.RunOK(t, "get", "services", "-p", env.ProjectName)
+		harness.AssertNotContains(t, r.Stderr, "ignored")
+	})
+
+	t.Run("e_flag_mismatch_fails", func(t *testing.T) {
+		// Same contradiction fail-fast for -e against the token's baked
+		// environment. Fires because `get services` sets NeedEnvironment.
+		r := env.RunFail(t, "get", "services", "-e", "some-other-env")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to environment")
+	})
+
+	t.Run("e_flag_match_ok", func(t *testing.T) {
+		// -e naming the token's own environment proceeds silently.
+		r := env.RunOK(t, "get", "services", "-e", fixtureEnvName)
+		harness.AssertNotContains(t, r.Stderr, "ignored")
+	})
+
+	t.Run("w_flag_mismatch_fails", func(t *testing.T) {
+		// internal/api/client.go GetProjectContext → checkWorkspaceHint: a
+		// -w value naming a different workspace than the one containing the
+		// token's project is a contradiction and fails fast. (The match case
+		// is unit-tested; the test cannot know the real workspace name
+		// statically.)
+		r := env.RunFail(t, "get", "services", "-w", "some-other-workspace")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to workspace")
 	})
 
 	t.Run("self_mint", func(t *testing.T) {

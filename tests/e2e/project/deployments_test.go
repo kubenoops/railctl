@@ -120,9 +120,10 @@ func TestDeployments(t *testing.T) {
 	})
 }
 
-// TestDeploymentLifecycle exercises rollback (delete) and reactivate
-// (update --set-active). The service's image is updated to generate a
-// second deployment.
+// TestDeploymentLifecycle exercises rollback (delete) and the reactivation
+// boundary: `update deployment --set-active` is a workspace-level capability
+// that Railway denies to project tokens. The service's image is updated to
+// generate a second deployment.
 //
 //	go test -tags e2e -v -run TestDeploymentLifecycle ./tests/e2e/project/...
 func TestDeploymentLifecycle(t *testing.T) {
@@ -177,20 +178,13 @@ func TestDeploymentLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("reactivate_previous", func(t *testing.T) {
-		env.RunOK(t, "update", "deployment", prevID, "--set-active")
-		time.Sleep(3 * time.Second)
-	})
-
-	t.Run("new_deployment_after_reactivate", func(t *testing.T) {
-		r := env.RunOK(t, "get", "deployments", "-o", "json", "-s", svc)
-		var newDeps []map[string]interface{}
-		if json.Unmarshal([]byte(r.Stdout), &newDeps) == nil && len(newDeps) > 0 {
-			newID, _ := newDeps[0]["id"].(string)
-			if newID == latestID {
-				t.Error("expected a new deployment ID after reactivation")
-			}
-		}
+	t.Run("reactivate_previous_denied", func(t *testing.T) {
+		// Deployment reactivation is a workspace-level capability: Railway
+		// denies deploymentRedeploy to project tokens ("Not Authorized").
+		// The positive reactivation test lives in the workspace group
+		// (tests/e2e/workspace, TestDeploymentReactivate).
+		r := env.RunFail(t, "update", "deployment", prevID, "--set-active")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "Not Authorized")
 	})
 }
 

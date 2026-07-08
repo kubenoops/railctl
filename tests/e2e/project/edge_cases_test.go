@@ -36,34 +36,35 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("env_var_RAILCTL_PROJECT", func(t *testing.T) {
-		// Semantics adapted for L3: with a project token RAILCTL_PROJECT is
-		// ignored-with-warning (internal/cmdutil/context.go) and the command
-		// must still succeed on the token's own scope.
+		// Contradiction fail-fast (internal/cmdutil/context.go): with a
+		// project token, a RAILCTL_PROJECT value naming a different project
+		// than the token's baked scope must FAIL — never warn-and-proceed on
+		// the token's own project.
 		cmd := exec.Command(harness.Railctl, "--token", env.Token, "get", "environments")
 		cmd.Env = []string{"RAILCTL_PROJECT=some-other-project"}
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Errorf("get environments with RAILCTL_PROJECT set should still succeed under a project token: %v\nstderr: %s",
-				err, stderr.String())
+		if err := cmd.Run(); err == nil {
+			t.Errorf("get environments with a contradicting RAILCTL_PROJECT should fail under a project token\nstdout: %s\nstderr: %s",
+				stdout.String(), stderr.String())
 		}
-		harness.AssertContains(t, stderr.String(), "-p/RAILCTL_PROJECT ignored")
+		harness.AssertContains(t, stderr.String(), "scoped to project")
 	})
 
 	t.Run("env_var_RAILCTL_ENVIRONMENT", func(t *testing.T) {
-		// Semantics adapted for L3: RAILCTL_ENVIRONMENT is ignored-with-
-		// warning; the command must still succeed on the token's own scope.
+		// Same contradiction fail-fast for RAILCTL_ENVIRONMENT against the
+		// token's baked environment.
 		cmd := exec.Command(harness.Railctl, "--token", env.Token, "get", "services")
 		cmd.Env = []string{"RAILCTL_ENVIRONMENT=some-other-env"}
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Errorf("get services with RAILCTL_ENVIRONMENT set should still succeed under a project token: %v\nstderr: %s",
-				err, stderr.String())
+		if err := cmd.Run(); err == nil {
+			t.Errorf("get services with a contradicting RAILCTL_ENVIRONMENT should fail under a project token\nstdout: %s\nstderr: %s",
+				stdout.String(), stderr.String())
 		}
-		harness.AssertContains(t, stderr.String(), "-e/RAILCTL_ENVIRONMENT ignored")
+		harness.AssertContains(t, stderr.String(), "scoped to environment")
 	})
 
 	t.Run("env_var_RAILCTL_SERVICE", func(t *testing.T) {
@@ -80,16 +81,19 @@ func TestEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("environment_arg_ignored", func(t *testing.T) {
+	t.Run("environment_arg_contradiction", func(t *testing.T) {
 		// Adapted from the flat suite's environment_substring_resolution:
 		// under a project token the <name> argument of `describe
-		// environment` is ignored-with-warning (the token pins the
-		// environment) and the token's own environment is described.
-		// Environment substring resolution itself is a workspace-token
-		// behaviour; service substring resolution is covered in
-		// TestServices/describe_substring.
-		r := env.RunOK(t, "describe", "environment", "some-other-env")
-		harness.AssertContains(t, r.Stderr, "-e/RAILCTL_ENVIRONMENT ignored")
+		// environment` goes through the same -e contradiction check — a
+		// value naming a different environment fails fast, the token's own
+		// environment name proceeds silently. Environment substring
+		// resolution itself is a workspace-token behaviour; service
+		// substring resolution is covered in TestServices/describe_substring.
+		r := env.RunFail(t, "describe", "environment", "some-other-env")
+		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to environment")
+
+		r = env.RunOK(t, "describe", "environment", fixtureEnvName)
+		harness.AssertNotContains(t, r.Stderr, "ignored")
 		harness.AssertContains(t, r.Stdout, fixtureEnvName)
 	})
 }
