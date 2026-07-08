@@ -109,6 +109,26 @@ func TestClient_SetVolumeBackupSchedules_Empty(t *testing.T) {
 	}
 }
 
+func TestClient_SetVolumeBackupSchedules_APIReturnsFalse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// API accepted the request but reports the update did not happen.
+		w.Write([]byte(`{"data":{"volumeInstanceBackupScheduleUpdate":false}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	err := client.SetVolumeBackupSchedules("vi-1", []string{"DAILY"})
+	if err == nil {
+		t.Fatal("expected an error when the API returns false, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to update backup schedules") {
+		t.Errorf("error = %q, want it to mention 'failed to update backup schedules'", err.Error())
+	}
+}
+
 func TestClient_ListVolumeBackups(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

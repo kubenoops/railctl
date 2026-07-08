@@ -86,8 +86,24 @@ func (c *Client) SetVolumeBackupSchedules(volumeInstanceID string, kinds []strin
 		"kinds":            kinds,
 	}
 
-	_, err := c.execute(mutation, variables)
-	return err
+	data, err := c.execute(mutation, variables)
+	if err != nil {
+		return err
+	}
+
+	var result struct {
+		Update bool `json:"volumeInstanceBackupScheduleUpdate"`
+	}
+
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	if !result.Update {
+		return fmt.Errorf("failed to update backup schedules")
+	}
+
+	return nil
 }
 
 // ListVolumeBackups returns the backups for a volume instance.
