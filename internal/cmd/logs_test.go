@@ -339,68 +339,68 @@ func TestRunLogsService_EmptyLogs(t *testing.T) {
 }
 
 func TestRunLogsService_FollowMode(t *testing.T) {
-origAPIClient := newAPIClient
-origProject := project
-origEnvironment := environment
-origToken := token
-origFollow := logsFollow
-defer func() {
-newAPIClient = origAPIClient
-project = origProject
-environment = origEnvironment
-token = origToken
-logsFollow = origFollow
-}()
+	origAPIClient := newAPIClient
+	origProject := project
+	origEnvironment := environment
+	origToken := token
+	origFollow := logsFollow
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		environment = origEnvironment
+		token = origToken
+		logsFollow = origFollow
+	}()
 
-callCount := 0
-token = "test-token"
-logsFollow = true
-newAPIClient = func(tkn string) api.APIClient {
-return &api.MockClient{
-ListProjectsFunc: func() ([]types.Project, error) {
-return []types.Project{{ID: "proj-1", Name: "my-project"}}, nil
-},
-ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
-return []types.Environment{{ID: "env-1", Name: "production"}}, nil
-},
-ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
-return []types.ServiceDetail{{ID: "svc-1", Name: "my-service"}}, nil
-},
-ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {
-return []api.Deployment{
-{ID: "deploy-1", Status: "SUCCESS", CreatedAt: time.Now()},
-}, nil
-},
-GetDeploymentLogsFunc: func(deploymentID string, limit int) ([]api.LogEntry, error) {
-callCount++
-// Return logs on first call, empty on subsequent to avoid infinite loop in test
-if callCount == 1 {
-return []api.LogEntry{
-{Timestamp: time.Now(), Message: "Initial log"},
-}, nil
-}
-return []api.LogEntry{}, nil
-},
-}
-}
-project = "my-project"
-environment = "production"
+	callCount := 0
+	token = "test-token"
+	logsFollow = true
+	newAPIClient = func(tkn string) api.APIClient {
+		return &api.MockClient{
+			ListProjectsFunc: func() ([]types.Project, error) {
+				return []types.Project{{ID: "proj-1", Name: "my-project"}}, nil
+			},
+			ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+				return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+			},
+			ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+				return []types.ServiceDetail{{ID: "svc-1", Name: "my-service"}}, nil
+			},
+			ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {
+				return []api.Deployment{
+					{ID: "deploy-1", Status: "SUCCESS", CreatedAt: time.Now()},
+				}, nil
+			},
+			GetDeploymentLogsFunc: func(deploymentID string, limit int) ([]api.LogEntry, error) {
+				callCount++
+				// Return logs on first call, empty on subsequent to avoid infinite loop in test
+				if callCount == 1 {
+					return []api.LogEntry{
+						{Timestamp: time.Now(), Message: "Initial log"},
+					}, nil
+				}
+				return []api.LogEntry{}, nil
+			},
+		}
+	}
+	project = "my-project"
+	environment = "production"
 
-// Note: We can't fully test follow mode in unit tests since it runs indefinitely
-// This test just verifies the followLogs function can be called without errors
-// and that it makes the initial API call
-cmd := logsServiceCmd
+	// Note: We can't fully test follow mode in unit tests since it runs indefinitely
+	// This test just verifies the followLogs function can be called without errors
+	// and that it makes the initial API call
+	cmd := logsServiceCmd
 
-// Run in a goroutine and cancel after a short time to avoid hanging
-done := make(chan error, 1)
-go func() {
-done <- cmd.RunE(cmd, []string{"my-service"})
-}()
+	// Run in a goroutine and cancel after a short time to avoid hanging
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.RunE(cmd, []string{"my-service"})
+	}()
 
-// Wait briefly to ensure at least one API call is made
-time.Sleep(100 * time.Millisecond)
+	// Wait briefly to ensure at least one API call is made
+	time.Sleep(100 * time.Millisecond)
 
-if callCount < 1 {
-t.Error("Expected at least one API call in follow mode")
-}
+	if callCount < 1 {
+		t.Error("Expected at least one API call in follow mode")
+	}
 }

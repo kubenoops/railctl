@@ -10,7 +10,7 @@ import (
 
 func TestClient_ListEnvironments_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
 			"data": map[string]any{
 				"project": map[string]any{
@@ -81,7 +81,7 @@ func TestClient_ListEnvironments_Success(t *testing.T) {
 
 func TestClient_CreateEnvironment_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
 			"data": map[string]any{
 				"environmentCreate": map[string]any{
@@ -112,7 +112,7 @@ func TestClient_CreateEnvironment_Success(t *testing.T) {
 
 func TestClient_DeleteEnvironment_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
 			"data": map[string]any{
 				"environmentDelete": true,
@@ -133,7 +133,7 @@ func TestClient_DeleteEnvironment_Success(t *testing.T) {
 
 func TestClient_DeleteEnvironment_Failed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 		response := map[string]any{
 			"data": map[string]any{
 				"environmentDelete": false,
