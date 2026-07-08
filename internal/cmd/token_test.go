@@ -104,3 +104,62 @@ func TestRunTokenCreate_ProjectTokenRejected(t *testing.T) {
 		t.Error("CreateProjectToken must not be called when using a project token")
 	}
 }
+
+func TestRunTokenList_JSON(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origEnvironment := environment
+	origToken := token
+	origOutput := outputFormat
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		environment = origEnvironment
+		token = origToken
+		outputFormat = origOutput
+	}()
+
+	called := false
+	mock := tokenTestMock()
+	mock.ListProjectTokensFunc = func(projectID string) ([]api.ProjectToken, error) {
+		called = true
+		if projectID != "proj-1" {
+			t.Errorf("expected projectId proj-1, got %q", projectID)
+		}
+		return []api.ProjectToken{
+			{ID: "t1", Name: "ci", EnvironmentID: "env-1", CreatedAt: "2026-07-01T00:00:00Z", DisplayToken: "tok-****"},
+		}, nil
+	}
+
+	token = "test-token"
+	project = "my-project"
+	environment = ""
+	outputFormat = "json"
+	newAPIClient = func(tkn string) api.APIClient { return mock }
+
+	if err := tokenListCmd.RunE(tokenListCmd, []string{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Error("expected ListProjectTokens to be called")
+	}
+}
+
+func TestFormatTokenTime(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", "-"},
+		{"valid RFC3339", "2026-07-01T13:45:00Z", "2026-07-01 13:45"},
+		{"invalid falls back to raw", "not-a-time", "not-a-time"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatTokenTime(tt.in); got != tt.want {
+				t.Errorf("formatTokenTime(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
