@@ -1,0 +1,31 @@
+name: Skill Sync
+
+# The embedded skill (internal/skill/railctl-skill.md) is a generated copy of
+# the source of truth (docs/railctl-skill.md). This check fails the PR if the
+# two drift, so the binary's `railctl skill` output always matches the docs.
+
+on:
+  pull_request:
+    paths:
+      - 'docs/railctl-skill.md'
+      - 'internal/skill/railctl-skill.md'
+      - 'internal/skill/skill.go'
+      - '.github/workflows/skill-sync.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  skill-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Verify embedded skill matches docs source
+        run: |
+          if ! diff -u docs/railctl-skill.md internal/skill/railctl-skill.md; then
+            echo "::error::internal/skill/railctl-skill.md is out of sync with docs/railctl-skill.md."
+            echo "::error::Run 'make gen' (or 'go generate ./internal/skill/') and commit the result."
+            exit 1
+          fi
+          echo "Embedded skill is in sync with docs/railctl-skill.md."

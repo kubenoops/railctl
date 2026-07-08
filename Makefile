@@ -1,4 +1,4 @@
-.PHONY: build clean test test-e2e test-smoke install build-all
+.PHONY: build clean test test-e2e test-smoke install build-all gen gen-check
 
 # Binary name
 BINARY=railctl
@@ -48,6 +48,15 @@ test-e2e: build
 test-smoke: build
 	
 	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -run TestSmoke -timeout 3m ./tests/e2e/...
+
+# Regenerate embedded assets (copies docs/railctl-skill.md into internal/skill/)
+gen:
+	go generate ./...
+
+# Verify generated files are in sync with their sources (used by CI)
+gen-check: gen
+	@git diff --exit-code -- internal/skill/railctl-skill.md \
+		|| { echo "internal/skill/railctl-skill.md is stale — run 'make gen' and commit."; exit 1; }
 
 # Check code formatting
 fmt:

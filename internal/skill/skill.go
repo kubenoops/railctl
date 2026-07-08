@@ -1,13 +1,20 @@
-// Package skill embeds the railctl usage skill (railctl-skill.md) into the
-// binary at build time and exposes it as plain text. The markdown file is the
-// single source of truth: `railctl skill` prints it, and it doubles as a
-// portable agent skill that lives in the repository.
+// Package skill embeds the railctl usage skill into the binary at build time
+// and exposes it as plain text via `railctl skill`.
+//
+// The source of truth is docs/railctl-skill.md — a real Markdown file so it
+// renders on GitHub and is discoverable. railctl-skill.md in this directory is
+// a generated, byte-identical copy that //go:embed compiles into the binary
+// (go:embed cannot reach outside the package or follow a symlink). Regenerate
+// it with `go generate ./internal/skill/` or `make gen`; CI (skill-sync) fails
+// if the copy drifts from the source.
 package skill
 
 import (
 	_ "embed"
 	"strings"
 )
+
+//go:generate cp ../../docs/railctl-skill.md railctl-skill.md
 
 //go:embed railctl-skill.md
 var content string

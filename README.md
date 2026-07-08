@@ -102,12 +102,11 @@ railctl skill | less
 railctl skill > railctl.skill.md   # save it as a portable skill
 ```
 
-The guide is readable in the repo at [`docs/railctl-skill.md`](docs/railctl-skill.md).
-That path is a symlink to the embed source of truth,
-[`internal/skill/railctl-skill.md`](internal/skill/railctl-skill.md), which is
-compiled into the binary at build time via `//go:embed` (the directive cannot
-follow a symlink, so the real file lives beside the code and the discoverable
-copy points to it).
+The source of truth is [`docs/railctl-skill.md`](docs/railctl-skill.md). A
+byte-identical copy at `internal/skill/railctl-skill.md` is compiled into the
+binary via `//go:embed` (the directive cannot reach outside its package, so the
+copy lives beside the code). Regenerate the copy with `make gen`; a CI check
+(`skill-sync`) fails if the two drift.
 
 ## Documentation
 
