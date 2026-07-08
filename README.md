@@ -88,6 +88,23 @@ railctl create service api --image node:20-alpine -p my-app
 railctl update service api --image node:20 -p my-app -e production
 ```
 
+### Built-in usage guide (`railctl skill`)
+
+railctl ships a self-contained usage guide **embedded in the binary** — the
+command surface, declarative `apply`/`diff`, volume backups, and the token
+model (account/workspace vs project-scoped tokens and their limitations). It is
+written to be consumed by AI agents as well as humans, needs no network access,
+and always matches the version you are running:
+
+```bash
+railctl skill                 # print the guide
+railctl skill | less
+railctl skill > railctl.skill.md   # save it as a portable skill
+```
+
+The guide's source of truth is [`internal/skill/railctl-skill.md`](internal/skill/railctl-skill.md),
+embedded at build time via `//go:embed`.
+
 ## Documentation
 
 - **[CI/CD & Build Setup](docs/ci-build-setup.md)** - Build system, GitHub Actions workflows, release lifecycle, and dependency management
