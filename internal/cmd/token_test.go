@@ -145,6 +145,105 @@ func TestRunTokenList_JSON(t *testing.T) {
 	}
 }
 
+func TestRunTokenDelete_Success(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origToken := token
+	origYes := tokenDeleteYes
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		token = origToken
+		tokenDeleteYes = origYes
+	}()
+
+	var capturedID string
+	mock := tokenTestMock()
+	mock.ListProjectTokensFunc = func(projectID string) ([]api.ProjectToken, error) {
+		return []api.ProjectToken{{ID: "t1", Name: "ci", EnvironmentID: "env-1"}}, nil
+	}
+	mock.DeleteProjectTokenFunc = func(tokenID string) error {
+		capturedID = tokenID
+		return nil
+	}
+
+	token = "test-token"
+	project = "my-project"
+	tokenDeleteYes = true
+	newAPIClient = func(tkn string) api.APIClient { return mock }
+
+	if err := tokenDeleteCmd.RunE(tokenDeleteCmd, []string{"t1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedID != "t1" {
+		t.Errorf("expected delete of t1, got %q", capturedID)
+	}
+}
+
+func TestRunTokenDelete_Cancelled(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origToken := token
+	origYes := tokenDeleteYes
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		token = origToken
+		tokenDeleteYes = origYes
+		tokenDeleteCmd.SetIn(nil)
+	}()
+
+	deleteCalled := false
+	mock := tokenTestMock()
+	mock.ListProjectTokensFunc = func(projectID string) ([]api.ProjectToken, error) {
+		return []api.ProjectToken{{ID: "t1", Name: "ci", EnvironmentID: "env-1"}}, nil
+	}
+	mock.DeleteProjectTokenFunc = func(tokenID string) error {
+		deleteCalled = true
+		return nil
+	}
+
+	token = "test-token"
+	project = "my-project"
+	tokenDeleteYes = false
+	tokenDeleteCmd.SetIn(strings.NewReader("n\n"))
+	newAPIClient = func(tkn string) api.APIClient { return mock }
+
+	if err := tokenDeleteCmd.RunE(tokenDeleteCmd, []string{"t1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deleteCalled {
+		t.Error("expected delete to be cancelled, but DeleteProjectToken was called")
+	}
+}
+
+func TestRunTokenDelete_NotFound(t *testing.T) {
+	origAPIClient := newAPIClient
+	origProject := project
+	origToken := token
+	origYes := tokenDeleteYes
+	defer func() {
+		newAPIClient = origAPIClient
+		project = origProject
+		token = origToken
+		tokenDeleteYes = origYes
+	}()
+
+	mock := tokenTestMock()
+	mock.ListProjectTokensFunc = func(projectID string) ([]api.ProjectToken, error) {
+		return []api.ProjectToken{{ID: "t1", Name: "ci", EnvironmentID: "env-1"}}, nil
+	}
+
+	token = "test-token"
+	project = "my-project"
+	tokenDeleteYes = true
+	newAPIClient = func(tkn string) api.APIClient { return mock }
+
+	if err := tokenDeleteCmd.RunE(tokenDeleteCmd, []string{"nonexistent"}); err == nil {
+		t.Error("expected error for unknown token id")
+	}
+}
+
 func TestFormatTokenTime(t *testing.T) {
 	tests := []struct {
 		name string
