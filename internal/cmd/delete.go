@@ -22,6 +22,7 @@ Available resources:
   service        Delete a service (requires --yes or confirmation)
   deployment     Remove a deployment (requires --yes or confirmation, rollback if latest)
   variable       Delete an environment variable (requires --yes or confirmation)
+  domain         Delete a custom domain from a service (requires --yes or confirmation)
 
 Declarative mode (-f/--file):
   Delete the services declared in a YAML config file or directory — the

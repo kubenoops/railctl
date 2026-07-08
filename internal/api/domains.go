@@ -67,6 +67,9 @@ func (c *Client) ListDomains(projectID, environmentID, serviceID string) (Domain
 					id
 					domain
 					targetPort
+					status {
+						verified
+					}
 				}
 			}
 		}

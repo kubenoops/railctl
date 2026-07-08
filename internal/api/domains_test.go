@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -303,5 +304,98 @@ func TestCreateCustomDomain(t *testing.T) {
 	if cd.Status.VerificationDNSHost != "_railway-verify.app" || cd.Status.VerificationToken != "railway-verify=token123" {
 		t.Errorf("verification fields = %q / %q, want _railway-verify.app / railway-verify=token123",
 			cd.Status.VerificationDNSHost, cd.Status.VerificationToken)
+	}
+}
+
+// TestDeleteCustomDomain_MutationInput verifies the customDomainDelete
+// mutation is sent with the domain ID (the schema takes only `id`).
+func TestDeleteCustomDomain_MutationInput(t *testing.T) {
+	var capturedQuery string
+	var capturedVars map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		var req struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+		capturedQuery = req.Query
+		capturedVars = req.Variables
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"customDomainDelete": true},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	if err := client.DeleteCustomDomain("cd-abc-123"); err != nil {
+		t.Fatalf("DeleteCustomDomain returned error: %v", err)
+	}
+
+	if !strings.Contains(capturedQuery, "customDomainDelete") {
+		t.Errorf("query does not call customDomainDelete:\n%s", capturedQuery)
+	}
+	if got := capturedVars["id"]; got != "cd-abc-123" {
+		t.Errorf("id = %v, want %q", got, "cd-abc-123")
+	}
+}
+
+// TestListDomains_ParsesCustomDomainStatus verifies the domains query selects
+// the custom-domain verification status and that it round-trips into
+// CustomDomain.Status (used by `get domains` for the STATUS column).
+func TestListDomains_ParsesCustomDomainStatus(t *testing.T) {
+	var capturedQuery string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+		var req struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			t.Fatalf("failed to unmarshal request: %v", err)
+		}
+		capturedQuery = req.Query
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"domains": map[string]any{
+				"serviceDomains": []any{
+					map[string]any{"id": "dom-1", "domain": "x.up.railway.app", "targetPort": 8080},
+				},
+				"customDomains": []any{
+					map[string]any{
+						"id": "cd-1", "domain": "app.example.com", "targetPort": 3000,
+						"status": map[string]any{"verified": true},
+					},
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	domains, err := client.ListDomains("proj-1", "env-1", "svc-1")
+	if err != nil {
+		t.Fatalf("ListDomains returned error: %v", err)
+	}
+
+	if !strings.Contains(capturedQuery, "verified") {
+		t.Errorf("query does not select custom-domain verification status:\n%s", capturedQuery)
+	}
+	if len(domains.CustomDomains) != 1 {
+		t.Fatalf("expected 1 custom domain, got %d", len(domains.CustomDomains))
+	}
+	cd := domains.CustomDomains[0]
+	if cd.Status == nil || !cd.Status.Verified {
+		t.Errorf("expected verified status parsed, got %+v", cd.Status)
 	}
 }

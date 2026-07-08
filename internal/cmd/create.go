@@ -14,7 +14,8 @@ Available resources:
   project        Create a new project
   environment    Create a new environment in a project
   service        Create a new service from a Docker image
-  deployment     Trigger a new deployment (redeploy) for a service`,
+  deployment     Trigger a new deployment (redeploy) for a service
+  domain         Create a custom domain on a service`,
 }
 
 func init() {

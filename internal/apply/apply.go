@@ -201,7 +201,7 @@ func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID st
 			if err != nil {
 				return fmt.Errorf("creating custom domain %q: %w", cd.Name, err)
 			}
-			printCustomDomainDNS(created, w)
+			PrintCustomDomainDNS(created, w)
 			byName[cd.Name] = created // avoid re-creating on duplicate declaration
 			continue
 		}
@@ -214,10 +214,11 @@ func reconcileCustomDomains(client api.APIClient, projectID, envID, serviceID st
 	return nil
 }
 
-// printCustomDomainDNS prints the DNS records to configure: the routing record(s)
+// PrintCustomDomainDNS prints the DNS records to configure: the routing record(s)
 // (CNAME/A) from dnsRecords, plus the verification TXT, which Railway exposes
 // separately as verificationDnsHost/verificationToken rather than in dnsRecords.
-func printCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
+// Exported so `railctl create domain` renders the exact same output as apply.
+func PrintCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
 	fmt.Fprintf(w, "  Custom domain '%s' created — add the following DNS record(s):\n", cd.Domain)
 	if cd.Status == nil {
 		fmt.Fprintf(w, "    (no DNS records returned; check the Railway dashboard)\n")
