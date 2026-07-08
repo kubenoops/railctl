@@ -1,29 +1,33 @@
 //go:build e2e
 
-package e2e
+package workspace
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kubenoops/railctl/tests/e2e/harness"
+)
 
 // TestEnvironments exercises environment CRUD operations.
 // Setup: creates a project
 //
-//	go test -tags e2e -v -run TestEnvironments ./tests/e2e/...
+//	go test -tags e2e -v -run TestEnvironments ./tests/e2e/workspace/...
 func TestEnvironments(t *testing.T) {
-	env := SetupProject(t)
+	env := harness.SetupProject(t, token)
 
 	t.Run("get_default_production", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("get", "environments")...)
-		AssertContains(t, r.Stdout, "production")
+		harness.AssertContains(t, r.Stdout, "production")
 	})
 
 	t.Run("get_json", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("get", "environments", "-o", "json")...)
-		AssertValidJSON(t, r.Stdout)
+		harness.AssertValidJSON(t, r.Stdout)
 	})
 
 	t.Run("get_yaml", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("get", "environments", "-o", "yaml")...)
-		AssertValidYAML(t, r.Stdout)
+		harness.AssertValidYAML(t, r.Stdout)
 	})
 
 	t.Run("create", func(t *testing.T) {
@@ -32,22 +36,22 @@ func TestEnvironments(t *testing.T) {
 
 	t.Run("get_shows_staging", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("get", "environments")...)
-		AssertContains(t, r.Stdout, env.EnvName)
+		harness.AssertContains(t, r.Stdout, env.EnvName)
 	})
 
 	t.Run("describe_table", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("describe", "environment", env.EnvName)...)
-		AssertContains(t, r.Stdout, env.EnvName)
+		harness.AssertContains(t, r.Stdout, env.EnvName)
 	})
 
 	t.Run("describe_json", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("describe", "environment", env.EnvName, "-o", "json")...)
-		AssertValidJSON(t, r.Stdout)
+		harness.AssertValidJSON(t, r.Stdout)
 	})
 
 	t.Run("describe_yaml", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("describe", "environment", env.EnvName, "-o", "yaml")...)
-		AssertValidYAML(t, r.Stdout)
+		harness.AssertValidYAML(t, r.Stdout)
 	})
 
 	// Error cases
@@ -70,6 +74,6 @@ func TestEnvironments(t *testing.T) {
 
 	t.Run("verify_deleted", func(t *testing.T) {
 		r := env.RunOK(t, env.WithP("get", "environments")...)
-		AssertNotContains(t, r.Stdout, env.EnvName)
+		harness.AssertNotContains(t, r.Stdout, env.EnvName)
 	})
 }

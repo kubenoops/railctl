@@ -3,6 +3,7 @@
 package harness
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -64,6 +65,10 @@ func ClassifyToken(token string) (TokenType, error) {
 // missing, the token fails detection, or its scope mismatches want.
 // Intended for use in a test group's TestMain, before m.Run().
 func RequireToken(envVar string, want TokenType) string {
+	if compileCheckOnly() {
+		return os.Getenv(envVar)
+	}
+
 	token := os.Getenv(envVar)
 	if token == "" {
 		fmt.Fprintf(os.Stderr,
@@ -89,6 +94,18 @@ func RequireToken(envVar string, want TokenType) string {
 	}
 
 	return token
+}
+
+// compileCheckOnly reports whether this test binary was invoked with
+// -run '^$' — the conventional "compile everything, run nothing" check.
+// In that mode no test executes, so the token preflight (which needs live
+// credentials and would otherwise os.Exit(1)) is skipped.
+func compileCheckOnly() bool {
+	if !flag.Parsed() {
+		flag.Parse()
+	}
+	f := flag.Lookup("test.run")
+	return f != nil && f.Value.String() == "^$"
 }
 
 // obtainHint tells the operator how to obtain a token of the wanted scope.

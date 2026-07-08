@@ -1,51 +1,55 @@
 //go:build e2e
 
-package e2e
+package workspace
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kubenoops/railctl/tests/e2e/harness"
+)
 
 // TestProjects exercises project CRUD operations.
-// Setup: none (just needs RAILWAY_TOKEN)
+// Setup: none (just needs RAILWAY_WORKSPACE_TOKEN)
 //
-//	go test -tags e2e -v -run TestProjects ./tests/e2e/...
+//	go test -tags e2e -v -run TestProjects ./tests/e2e/workspace/...
 func TestProjects(t *testing.T) {
-	env := SetupProject(t)
+	env := harness.SetupProject(t, token)
 
 	t.Run("get_table", func(t *testing.T) {
 		r := env.RunOK(t, "get", "projects")
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 
 	t.Run("get_json", func(t *testing.T) {
 		r := env.RunOK(t, "get", "projects", "-o", "json")
-		AssertValidJSON(t, r.Stdout)
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertValidJSON(t, r.Stdout)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 
 	t.Run("get_yaml", func(t *testing.T) {
 		r := env.RunOK(t, "get", "projects", "-o", "yaml")
-		AssertValidYAML(t, r.Stdout)
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertValidYAML(t, r.Stdout)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 
 	t.Run("get_wide", func(t *testing.T) {
 		r := env.RunOK(t, "get", "projects", "-o", "wide")
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 
 	t.Run("describe_table", func(t *testing.T) {
 		r := env.RunOK(t, "describe", "project", env.ProjectName)
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 
 	t.Run("describe_json", func(t *testing.T) {
 		r := env.RunOK(t, "describe", "project", env.ProjectName, "-o", "json")
-		AssertValidJSON(t, r.Stdout)
+		harness.AssertValidJSON(t, r.Stdout)
 	})
 
 	t.Run("describe_yaml", func(t *testing.T) {
 		r := env.RunOK(t, "describe", "project", env.ProjectName, "-o", "yaml")
-		AssertValidYAML(t, r.Stdout)
+		harness.AssertValidYAML(t, r.Stdout)
 	})
 
 	t.Run("describe_nonexistent", func(t *testing.T) {
@@ -65,6 +69,6 @@ func TestProjects(t *testing.T) {
 			prefix = prefix[:len(prefix)-4]
 		}
 		r := env.RunOK(t, "describe", "project", prefix)
-		AssertContains(t, r.Stdout, env.ProjectName)
+		harness.AssertContains(t, r.Stdout, env.ProjectName)
 	})
 }
