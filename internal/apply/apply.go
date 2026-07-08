@@ -308,8 +308,11 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	// doesn't exist yet (in-place volume creation isn't supported — see above),
 	// warn instead of failing the whole update.
 	if backupSchedulesChanged {
-		instanceID, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
+		instanceID, found, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
 		if err != nil {
+			return fmt.Errorf("resolving volume instance for backup schedules: %w", err)
+		}
+		if !found {
 			fmt.Fprintf(w, "  Warning: backup schedules not applied for '%s' (no volume yet): re-run 'apply' after the volume is created to set them\n", name)
 		} else {
 			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
@@ -478,19 +481,20 @@ func findServiceID(services []types.ServiceDetail, name string) (string, error) 
 	return "", fmt.Errorf("service %q not found", name)
 }
 
-// findServiceVolumeInstanceID returns the instance ID of the volume attached
-// to the given service.
-func findServiceVolumeInstanceID(client api.APIClient, projectID, envID, serviceID string) (string, error) {
+// findServiceVolumeInstanceID returns the instance ID of the volume attached to
+// the given service and whether one was found. A nil error with found=false
+// means no volume is attached yet (distinct from an API failure).
+func findServiceVolumeInstanceID(client api.APIClient, projectID, envID, serviceID string) (id string, found bool, err error) {
 	volumes, err := client.ListVolumes(projectID, envID)
 	if err != nil {
-		return "", fmt.Errorf("listing volumes: %w", err)
+		return "", false, fmt.Errorf("listing volumes: %w", err)
 	}
 	for _, vi := range volumes {
 		if vi.ServiceID != nil && *vi.ServiceID == serviceID {
-			return vi.ID, nil
+			return vi.ID, true, nil
 		}
 	}
-	return "", fmt.Errorf("no volume attached to service")
+	return "", false, nil
 }
 
 // findVolumeInstanceIDByVolume returns the instance ID for a volume ID,

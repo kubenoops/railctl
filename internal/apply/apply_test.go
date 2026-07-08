@@ -1125,3 +1125,76 @@ func TestApply_UpdateVolumeBackupSchedules(t *testing.T) {
 		t.Errorf("expected Updated=[db], got %v", result.Updated)
 	}
 }
+
+func TestApply_UpdateBackupSchedules_VolumeMissing(t *testing.T) {
+	// A service declaring backupSchedules but with no live volume yet should
+	// warn and continue (not fail the update).
+	setCalled := false
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
+		},
+		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+			return []api.VolumeInstance{}, nil // no volume attached yet
+		},
+		SetVolumeBackupSchedulesFunc: func(volumeInstanceID string, kinds []string) error {
+			setCalled = true
+			return nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "db",
+				Fields:      []diff.FieldDiff{{Path: "volume.backupSchedules", Desired: "DAILY"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"db": {Name: "db", Image: "postgres:16", Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY"}}},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("expected no errors (should warn), got %v", result.Errors)
+	}
+	if setCalled {
+		t.Error("SetVolumeBackupSchedules should not be called when no volume exists")
+	}
+	if len(result.Updated) != 1 {
+		t.Errorf("expected the service to still count as updated, got %v", result.Updated)
+	}
+}
+
+func TestApply_UpdateBackupSchedules_ListError(t *testing.T) {
+	// A transient ListVolumes failure must propagate, not be swallowed as
+	// "no volume yet".
+	mock := &api.MockClient{
+		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
+		},
+		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {
+			return nil, errors.New("boom: API unavailable")
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeUpdate,
+				ServiceName: "db",
+				Fields:      []diff.FieldDiff{{Path: "volume.backupSchedules", Desired: "DAILY"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"db": {Name: "db", Image: "postgres:16", Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY"}}},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+	if len(result.Errors) == 0 {
+		t.Fatal("expected an error to propagate from ListVolumes failure")
+	}
+}
