@@ -27,7 +27,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("env_var_RAILCTL_PROJECT", func(t *testing.T) {
-		cmd := exec.Command(railctl, "--token", env.token, "get", "environments")
+		cmd := exec.Command(railctl, "--token", env.Token, "get", "environments")
 		cmd.Env = []string{"RAILCTL_PROJECT=" + env.ProjectName}
 		var stdout bytes.Buffer
 		cmd.Stdout = &stdout
@@ -38,7 +38,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("env_var_RAILCTL_ENVIRONMENT", func(t *testing.T) {
-		cmd := exec.Command(railctl, "--token", env.token, "get", "services")
+		cmd := exec.Command(railctl, "--token", env.Token, "get", "services")
 		cmd.Env = []string{
 			"RAILCTL_PROJECT=" + env.ProjectName,
 			"RAILCTL_ENVIRONMENT=" + env.EnvName,
@@ -52,7 +52,7 @@ func TestEdgeCases(t *testing.T) {
 	})
 
 	t.Run("env_var_RAILCTL_SERVICE", func(t *testing.T) {
-		cmd := exec.Command(railctl, "--token", env.token, "get", "variables")
+		cmd := exec.Command(railctl, "--token", env.Token, "get", "variables")
 		cmd.Env = []string{
 			"RAILCTL_PROJECT=" + env.ProjectName,
 			"RAILCTL_ENVIRONMENT=" + env.EnvName,

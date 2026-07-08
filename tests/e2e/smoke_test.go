@@ -26,7 +26,6 @@ func TestSmoke(t *testing.T) {
 
 	// ── Create environment ───────────────────────────────────
 	env.RunOK(t, "create", "environment", env.EnvName, "-p", env.ProjectName)
-	env.hasEnv = true
 
 	// ── List environments ────────────────────────────────────
 	r = env.RunOK(t, env.WithP("get", "environments")...)
@@ -36,7 +35,6 @@ func TestSmoke(t *testing.T) {
 	env.RunOK(t, "create", "service", env.ServiceName,
 		"--image", env.ServiceImg,
 		"-p", env.ProjectName, "-e", env.EnvName)
-	env.hasService = true
 
 	// ── List services ────────────────────────────────────────
 	r = env.RunOK(t, env.WithPE("get", "services")...)
