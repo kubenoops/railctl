@@ -54,8 +54,9 @@ func runDescribeEnvironment(cmd *cobra.Command, args []string) error {
 	client := newAPIClient(tkn)
 
 	// Resolve project and environment. With a project token both are derived
-	// from the token itself; a conflicting <name> argument is warned about and
-	// ignored (the token is bound to a single environment).
+	// from the token itself; a <name> argument naming a DIFFERENT environment
+	// is a contradiction and fails fast (the token is bound to a single
+	// environment), while a matching one proceeds silently.
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),
 		EnvironmentName: envName,

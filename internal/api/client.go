@@ -57,6 +57,10 @@ type Client struct {
 	cachedWorkspaceData  json.RawMessage // workspace response cached by detectTokenType() probe 1
 	cachedProjectID      string          // project ID cached by detectTokenType() probe 3
 	cachedEnvironmentID  string          // environment ID cached by detectTokenType() probe 3
+	wsIdentityID         string          // own-workspace ID introspected by currentWorkspace()
+	wsIdentityName       string          // own-workspace name introspected by currentWorkspace()
+	wsIdentityFetched    bool            // true after currentWorkspace() completed
+	wsHintChecked        bool            // true after the -w value was validated against the token scope
 	Debug                bool            // enable debug logging
 	WarnFn               func(string)    // called with warning messages; set by cmd layer to write to stderr
 }
@@ -452,8 +456,21 @@ func (c *Client) GetWorkspaceID() (string, error) {
 		return "", c.tokenTypeErr
 	}
 
-	// Non-account tokens have no resolvable workspace ID
-	if c.WorkspaceScopedToken || c.ProjectToken != "" {
+	// Project tokens have no resolvable workspace ID (their -w contradiction
+	// check lives in GetProjectContext, the path every project-token command
+	// resolves through).
+	if c.ProjectToken != "" {
+		c.workspaceResolved = true
+		return "", nil
+	}
+
+	// Workspace-scoped tokens are pinned to their own workspace, so there is
+	// no ID to resolve — but a -w value naming a DIFFERENT workspace is a
+	// contradiction and must fail fast rather than be silently ignored.
+	if c.WorkspaceScopedToken {
+		if err := c.checkWorkspaceHint(); err != nil {
+			return "", err
+		}
 		c.workspaceResolved = true
 		return "", nil
 	}
@@ -537,14 +554,13 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		return TokenTypeUnknown, err
 	}
 
-	// Probe 2: workspace-scoped token
+	// Probe 2: workspace-scoped token. A -w value is NOT validated here —
+	// detection is a probe path used by everything; the contradiction check
+	// happens lazily in GetWorkspaceID (via checkWorkspaceHint).
 	_, err = c.execute(detectWorkspaceTokenQuery, nil)
 	if err == nil {
 		c.tokenType = TokenTypeWorkspace
 		c.WorkspaceScopedToken = true
-		if c.Workspace != "" && c.WarnFn != nil {
-			c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — workspace token is already scoped to a specific workspace")
-		}
 		c.tokenTypeResolved = true
 		return c.tokenType, nil
 	}
@@ -559,14 +575,13 @@ func (c *Client) detectTokenType() (TokenType, error) {
 		if jsonErr := json.Unmarshal(data, &resp); jsonErr != nil {
 			return TokenTypeUnknown, fmt.Errorf("failed to parse project token response: %w", jsonErr)
 		}
+		// A -w value is NOT validated here — the contradiction check happens
+		// lazily in GetProjectContext (via checkWorkspaceHint).
 		if resp.ProjectToken.ProjectID != "" {
 			c.tokenType = TokenTypeProject
 			c.ProjectToken = c.token
 			c.cachedProjectID = resp.ProjectToken.ProjectID
 			c.cachedEnvironmentID = resp.ProjectToken.EnvironmentID
-			if c.Workspace != "" && c.WarnFn != nil {
-				c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — project token is already scoped to a specific project")
-			}
 			c.tokenTypeResolved = true
 			return c.tokenType, nil
 		}
@@ -599,7 +614,8 @@ type projectTokenContext struct {
 
 // GetProjectContext returns the project and environment IDs associated with the project token.
 // Triggers lazy token-type detection if not yet resolved; IDs are cached from probe 3 so no
-// additional API call is made.
+// additional API call is made. When a -w/RAILCTL_WORKSPACE value is set it is validated
+// against the workspace the token actually belongs to (contradictions fail fast).
 func (c *Client) GetProjectContext() (projectID, environmentID string, err error) {
 	if !c.tokenTypeResolved {
 		if _, err := c.detectTokenType(); err != nil {
@@ -612,5 +628,130 @@ func (c *Client) GetProjectContext() (projectID, environmentID string, err error
 	if c.tokenType != TokenTypeProject {
 		return "", "", fmt.Errorf("token is not a project-scoped token")
 	}
+	if err := c.checkWorkspaceHint(); err != nil {
+		return "", "", err
+	}
 	return c.cachedProjectID, c.cachedEnvironmentID, nil
+}
+
+// apiTokenWorkspacesQuery introspects the identity of the workspace a
+// WORKSPACE-scoped token is bound to. The apiToken query is the token's
+// self-introspection endpoint: with a workspace token it returns exactly the
+// one workspace the token is scoped to (with an account token, all of the
+// account's workspaces).
+const apiTokenWorkspacesQuery = `
+query {
+	apiToken {
+		workspaces {
+			id
+			name
+		}
+	}
+}
+`
+
+// apiTokenWorkspacesResponse represents the response from apiTokenWorkspacesQuery.
+type apiTokenWorkspacesResponse struct {
+	APIToken struct {
+		Workspaces []workspaceEntry `json:"workspaces"`
+	} `json:"apiToken"`
+}
+
+// projectTokenWorkspaceQuery introspects the identity of the workspace a
+// PROJECT-scoped token is contained in. The direct workspace(id) query is
+// denied for project tokens; the nested path through the token's own project
+// is the only sanctioned route.
+const projectTokenWorkspaceQuery = `
+query {
+	projectToken {
+		project {
+			workspace {
+				id
+				name
+			}
+		}
+	}
+}
+`
+
+// projectTokenWorkspaceResponse represents the response from projectTokenWorkspaceQuery.
+type projectTokenWorkspaceResponse struct {
+	ProjectToken struct {
+		Project struct {
+			Workspace workspaceEntry `json:"workspace"`
+		} `json:"project"`
+	} `json:"projectToken"`
+}
+
+// currentWorkspace resolves the identity (id, name) of the workspace the
+// current workspace- or project-scoped token is bound to: workspace tokens
+// self-identify via apiToken, project tokens via the nested path through
+// their own project (the direct workspace(id) query is denied for them).
+// Returns empty strings without error only if the API unexpectedly reports
+// no workspace. The result is cached; at most one API call is made per client.
+func (c *Client) currentWorkspace() (id, name string, err error) {
+	if c.wsIdentityFetched {
+		return c.wsIdentityID, c.wsIdentityName, nil
+	}
+
+	var ws workspaceEntry
+	if c.ProjectToken != "" {
+		data, err := c.execute(projectTokenWorkspaceQuery, nil)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to introspect the token's workspace: %w", err)
+		}
+		var resp projectTokenWorkspaceResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return "", "", fmt.Errorf("failed to parse workspace identity response: %w", err)
+		}
+		ws = resp.ProjectToken.Project.Workspace
+	} else {
+		data, err := c.execute(apiTokenWorkspacesQuery, nil)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to introspect the token's workspace: %w", err)
+		}
+		var resp apiTokenWorkspacesResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return "", "", fmt.Errorf("failed to parse workspace identity response: %w", err)
+		}
+		if len(resp.APIToken.Workspaces) > 0 {
+			ws = resp.APIToken.Workspaces[0]
+		}
+	}
+
+	c.wsIdentityID = ws.ID
+	c.wsIdentityName = ws.Name
+	c.wsIdentityFetched = true
+	return c.wsIdentityID, c.wsIdentityName, nil
+}
+
+// checkWorkspaceHint validates the -w/RAILCTL_WORKSPACE value against the
+// workspace the token is actually scoped to. A matching value (by ID, exact
+// name, or unique substring) proceeds silently; a mismatch is a
+// contradiction and fails fast. Purely defensively, if the API reports no
+// workspace identity at all, it falls back to the historical
+// warn-and-proceed with a note that verification was impossible. The check
+// runs at most once per client and is a no-op without a -w value.
+func (c *Client) checkWorkspaceHint() error {
+	if c.Workspace == "" || c.wsHintChecked {
+		return nil
+	}
+	id, name, err := c.currentWorkspace()
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		if c.WarnFn != nil {
+			c.WarnFn("Warning: -w/RAILCTL_WORKSPACE ignored — the token is already scoped to a specific workspace (identity could not be verified)")
+		}
+		c.wsHintChecked = true
+		return nil
+	}
+	if c.Workspace != id {
+		if _, _, rErr := resolver.ResolveWithName(c.Workspace, []resolver.Resource{{ID: id, Name: name}}); rErr != nil {
+			return fmt.Errorf("token is scoped to workspace '%s' but -w/--workspace '%s' was given — refusing to proceed", name, c.Workspace)
+		}
+	}
+	c.wsHintChecked = true
+	return nil
 }

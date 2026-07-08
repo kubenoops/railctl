@@ -557,17 +557,16 @@ func TestGetWorkspaceID_Warnings(t *testing.T) {
 		workspaceHint   string
 		wantWarnContain string
 	}{
+		// (Workspace token + -w is no longer a warning: contradictions fail
+		// fast and matches proceed silently — see
+		// TestCheckWorkspaceHint_WorkspaceToken.)
 		{
-			name:            "workspace token + -w flag prints warning",
-			workspaceWorks:  true,
-			workspaceHint:   "my-team",
-			wantWarnContain: "workspace token is already scoped",
-		},
-		{
-			name:            "project token + -w flag prints warning",
-			projectWorks:    true,
-			workspaceHint:   "my-team",
-			wantWarnContain: "project token is already scoped",
+			// Project tokens no longer warn here: their -w contradiction
+			// check lives in GetProjectContext (see
+			// TestCheckWorkspaceHint_ProjectToken).
+			name:          "project token + -w flag prints no warning",
+			projectWorks:  true,
+			workspaceHint: "my-team",
 		},
 		{
 			name:           "workspace token without -w flag prints no warning",
@@ -600,6 +599,175 @@ func TestGetWorkspaceID_Warnings(t *testing.T) {
 				if strings.Contains(stderr, "Warning:") {
 					t.Errorf("expected no warning, got: %q", stderr)
 				}
+			}
+		})
+	}
+}
+
+// makeWorkspaceIdentityServer simulates a workspace-scoped token that
+// self-identifies via the apiToken query. Probe 1 (me.workspaces) and probe
+// 3 (Project-Access-Token) are denied; the plain projects listing (probe 2)
+// succeeds; the apiToken introspection returns the single workspace (wsID,
+// wsName), or none at all when hasIdentity is false (defensive path).
+func makeWorkspaceIdentityServer(t *testing.T, wsID, wsName string, hasIdentity bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+
+		// apiToken introspection must be dispatched before the probe-1
+		// denial below — both query bodies contain "workspaces".
+		if strings.Contains(bodyStr, "apiToken") {
+			if !hasIdentity {
+				w.Write([]byte(`{"data":{"apiToken":{"workspaces":[]}}}`))
+				return
+			}
+			fmt.Fprintf(w, `{"data":{"apiToken":{"workspaces":[{"id":%q,"name":%q}]}}}`, wsID, wsName)
+			return
+		}
+
+		if r.Header.Get("Project-Access-Token") != "" || strings.Contains(bodyStr, "workspaces") {
+			w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
+			return
+		}
+
+		// Probe 2: plain projects listing succeeds → workspace token.
+		w.Write([]byte(`{"data":{"projects":{"edges":[]}}}`))
+	}))
+}
+
+// makeProjectTokenIdentityServer simulates a project-scoped token contained
+// in workspace (wsID, wsName). Bearer probes are denied; the detection query
+// and the nested workspace-identity query both answer under the
+// Project-Access-Token header.
+func makeProjectTokenIdentityServer(t *testing.T, wsID, wsName string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+
+		if r.Header.Get("Project-Access-Token") == "" {
+			w.Write([]byte(`{"errors":[{"message":"Not Authorized"}]}`))
+			return
+		}
+		if strings.Contains(bodyStr, "workspace") {
+			fmt.Fprintf(w, `{"data":{"projectToken":{"project":{"workspace":{"id":%q,"name":%q}}}}}`, wsID, wsName)
+			return
+		}
+		// Detection probe 3.
+		w.Write([]byte(`{"data":{"projectToken":{"projectId":"proj-123","environmentId":"env-456"}}}`))
+	}))
+}
+
+func TestCheckWorkspaceHint_WorkspaceToken(t *testing.T) {
+	tests := []struct {
+		name        string
+		hint        string
+		hasIdentity bool
+		wantErr     bool
+		wantWarn    string
+	}{
+		{name: "no hint proceeds silently", hint: "", hasIdentity: true},
+		{name: "matching name proceeds silently", hint: "acme", hasIdentity: true},
+		{name: "matching id proceeds silently", hint: "ws-123", hasIdentity: true},
+		{name: "matching substring proceeds silently", hint: "acm", hasIdentity: true},
+		{name: "mismatch fails fast", hint: "other-team", hasIdentity: true, wantErr: true},
+		{
+			name:        "missing identity falls back to warning (defensive)",
+			hint:        "other-team",
+			hasIdentity: false,
+			wantWarn:    "could not be verified",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := makeWorkspaceIdentityServer(t, "ws-123", "acme", tt.hasIdentity)
+			defer server.Close()
+
+			c := NewClient("test-token")
+			c.apiURL = server.URL
+			c.Workspace = tt.hint
+			var buf bytes.Buffer
+			c.WarnFn = func(msg string) { fmt.Fprintln(&buf, msg) }
+
+			id, err := c.GetWorkspaceID()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected contradiction error, got nil")
+				}
+				for _, want := range []string{"scoped to workspace", "acme", tt.hint} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q does not contain %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if id != "" {
+				t.Errorf("expected empty workspace ID for workspace token, got %q", id)
+			}
+			if tt.wantWarn != "" {
+				if !strings.Contains(buf.String(), tt.wantWarn) {
+					t.Errorf("expected warning containing %q, got: %q", tt.wantWarn, buf.String())
+				}
+			} else if buf.Len() != 0 {
+				t.Errorf("expected no warning, got: %q", buf.String())
+			}
+		})
+	}
+}
+
+func TestCheckWorkspaceHint_ProjectToken(t *testing.T) {
+	tests := []struct {
+		name    string
+		hint    string
+		wantErr bool
+	}{
+		{name: "no hint proceeds silently", hint: ""},
+		{name: "matching name proceeds silently", hint: "acme"},
+		{name: "matching id proceeds silently", hint: "ws-123"},
+		{name: "matching substring proceeds silently", hint: "acm"},
+		{name: "mismatch fails fast", hint: "other-team", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := makeProjectTokenIdentityServer(t, "ws-123", "acme")
+			defer server.Close()
+
+			c := NewClient("test-token")
+			c.apiURL = server.URL
+			c.Workspace = tt.hint
+			var buf bytes.Buffer
+			c.WarnFn = func(msg string) { fmt.Fprintln(&buf, msg) }
+
+			projectID, environmentID, err := c.GetProjectContext()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected contradiction error, got nil")
+				}
+				for _, want := range []string{"scoped to workspace", "acme", tt.hint} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error %q does not contain %q", err.Error(), want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if projectID != "proj-123" || environmentID != "env-456" {
+				t.Errorf("GetProjectContext() = (%q, %q), want (proj-123, env-456)", projectID, environmentID)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("expected no warning, got: %q", buf.String())
 			}
 		})
 	}

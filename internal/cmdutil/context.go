@@ -6,7 +6,6 @@ package cmdutil
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/resolver"
@@ -49,20 +48,53 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 
 	// --- Project resolution ---
 	var project types.Project
+	// environments caches the environment listing when the project-token
+	// contradiction check below already fetched it, so the resolution step
+	// further down does not repeat the API call.
+	var environments []types.Environment
 	if isProjectToken {
 		projectID, environmentID, err := client.GetProjectContext()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get project context from token: %w", err)
 		}
-		if opts.ProjectName != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -p/RAILCTL_PROJECT ignored — project token is already scoped to a specific project\n")
-		}
-		if opts.NeedEnvironment && opts.EnvironmentName != "" {
-			fmt.Fprintf(os.Stderr, "Warning: -e/RAILCTL_ENVIRONMENT ignored — project token is already scoped to a specific environment\n")
-		}
 		p, err := client.GetProject(projectID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch project from token: %w", err)
+		}
+		// A -p value naming a DIFFERENT project than the token's baked scope
+		// is a contradiction: fail fast instead of silently operating on the
+		// token's project. A value matching the token's project (by ID, exact
+		// name, or unique substring) is consistent and proceeds silently.
+		if opts.ProjectName != "" && opts.ProjectName != p.ID {
+			if _, rErr := resolver.ResolveProject([]types.Project{p}, opts.ProjectName); rErr != nil {
+				return nil, fmt.Errorf(
+					"token is scoped to project '%s' (%s) but -p/--project '%s' was given — refusing to operate on a different project than requested; use a workspace or account token to target other projects",
+					p.Name, p.ID, opts.ProjectName)
+			}
+		}
+		// Same contradiction check for -e against the token's baked
+		// environment. Project tokens CAN list their project's environments,
+		// which yields the baked environment's name for the message.
+		// When NeedEnvironment is false there is no environment target to
+		// contradict, so a stray -e keeps being ignored as before.
+		if opts.NeedEnvironment && opts.EnvironmentName != "" && environmentID != "" {
+			environments, err = client.ListEnvironments(projectID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list environments: %w", err)
+			}
+			for _, env := range environments {
+				if env.ID != environmentID {
+					continue
+				}
+				// ResolveEnvironment matches by exact name, ID, or unique
+				// substring against the single baked environment.
+				if _, rErr := resolver.ResolveEnvironment([]types.Environment{env}, opts.EnvironmentName); rErr != nil {
+					return nil, fmt.Errorf(
+						"token is scoped to environment '%s' (%s) but -e/--environment '%s' was given — refusing to operate on a different environment than requested; use a workspace or account token to target other environments",
+						env.Name, env.ID, opts.EnvironmentName)
+				}
+				break
+			}
 		}
 		project = p
 		opts.ProjectName = p.ID
@@ -90,9 +122,11 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 			return nil, fmt.Errorf("-e/--environment is required. Use -e flag or set RAILCTL_ENVIRONMENT")
 		}
 
-		environments, err := client.ListEnvironments(project.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list environments: %w", err)
+		if environments == nil {
+			environments, err = client.ListEnvironments(project.ID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list environments: %w", err)
+			}
 		}
 
 		env, err := resolver.ResolveEnvironment(environments, opts.EnvironmentName)

@@ -15,7 +15,8 @@ var tokenCreateCmd = &cobra.Command{
 
 The raw token is printed to stdout and shown only once — store it immediately.
 Works with any token type; with a project token the new token is minted within
-that token's own project and environment (-p/-e are ignored in that case).`,
+that token's own project and environment (-p/-e must then match that scope —
+values naming a different project or environment fail fast).`,
 	Args: cobra.ExactArgs(1),
 	Example: `  railctl token create ci --project my-app --environment production
   TOKEN=$(railctl token create ci -p my-app -e production)`,
