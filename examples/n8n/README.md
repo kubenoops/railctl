@@ -5,6 +5,22 @@ Deploy [n8n](https://n8n.io) in **queue mode** on [Railway](https://railway.app)
 Queue mode separates the web UI from workflow execution, giving you independent
 scaling of workers and zero-downtime webhook processing.
 
+## Declarative alternative (one manifest)
+
+The four imperative configs collapse into a single declarative manifest,
+[`stack.yaml`](stack.yaml), reconciled by `railctl apply`:
+
+```bash
+source .envrc                      # token + secrets (see above)
+railctl diff  -f stack.yaml        # exit != 0 while anything would change
+railctl apply -f stack.yaml --await
+railctl diff  -f stack.yaml        # now empty — state matches the manifest
+```
+
+With a project token no `-p`/`-e` flags are needed — the token carries its
+scope. The manifest also manages the postgres volume's daily backup schedule
+declaratively.
+
 ## Architecture
 
 ```
