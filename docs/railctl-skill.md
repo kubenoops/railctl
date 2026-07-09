@@ -531,6 +531,98 @@ railctl diff  -f stack.yaml
 railctl apply -f stack.yaml --await
 ```
 
+### A second worked example (Temporal, incl. a private-registry worker)
+
+The same schema deploying a Temporal cluster — notable extras over the n8n
+example: the **worker image comes from `$env(...)`** (your CI publishes it and
+the tag is injected per release), and its **private-registry pull credentials**
+ride in via the `registry` block, never in the file:
+
+```yaml
+# Temporal stack — single declarative manifest (railctl apply/diff/delete -f).
+#
+# The declarative equivalent of configs/01..04: postgres + temporal server
+# (auto-setup) + web UI + a worker template, one file. Deploy with:
+#
+#   railctl diff  -f stack.yaml     # ALWAYS diff first — exit != 0 while drift exists
+#   railctl apply -f stack.yaml --await
+#   railctl delete -f stack.yaml --yes   # teardown: declared services + volumes
+#
+# Works flag-free under a project token (scope is baked into the token);
+# with a workspace/account token pass -p/-e as usual.
+#
+# Secrets/inputs come from the local environment at apply time ($env(...)):
+#   TEMPORAL_POSTGRES_PASSWORD              — database password
+#   TEMPORAL_WORKER_IMAGE                   — your worker image (Temporal SDK build)
+#   TEMPORAL_TASK_QUEUE                     — the worker's task queue
+#   REGISTRY_USERNAME / REGISTRY_PASSWORD   — read-only pull credentials if the
+#                                             worker image is in a private registry
+
+services:
+  - name: temporal-postgres
+    image: postgres:15
+    deploy:
+      restartPolicy: ON_FAILURE
+      maxRetries: 5
+    networking:
+      tcpProxy:
+        port: 5432
+    volume:
+      mountPath: /var/lib/postgresql/data
+      backupSchedules: [daily]
+    variables:
+      POSTGRES_USER: "temporal"
+      POSTGRES_PASSWORD: "$env(TEMPORAL_POSTGRES_PASSWORD)"
+      POSTGRES_DB: "temporal"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+
+  - name: temporal-server
+    image: temporalio/auto-setup:1.29.5
+    deploy:
+      restartPolicy: ON_FAILURE
+      maxRetries: 5
+    networking:
+      tcpProxy:
+        port: 7233
+    variables:
+      DB: "postgres12"
+      DB_PORT: "5432"
+      POSTGRES_USER: "${{temporal-postgres.POSTGRES_USER}}"
+      POSTGRES_PWD: "${{temporal-postgres.POSTGRES_PASSWORD}}"
+      POSTGRES_SEEDS: "${{temporal-postgres.RAILWAY_PRIVATE_DOMAIN}}"
+      DYNAMIC_CONFIG_FILE_PATH: "config/dynamicconfig/docker.yaml"
+
+  - name: temporal-ui
+    image: temporalio/ui:2.48.1
+    deploy:
+      restartPolicy: ON_FAILURE
+      maxRetries: 3
+    networking:
+      domain:
+        port: 8080
+    variables:
+      TEMPORAL_ADDRESS: "${{temporal-server.RAILWAY_PRIVATE_DOMAIN}}:7233"
+      TEMPORAL_CORS_ORIGINS: "http://localhost:3000"
+      PORT: "8080"
+
+  # Template for your own Temporal worker — replace the image with your build
+  # from the Temporal SDK, published by YOUR CI (railctl treats Railway as a
+  # compute provider: images are always prebuilt references).
+  - name: temporal-worker
+    image: "$env(TEMPORAL_WORKER_IMAGE)"
+    deploy:
+      restartPolicy: ON_FAILURE
+      maxRetries: 10
+      replicas: 2
+    variables:
+      TEMPORAL_ADDRESS: "${{temporal-server.RAILWAY_PRIVATE_DOMAIN}}:7233"
+      TEMPORAL_NAMESPACE: "default"
+      TEMPORAL_TASK_QUEUE: "$env(TEMPORAL_TASK_QUEUE)"
+    registry:
+      username: "$env(REGISTRY_USERNAME)"
+      password: "$env(REGISTRY_PASSWORD)"
+```
+
 ### The three verbs
 
 | Command | Does | Exit |
