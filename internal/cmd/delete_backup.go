@@ -58,6 +58,11 @@ func runDeleteBackup(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A backup is data: a delete-protected environment shields it.
+	if err := cmdutil.RequireDeletable(client, ctx.Project.ID, ctx.Environment, "backup", backupID); err != nil {
+		return err
+	}
+
 	if !deleteBackupYes {
 		fmt.Printf("Are you sure you want to delete backup '%s' from volume '%s'? [y/N]: ", backupID, vol.Volume.Name)
 		reader := bufio.NewReader(cmd.InOrStdin())

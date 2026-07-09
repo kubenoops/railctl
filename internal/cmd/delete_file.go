@@ -82,6 +82,13 @@ func runDeleteFile(cmd *cobra.Command, args []string) error {
 	projectID := ctx.Project.ID
 	envID := ctx.Environment.ID
 
+	// delete -f tears down services (structure) and their volumes (data), both
+	// shielded by a delete-protected environment. Guard the whole operation up
+	// front so a protected environment is never partially torn down.
+	if err := cmdutil.RequireDeletable(client, projectID, ctx.Environment, "resources", "declared by this manifest"); err != nil {
+		return err
+	}
+
 	// 3. Compute what exists: intersect declared services with live state.
 	services, err := client.ListServices(projectID, envID)
 	if err != nil {

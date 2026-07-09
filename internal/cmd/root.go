@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/output"
 )
 
@@ -68,6 +69,17 @@ Examples:
 	// its own "Error: …" line first and every failure appears twice.
 	SilenceErrors: true,
 	Version:       version,
+	// PersistentPreRunE runs before every subcommand's RunE. It publishes the
+	// resolved output mode so cmdutil's advisory hints fire only in text mode
+	// (never when emitting json/yaml a caller may be piping).
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		format, err := getOutputFormat()
+		if err != nil {
+			return err
+		}
+		cmdutil.OutputIsText = format == output.FormatTable
+		return nil
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

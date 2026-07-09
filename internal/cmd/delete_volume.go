@@ -60,6 +60,11 @@ func runDeleteVolume(cmd *cobra.Command, args []string) error {
 	volumeID := vol.Volume.ID
 	volumeName := vol.Volume.Name
 
+	// A volume is data: a delete-protected environment shields it.
+	if err := cmdutil.RequireDeletable(client, ctx.Project.ID, ctx.Environment, "volume", volumeName); err != nil {
+		return err
+	}
+
 	// Confirm deletion unless --yes is specified
 	if !deleteVolumeYes {
 		fmt.Printf("Are you sure you want to delete volume '%s'? This will delete all data. [y/N]: ", volumeName)

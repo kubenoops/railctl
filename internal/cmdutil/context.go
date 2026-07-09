@@ -61,6 +61,10 @@ func ResolveContext(client api.APIClient, opts ResolveOpts) (*Context, error) {
 		return nil, err
 	}
 
+	// Every command that resolves a context is by definition project-scoped, so
+	// this is the one place to nudge broad-token users toward a project token.
+	maybeLeastPrivilegeHint(isProjectToken)
+
 	// --- Project resolution ---
 	var project types.Project
 	// environments caches the environment listing when the project-token

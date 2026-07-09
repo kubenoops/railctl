@@ -69,6 +69,30 @@ func CheckProjectDeleteProtection(client api.APIClient, project types.Project, e
 	return nil
 }
 
+// RequireDeletable enforces environment delete-protection for the deletion of a
+// single data/structure resource (a service, volume, or backup). If the
+// environment carries a truthy DELETE_PROTECTION shared variable, the delete is
+// refused with a message that names the resource and points at the unprotect
+// command. A read failure fails closed (the delete is refused).
+//
+// kind/name label the resource for the message, e.g. ("service", "api"). This
+// is the per-resource sibling of CheckDeleteProtection (which guards deleting
+// the environment itself): a protected environment shields its data (volumes,
+// backups) and structure (services), while still allowing configuration
+// (domains, variables) and operational (rollback) deletes, which do not call
+// this guard.
+func RequireDeletable(client api.APIClient, projectID string, env types.Environment, kind, name string) error {
+	value, protected, err := environmentDeleteProtection(client, projectID, env)
+	if err != nil {
+		return err
+	}
+	if protected {
+		return fmt.Errorf("cannot delete %s '%s': environment '%s' is delete-protected (%s=%s) — its data and structure are shielded; run 'railctl unprotect environment %s' first to allow deletion",
+			kind, name, env.Name, DeleteProtectionVar, value, env.Name)
+	}
+	return nil
+}
+
 // SetDeleteProtection sets or clears the DELETE_PROTECTION shared variable on an
 // environment. When protect is true it writes DELETE_PROTECTION=true; when false
 // it writes DELETE_PROTECTION=false (a falsy value the guard treats as

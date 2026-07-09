@@ -50,6 +50,11 @@ func runDeleteService(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// A service is structure: a delete-protected environment shields it.
+	if err := cmdutil.RequireDeletable(client, ctx.Project.ID, ctx.Environment, "service", ctx.Service.Name); err != nil {
+		return err
+	}
+
 	// Confirmation
 	if !deleteServiceYes {
 		fmt.Printf("Are you sure you want to delete service '%s' in %s/%s? (y/N): ", ctx.Service.Name, ctx.Project.Name, ctx.Environment.Name)

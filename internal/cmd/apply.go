@@ -132,6 +132,25 @@ func runApply(cmd *cobra.Command, args []string) error {
 		cs.Environment = diff.ComputeEnvironment(cfg.DeleteProtection, liveProtected)
 	}
 
+	// 5c. Prune deletes services (structure); a delete-protected environment
+	// shields them. If the diff would prune anything, refuse before applying —
+	// checked against the environment's LIVE protection state, so unprotect
+	// first (imperatively, or a prior apply) to allow the prune.
+	if applyPrune {
+		pruneHasDeletes := false
+		for _, rc := range cs.Changes {
+			if rc.Type == diff.ChangeDelete {
+				pruneHasDeletes = true
+				break
+			}
+		}
+		if pruneHasDeletes {
+			if err := cmdutil.RequireDeletable(client, projectID, ctx.Environment, "service(s) via --prune", "listed in the diff"); err != nil {
+				return err
+			}
+		}
+	}
+
 	// Determine color support.
 	useColor := !applyNoColor && (applyColor || diff.IsColorSupported(os.Stdout))
 
