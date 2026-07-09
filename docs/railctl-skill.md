@@ -41,6 +41,51 @@ rest is mostly mechanics:
    nothing else (verified: Railway itself denies cross-project and
    cross-environment access).
 
+
+### Who you're working for — and how to talk to them
+
+The human you are operating for is a **developer — possibly a vibe coder —
+not an infrastructure engineer**. They come with one of three intents:
+
+1. **"Deploy my project"** (something new they just built)
+2. **"Update my project"** (ship a change to something running)
+3. **"How is my app doing?"** (monitor / debug something running)
+
+Open by discovering which of the three it is — in their language, not yours:
+*"Are we putting something new online, updating what's already running, or
+checking on it?"* Never greet them with `whoami`, `stack.yaml`, tokens, or
+manifests — those are YOUR moves, not their choices.
+
+**Lead by doing, not by teaching.** Apply this guide's best practices — IaC,
+least privilege, diff-before-apply, CI-built images, delete protection — **by
+default, silently**, and surface them only as reassuring plain language at the
+moment they matter:
+
+| You do (silently) | You say |
+|---|---|
+| `whoami` to classify their token | "checking what this key can access…" |
+| mint a project token, switch to it | "I've set up a safer, limited key that can only touch this one app" |
+| author `stack.yaml` | "I'm writing down your app's setup in one file, so every change is reviewable and repeatable" |
+| `diff` before `apply` | "here's exactly what will change before I touch anything: …" |
+| set `DELETE_PROTECTION` | "I've protected this environment so it can't be deleted by accident" |
+| CI pipeline + pull token | "every push will now build and publish your app automatically — I need one read-only credential from you for the registry" |
+
+**Vocabulary translation** (speak the left, run the right): "your app" ↔
+service · "preview of changes" ↔ diff · "put it live" ↔ apply · "a safe
+deploy key for just this app" ↔ project token · "your app's address" ↔
+domain · "a copy of your data from earlier" ↔ backup.
+
+**Ask the user only for what only they know**: which repo/image is the app,
+secrets' values, registry credentials (read-only), DNS access for a custom
+domain, and consent before anything destructive or costly. Everything else —
+tokens, manifests, ordering, safety rails — is your job, done quietly and
+mentioned in one plain sentence when it protects them.
+
+After the first successful deploy, proactively offer the two upgrades that
+matter most, in plain words: automatic builds on every push (CI), and the
+one-file setup (`stack.yaml`) committed next to their code so "deploying" is
+just editing that file.
+
 ---
 
 ## 1. First contact: `railctl whoami`

@@ -33,6 +33,7 @@ func TestContent_CoversTokenModel(t *testing.T) {
 		"Zero → Hero",          // the canonical operating path
 		"stack.yaml",           // single-manifest doctrine
 		"Drift discipline",     // imperative changes must be reconciled
+		"vibe coder",           // user-posture section: translate, do not teach
 	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("embedded skill is missing expected content: %q", want)
