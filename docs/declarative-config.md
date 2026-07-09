@@ -104,6 +104,9 @@ flags are needed (the scope is baked into the token).
 project: my-app
 environment: production
 
+# Optional environment-level delete protection (see below).
+deleteProtection: true
+
 # One or more services
 services:
   - name: api
@@ -149,6 +152,33 @@ Railway project name. Can be overridden by the `-p` CLI flag or the `RAILCTL_PRO
 #### `environment` (optional, string)
 
 Railway environment name. Can be overridden by the `-e` CLI flag or the `RAILCTL_ENVIRONMENT` environment variable.
+
+#### `deleteProtection` (optional, boolean)
+
+Environment-level delete-protection toggle. It manages the environment's
+`DELETE_PROTECTION` shared (serviceless) variable, which the deletion guard reads
+to refuse `delete environment` / `delete project`.
+
+It is a **three-state** field — the distinction between "explicit false" and
+"omitted" is deliberate:
+
+| Value                    | Behaviour on `apply` / `diff`                                                      |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `deleteProtection: true` | Ensures `DELETE_PROTECTION` is set truthy (the environment is protected).         |
+| `deleteProtection: false`| Ensures `DELETE_PROTECTION` is cleared (written falsy — the environment is open).  |
+| *omitted*                | **Leaves the live protection state alone.** Never auto-unprotects.                 |
+
+The omit-means-leave-alone rule is the same safety principle used for
+`customDomains`: a dropped line must never silently weaken a safety control. If
+you want to remove protection you must say so explicitly (`deleteProtection:
+false`, or the imperative `railctl unprotect environment`).
+
+The write is clobber-safe — it merges into the environment's existing shared
+variables, so other shared variables are preserved. Setting protection requires
+an account/workspace token (a project token cannot write shared variables).
+
+Imperative equivalents: `railctl protect environment <env>` and `railctl
+unprotect environment <env>`.
 
 #### `services` (required, array)
 
@@ -340,7 +370,7 @@ configs/
 └── 03-api.yaml
 ```
 
-If multiple files specify `project` or `environment`, they must agree (same value) or loading fails with a conflict error.
+If multiple files specify `project`, `environment`, or `deleteProtection`, they must agree (same value) or loading fails with a conflict error. A file that omits one of these fields never overrides another file that sets it.
 
 ## Examples
 

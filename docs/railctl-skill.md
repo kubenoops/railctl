@@ -330,16 +330,24 @@ here, so private images come from **your** CI:
 anything (production from day one; staging once real data lands), arm the
 deletion tripwire:
 
-1. Railway dashboard → the project → the environment → **Shared Variables**
-   → add `DELETE_PROTECTION` = `true`. (Shared/environment-level — not on a
-   service. The CLI cannot set shared variables yet, so this is a dashboard
-   step; railctl reads and enforces it.)
-2. Verify: `railctl delete environment <env> --yes` must refuse with
+1. Imperatively: `railctl protect environment <env> -p my-app`. This sets the
+   environment-level (shared, serviceless) `DELETE_PROTECTION` variable to
+   `true` — clobber-safe, so it preserves every other shared variable. Undo it
+   with `railctl unprotect environment <env> -p my-app`. Both require an
+   account/workspace token (a project token cannot write shared variables).
+2. Declaratively: add `deleteProtection: true` at the **top level** of the
+   manifest (a sibling of `project`/`environment`/`services`, not inside a
+   service). `apply` then ensures the flag is set; `deleteProtection: false`
+   clears it. **Omitting the field leaves the live state alone** — a dropped
+   line never silently unprotects an environment (same safety principle as
+   `customDomains`).
+3. Verify: `railctl delete environment <env> --yes` must refuse with
    `environment '…' is delete-protected` — and so must `delete project`.
 
-There is **no bypass flag**; the only way to delete is consciously unsetting
-the variable first — which is exactly the two-step friction you want on
-critical environments. Also: declare `backupSchedules` on stateful volumes,
+There is **no bypass flag**; the only way to delete is consciously unprotecting
+first (`unprotect environment`, or `deleteProtection: false`) — which is exactly
+the two-step friction you want on critical environments. Also: declare
+`backupSchedules` on stateful volumes,
 rotate tokens periodically (§6 Tokens), and tear down disposable
 environments with `delete -f`.
 
@@ -377,6 +385,9 @@ formats stay machine-readable: listings emit `[]` on empty, never prose.
 # stack.yaml — one file, the whole environment
 project: my-app          # optional; -p / env var / token scope override
 environment: production  # optional; same
+deleteProtection: true   # optional; ensures DELETE_PROTECTION on this env.
+                         # false clears it; OMITTING leaves live state alone
+                         # (a dropped line never silently unprotects).
 
 services:
   - name: api
@@ -412,6 +423,35 @@ services:
       username: "$env(REGISTRY_USER)"
       password: "$env(REGISTRY_PASS)"
 ```
+
+### Wire services with Railway reference variables, never hardcoded endpoints
+
+When one service needs another's host, port, or URL, **always express it as a
+Railway reference variable** — `${{other-service.VAR}}`,
+`${{other-service.RAILWAY_PRIVATE_DOMAIN}}` — rather than a literal hostname,
+port, or URL. This is a standing directive, not a style preference:
+
+- **They resolve at deploy time**, so a value that only exists after the target
+  is provisioned (an internal domain, a generated port) is always correct.
+- **They survive renames and re-provisioning** — a hardcoded `api.internal:3000`
+  breaks the moment the target changes; `${{api.RAILWAY_PRIVATE_DOMAIN}}`
+  follows it.
+- **They draw the dependency graph in Railway's UI.** A reference creates a
+  visible edge between the two services; a hardcoded string shows *no edge*, so
+  the topology silently lies and nobody can see what talks to what.
+
+So prefer:
+
+```yaml
+    variables:
+      DATABASE_URL: "${{db.DATABASE_URL}}"
+      REDIS_HOST: "${{redis.RAILWAY_PRIVATE_DOMAIN}}"
+      API_URL: "https://${{api.RAILWAY_PRIVATE_DOMAIN}}"
+```
+
+over any form that bakes in `db.internal`, a fixed port, or a full literal URL.
+Reserve literals for genuinely external endpoints (third-party APIs) that
+Railway does not own.
 
 ### A complete worked example (n8n queue-mode, four services)
 
@@ -743,6 +783,8 @@ railctl get environments -p my-app            # names visible to any token
 railctl describe environment production -p my-app
 railctl create environment staging -p my-app
 railctl delete environment staging -p my-app --yes   # refuses if delete-protected
+railctl protect environment production -p my-app     # sets DELETE_PROTECTION=true (shared var)
+railctl unprotect environment production -p my-app   # clears it (DELETE_PROTECTION=false)
 ```
 
 ### Services — any token, within scope
@@ -768,8 +810,11 @@ railctl delete variable KEY -s api --yes
 ```
 `${{service.VAR}}` references are stored as-is and resolve on Railway.
 Shared (environment-level) variables are readable by railctl (they power
-`DELETE_PROTECTION`) but **cannot be written via the CLI yet** — set them in
-the Railway dashboard.
+`DELETE_PROTECTION`). There is no general shared-variable write command, but the
+one shared variable that matters operationally — `DELETE_PROTECTION` — is
+managed first-class via `railctl protect`/`unprotect environment` (imperative)
+or the top-level `deleteProtection` manifest field (declarative). Other shared
+variables are still set in the Railway dashboard.
 
 ### Volumes & backups
 ```bash
@@ -831,10 +876,13 @@ Works with any token type; a project token self-mints for its own scope
 - **`DELETE_PROTECTION`**: an environment whose shared (environment-level)
   variable `DELETE_PROTECTION` is truthy (`true`/`1`/`yes`/`on`,
   case-insensitive) cannot be deleted, nor can its project — railctl refuses
-  with **no bypass flag** (`--yes` skips prompts, never protection); unset
-  the variable to allow. Unreadable protection state → deletion refused
-  (fail-closed). Set it on every environment you care about — today via the
-  Railway dashboard (shared variables).
+  with **no bypass flag** (`--yes` skips prompts, never protection); unprotect
+  to allow. Unreadable protection state → deletion refused (fail-closed). Arm it
+  on every environment you care about — imperatively with
+  `railctl protect environment <env>` (undo: `unprotect environment <env>`), or
+  declaratively with the top-level `deleteProtection: true` manifest field
+  (`false` clears it; **omitting it leaves the live state alone** — a dropped
+  line never silently unprotects).
 - `delete project` also refuses while the project still has services —
   delete them (or `delete -f` the manifest) first.
 - Deleting an **environment** destroys its variable values, volume instances,
@@ -855,7 +903,7 @@ Works with any token type; a project token self-mints for its own scope
 | `token is scoped to … but -p/-e/-w '…' was given` | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token. |
 | `cannot … with a project token` | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token. |
 | `… not found — available: a, b, c` | Typo — the listed candidates are what exists. |
-| `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — unset it in the dashboard to allow deletion. |
+| `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion. |
 | Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace. |
 | `diff` "fails" in CI | Exit 1 means drift, by design (like `git diff --exit-code`): `railctl diff -f stack.yaml \|\| railctl apply -f stack.yaml --await`. |
 | Container exits instantly / `startCommand` seems ignored | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
