@@ -41,11 +41,8 @@ func TestApplyDiff_CreateFromFile(t *testing.T) {
 		t.Fatalf("writing config file: %v", err)
 	}
 
-	// 1. diff should show changes (exit non-zero because differences detected).
-	r := e.Run("diff", "-f", cfgFile)
-	if r.ExitCode == 0 {
-		t.Fatalf("expected diff to exit non-zero when changes exist, got 0\nstdout: %s", r.Stdout)
-	}
+	// 1. diff should show changes (always exits 0 — a diff is a report).
+	r := e.RunOK(t, "diff", "-f", cfgFile)
 	harness.AssertContains(t, r.Stdout, "create")
 	harness.AssertContains(t, r.Stdout, svcName)
 
@@ -147,10 +144,7 @@ func TestApplyDiff_UpdateService(t *testing.T) {
 	}
 
 	// diff should show image change and new variable.
-	r := e.Run("diff", "-f", cfgFile)
-	if r.ExitCode == 0 {
-		t.Fatalf("expected diff to exit non-zero when changes exist, got 0\nstdout: %s", r.Stdout)
-	}
+	r := e.RunOK(t, "diff", "-f", cfgFile)
 	harness.AssertContains(t, r.Stdout, "nginx:1.25-alpine")
 	harness.AssertContains(t, r.Stdout, "nginx:1.27-alpine")
 	harness.AssertContains(t, r.Stdout, "UPDATED")
@@ -271,11 +265,8 @@ func TestApplyDelete_Roundtrip(t *testing.T) {
 	harness.AssertNotContains(t, r.Stdout, svcA)
 	harness.AssertNotContains(t, r.Stdout, svcB)
 
-	// diff against the same config shows creates again (exit non-zero).
-	r = e.Run("diff", "-f", cfgFile)
-	if r.ExitCode == 0 {
-		t.Fatalf("expected diff to exit non-zero after delete -f, got 0\nstdout: %s", r.Stdout)
-	}
+	// diff against the same config shows creates again (always exits 0).
+	r = e.RunOK(t, "diff", "-f", cfgFile)
 	harness.AssertContains(t, r.Stdout, "create")
 	harness.AssertContains(t, r.Stdout, svcA)
 	harness.AssertContains(t, r.Stdout, svcB)

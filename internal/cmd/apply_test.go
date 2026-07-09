@@ -273,12 +273,9 @@ func TestDiff_ShowsChanges(t *testing.T) {
 	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
-	// diff should return error when changes exist.
-	if err == nil {
-		t.Fatal("expected error indicating differences detected")
-	}
-	if !strings.Contains(err.Error(), "differences detected") {
-		t.Errorf("expected 'differences detected' error, got: %v", err)
+	// diff always succeeds — a diff with changes is a report, not a failure.
+	if err != nil {
+		t.Fatalf("expected diff to succeed, got: %v", err)
 	}
 
 	// Output should contain the diff.

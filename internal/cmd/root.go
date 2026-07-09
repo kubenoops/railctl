@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -80,11 +79,6 @@ func Execute() {
 	})
 
 	if err := rootCmd.Execute(); err != nil {
-		// `diff` with differences is an expected report: exit 1, no error
-		// styling (the diff and summary were already printed).
-		if errors.Is(err, errDiffChanges) {
-			os.Exit(1)
-		}
 		// Display the error to stderr
 		fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
 		os.Exit(1)

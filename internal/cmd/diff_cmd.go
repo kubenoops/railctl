@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -11,11 +10,6 @@ import (
 	"github.com/kubenoops/railctl/internal/config"
 	"github.com/kubenoops/railctl/internal/diff"
 )
-
-// errDiffChanges signals that differences exist: the command must exit
-// non-zero (script/CI-friendly, like `git diff --exit-code`), but this is an
-// expected report, not a failure — Execute() exits 1 without error styling.
-var errDiffChanges = errors.New("differences detected")
 
 var (
 	diffFile    string
@@ -29,7 +23,7 @@ var diffCmd = &cobra.Command{
 	Short: "Show what would change without applying",
 	Long: `Compare a YAML config file against the current Railway state and show the differences.
 
-Exits with code 0 if no changes, 1 if there are changes (useful for CI/CD pipelines).`,
+Always exits 0 (a diff with changes is a report, not a failure).`,
 	Example: `  # Show diff for a config file
   railctl diff -f service.yaml -p my-project -e production
 
@@ -106,10 +100,6 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// 7. Print summary.
 	fmt.Fprintf(os.Stdout, "\n%s\n", cs.Summary())
 
-	// 8. If changes exist, exit with code 1 (expected report, not a failure).
-	if cs.HasChanges() {
-		return errDiffChanges
-	}
-
+	// A diff with changes is a report, not a failure — always exit 0.
 	return nil
 }
