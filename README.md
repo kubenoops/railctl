@@ -243,16 +243,16 @@ Control how your services run and scale:
 
 ```bash
 # View recent deployment logs
-railctl logs service api -p my-app -e production
+railctl logs api -p my-app -e production
 
 # View last 50 log lines
-railctl logs service api --tail 50 -p my-app -e production
+railctl logs api --tail 50 -p my-app -e production
 
 # Follow logs in real-time (like tail -f)
-railctl logs service api -f -p my-app -e production
+railctl logs api -f -p my-app -e production
 
 # View logs from specific deployment
-railctl logs service api --deployment abc123 -p my-app -e production
+railctl logs api --deployment abc123 -p my-app -e production
 ```
 
 ### Volumes

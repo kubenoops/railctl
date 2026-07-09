@@ -51,9 +51,12 @@ not an infrastructure engineer**. They come with one of three intents:
 2. **"Update my project"** (ship a change to something running)
 3. **"How is my app doing?"** (monitor / debug something running)
 
-Open by discovering which of the three it is — in their language, not yours:
-*"Are we putting something new online, updating what's already running, or
-checking on it?"*
+Open by discovering which of the three it is — in their language, not yours.
+**Your literal first question is the three-intent one** — *"Are we putting
+something new online, updating what's already running, or checking on it?"* —
+before any tool-shaped choices (token menus, "do you have a config file?",
+option forms). Those come later, and only if the intent doesn't already
+answer them.
 
 **Abstract railctl itself away.** The user is talking to you, not to a CLI:
 the tool's name, its commands, and its flags stay out of the conversation
@@ -113,6 +116,12 @@ It prints the token's **type** (`account` / `workspace` / `project`) and its
 containment chain (workspace → project → environment, names + ids) without
 ever printing the token value. Everything you may do follows from that type —
 see the capability matrix. In scripts, branch on the `type` field.
+
+**This is a hard gate, not advice.** When a token is handed to you
+mid-conversation, `whoami` is the first command that touches it — before any
+other API call. Do not infer the type from the token's shape, and do not
+hand-roll GraphQL probes to classify it: the one-liner above answers
+everything those would, for free.
 
 ---
 
@@ -667,6 +676,13 @@ railctl diff -f stack.yaml       # exit 0 — truth restored
 is a copy of what it prints. The alternative direction also works — if the
 imperative change was a mistake, `apply` reverts live state to the manifest.
 
+**The loop is `diff → review → apply` EVERY time, not just the first.**
+During iterative troubleshooting it is tempting to edit the manifest and jump
+straight to `apply` — don't: each skipped diff is an unreviewed change, and
+skipping breeds the worse habit of *claiming* sync status from memory. Never
+state "no drift" / "state matches the manifest" to the user without a fresh
+`diff` exit-0 **run after your last apply** to back it.
+
 **Known blind spot:** `diff`/`apply` reconcile only what railctl models
 (services, deploy config, variables, volumes + backup schedules, domains,
 TCP proxies). Configuration made in the **Railway console** that railctl does
@@ -752,8 +768,11 @@ railctl get deployments -s api [--limit N]    # -o json: [] when empty (script-s
 railctl create deployment -s api [--await-completion]    # explicit redeploy
 railctl delete deployment <id> -s api --yes   # rollback if latest; status → REMOVED
 railctl update deployment <id> --set-active   # reactivation — workspace token required
-railctl logs api [--tail N(≤500)] [-f] [--deployment <id>]
+railctl logs api [--tail N(≤500)] [-f] [--deployment <id>]   # logs <service> — one arg
 ```
+If any command errors unexpectedly on syntax, check `railctl <cmd> --help`
+before retrying variations — the help text is authoritative for the installed
+version.
 Deployment statuses: `INITIALIZING → BUILDING → DEPLOYING → SUCCESS`, or
 `FAILED / CRASHED / REMOVED / SKIPPED`. Poll
 `get deployments -o json --limit 1` for the latest status in scripts.
@@ -810,6 +829,8 @@ Works with any token type; a project token self-mints for its own scope
 | `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — unset it in the dashboard to allow deletion. |
 | Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace. |
 | `diff` "fails" in CI | Exit 1 means drift, by design (like `git diff --exit-code`): `railctl diff -f stack.yaml \|\| railctl apply -f stack.yaml --await`. |
+| Container exits instantly / `startCommand` seems ignored | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
+| `logs` prints nothing, no error | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs. |
 | Volume/backup op right after creation says not found | Propagation lag; railctl retries with backoff — re-run if it still misses. |
 | Backup restore "did nothing" | Restore is staged — **deploy the service** to finalize. |
 | Apply cleared backup schedules unexpectedly | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them. |

@@ -109,7 +109,7 @@ The script will:
 railctl get services -p my-n8n -e production
 
 # Check logs
-railctl logs service n8n-primary -p my-n8n -e production
+railctl logs n8n-primary -p my-n8n -e production
 
 # Describe a service
 railctl describe service n8n-primary -p my-n8n -e production
