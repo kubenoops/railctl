@@ -3,7 +3,7 @@
 # The declarative equivalent of configs/01..04: postgres + redis + n8n primary
 # + n8n workers, one file. Deploy with:
 #
-#   railctl diff  -f stack.yaml           # show what would change (exit != 0 if any)
+#   railctl diff  -f stack.yaml           # show what would change
 #   railctl apply -f stack.yaml           # reconcile live state to this manifest
 #   railctl delete -f stack.yaml --yes    # teardown: delete these services + declared volumes
 #

@@ -13,7 +13,7 @@ The four configs collapse into a single declarative manifest,
 
 ```bash
 source .envrc                      # token + secrets (see above)
-railctl diff  -f stack.yaml        # ALWAYS diff first — exit != 0 while drift exists
+railctl diff  -f stack.yaml        # ALWAYS diff first — read what would change
 railctl apply -f stack.yaml --await
 railctl delete -f stack.yaml --yes # declarative teardown
 ```

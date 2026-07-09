@@ -3,7 +3,7 @@
 # The declarative equivalent of configs/01..04: postgres + temporal server
 # (auto-setup) + web UI + a worker template, one file. Deploy with:
 #
-#   railctl diff  -f stack.yaml     # ALWAYS diff first — exit != 0 while drift exists
+#   railctl diff  -f stack.yaml     # ALWAYS diff first — read what would change
 #   railctl apply -f stack.yaml --await
 #   railctl delete -f stack.yaml --yes   # teardown: declared services + volumes
 #

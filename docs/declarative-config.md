@@ -453,11 +453,11 @@ services:
 ### CI/CD Integration
 
 ```bash
-# In CI: check for drift
+# In CI: preview changes (always exits 0; read the summary line for drift —
+# "0 to create, 0 to update, 0 to delete" means in sync)
 railctl diff -f config.yaml -p my-app -e production
-# Exit code 0 = no changes, 1 = drift detected
 
-# Deploy
+# Deploy (idempotent — a no-op when already in sync)
 railctl apply -f config.yaml -p my-app -e production --await
 
 # Dry run in CI to preview changes
