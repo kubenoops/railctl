@@ -40,8 +40,8 @@ func CheckDeleteProtection(client api.APIClient, projectID string, env types.Env
 		return err
 	}
 	if protected {
-		return fmt.Errorf("environment '%s' is delete-protected (%s=%s) — unset the shared variable %s on that environment to allow deletion",
-			env.Name, DeleteProtectionVar, value, DeleteProtectionVar)
+		return fmt.Errorf("environment '%s' is delete-protected (%s=%s) — run 'railctl unprotect environment %s' to allow deletion",
+			env.Name, DeleteProtectionVar, value, env.Name)
 	}
 	return nil
 }
@@ -63,8 +63,8 @@ func CheckProjectDeleteProtection(client api.APIClient, project types.Project, e
 		}
 	}
 	if len(protectedNames) > 0 {
-		return fmt.Errorf("project '%s' contains delete-protected environment(s): %s — unset the shared variable %s on them to allow deletion",
-			project.Name, strings.Join(protectedNames, ", "), DeleteProtectionVar)
+		return fmt.Errorf("project '%s' contains delete-protected environment(s): %s — run 'railctl unprotect environment <name>' on each to allow deletion",
+			project.Name, strings.Join(protectedNames, ", "))
 	}
 	return nil
 }
