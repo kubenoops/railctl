@@ -2,80 +2,9 @@ package sshx
 
 import (
 	"context"
-	"os"
 	"os/exec"
 	"testing"
 )
-
-func TestFingerprint_MatchesSSHKeygen(t *testing.T) {
-	// A real, well-known test key; compare against ssh-keygen if available,
-	// otherwise assert the SHA256: shape and stability.
-	pub := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl test@example"
-
-	fp, err := Fingerprint(pub)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(fp) < len("SHA256:") || fp[:7] != "SHA256:" {
-		t.Fatalf("fingerprint %q is not in SHA256: form", fp)
-	}
-
-	if path, lerr := exec.LookPath("ssh-keygen"); lerr == nil {
-		f, err := os.CreateTemp(t.TempDir(), "key*.pub")
-		if err != nil {
-			t.Fatalf("temp: %v", err)
-		}
-		if _, err := f.WriteString(pub + "\n"); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		f.Close()
-		out, err := exec.Command(path, "-lf", f.Name()).Output()
-		if err != nil {
-			t.Skipf("ssh-keygen -lf failed, skipping cross-check: %v", err)
-		}
-		// Output: "256 SHA256:xxxx comment (ED25519)"
-		if want := parseKeygenFP(string(out)); want != "" && want != fp {
-			t.Errorf("Fingerprint()=%q, ssh-keygen=%q", fp, want)
-		}
-	}
-}
-
-func parseKeygenFP(line string) string {
-	for _, f := range splitFields(line) {
-		if len(f) > 7 && f[:7] == "SHA256:" {
-			return f
-		}
-	}
-	return ""
-}
-
-func splitFields(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == ' ' || r == '\t' || r == '\n' {
-			if cur != "" {
-				out = append(out, cur)
-				cur = ""
-			}
-			continue
-		}
-		cur += string(r)
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
-}
-
-func TestFingerprint_Malformed(t *testing.T) {
-	if _, err := Fingerprint("garbage"); err == nil {
-		t.Error("expected error for malformed key (single field)")
-	}
-	if _, err := Fingerprint("ssh-ed25519 !!!notbase64!!! c"); err == nil {
-		t.Error("expected error for bad base64")
-	}
-}
 
 func TestEnsureSSHAvailable(t *testing.T) {
 	// In CI/dev ssh is normally present; assert no error when it is, and the

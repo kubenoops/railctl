@@ -1,10 +1,7 @@
 package sshx
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -105,92 +102,5 @@ func TestWantTTY(t *testing.T) {
 				t.Errorf("WantTTY(%v,%v,%v) = %v, want %v", tt.hasCommand, tt.stdinTTY, tt.stdoutTTY, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestDiscoverPublicKey_PreferenceOrder(t *testing.T) {
-	dir := t.TempDir()
-	// Write rsa and ecdsa but NOT ed25519; ecdsa is preferred over rsa.
-	mustWrite(t, filepath.Join(dir, "id_rsa.pub"), "ssh-rsa AAAA rsa")
-	mustWrite(t, filepath.Join(dir, "id_ecdsa.pub"), "ecdsa-sha2 AAAA ecdsa")
-
-	got, err := DiscoverPublicKey(dir, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if want := filepath.Join(dir, "id_ecdsa.pub"); got != want {
-		t.Errorf("DiscoverPublicKey picked %q, want %q (ecdsa before rsa)", got, want)
-	}
-}
-
-func TestDiscoverPublicKey_Ed25519First(t *testing.T) {
-	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "id_ed25519.pub"), "ssh-ed25519 AAAA ed")
-	mustWrite(t, filepath.Join(dir, "id_rsa.pub"), "ssh-rsa AAAA rsa")
-
-	got, err := DiscoverPublicKey(dir, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if want := filepath.Join(dir, "id_ed25519.pub"); got != want {
-		t.Errorf("DiscoverPublicKey picked %q, want %q (ed25519 first)", got, want)
-	}
-}
-
-func TestDiscoverPublicKey_NoneFound(t *testing.T) {
-	dir := t.TempDir()
-	_, err := DiscoverPublicKey(dir, "")
-	if err == nil {
-		t.Fatal("expected an error when no key is present")
-	}
-	if !strings.Contains(err.Error(), "ssh-keygen") {
-		t.Errorf("error should point at ssh-keygen, got: %v", err)
-	}
-}
-
-func TestDiscoverPublicKey_IdentityOverride(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "mykey")
-	pub := priv + ".pub"
-	mustWrite(t, pub, "ssh-ed25519 AAAA mine")
-	// A default key is also present but must be ignored in favor of -i.
-	mustWrite(t, filepath.Join(dir, "id_ed25519.pub"), "ssh-ed25519 AAAA default")
-
-	got, err := DiscoverPublicKey(dir, priv)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != pub {
-		t.Errorf("DiscoverPublicKey honored default, got %q, want %q", got, pub)
-	}
-}
-
-func TestDiscoverPublicKey_IdentityDotPubDirect(t *testing.T) {
-	dir := t.TempDir()
-	pub := filepath.Join(dir, "mykey.pub")
-	mustWrite(t, pub, "ssh-ed25519 AAAA mine")
-
-	got, err := DiscoverPublicKey(dir, pub)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != pub {
-		t.Errorf("got %q, want %q", got, pub)
-	}
-}
-
-func TestDiscoverPublicKey_IdentityMissingPub(t *testing.T) {
-	dir := t.TempDir()
-	priv := filepath.Join(dir, "mykey") // no .pub sibling
-	_, err := DiscoverPublicKey(dir, priv)
-	if err == nil {
-		t.Fatal("expected an error when the identity file has no .pub sibling")
-	}
-}
-
-func mustWrite(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
 	}
 }

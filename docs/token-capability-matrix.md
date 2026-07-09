@@ -44,7 +44,7 @@ one. There is no "all environments" variant (verified: mint without
 | Mint project token (`token create`) | ✅ any project | ✅ any project in workspace | ✅ **its own scope only** (self-mint) | `workspace/TestProjectTokens`, `project/TestBoundaries/self_mint` |
 | List / delete project tokens | ✅ | ✅ | ✅ within its project | same |
 | Mint workspace/account token (`apiTokenCreate`) | ✅ (`workspaceId` set → workspace token; omitted → account token) | untested | ❌ (assumed) | direct API probe |
-| Exec / port-forward into a service (`exec`, `port-forward`) | ✅ (personal key) | ✅ (workspace key) | ❌ guard: fail-fast — keys are user/workspace-scoped, never a project | `sshPublicKeyCreate` probe (design `2026-07-09-railctl-exec-port-forward.md`) |
+| Exec / port-forward into a service (`exec`, `port-forward`) | ✅ | ✅ | ✅ | works with **any** token — the token only resolves the instance; auth is by a **pre-registered SSH key** the *user* registers at railway.com/account/ssh-keys (railctl does **not** manage keys). Design `2026-07-09-railctl-exec-port-forward.md` |
 
 ## Scope-boundary enforcement (Railway-side, verified by probe)
 

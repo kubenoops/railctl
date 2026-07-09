@@ -8,9 +8,11 @@
 // service's instance UUID, not a login name.
 //
 // The package deliberately imports nothing from internal/api: it is pure argv
-// construction, local key discovery, and an os/exec shell-out behind a small
-// Runner seam, so all of the risky ssh-shaped logic is unit-testable in
-// isolation without any Railway API and without ever launching ssh in tests.
+// construction and an os/exec shell-out behind a small Runner seam, so all of
+// the risky ssh-shaped logic is unit-testable in isolation without any Railway
+// API and without ever launching ssh in tests. railctl does not manage SSH
+// keys — the user registers their key once at railway.com/account/ssh-keys and
+// ssh authenticates with it (agent / ~/.ssh, or an explicit -i identity file).
 package sshx
 
 import (
@@ -19,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 )
 
@@ -182,71 +183,4 @@ func WantTTY(hasCommand, stdinTTY, stdoutTTY bool) bool {
 		return stdinTTY && stdoutTTY
 	}
 	return stdinTTY
-}
-
-// defaultKeyBasenames are the public-key filenames sshx looks for under
-// ~/.ssh, in Railway's preference order (ed25519 first, then ecdsa, then rsa).
-var defaultKeyBasenames = []string{
-	"id_ed25519.pub",
-	"id_ecdsa.pub",
-	"id_rsa.pub",
-}
-
-// DiscoverPublicKey finds the public key railctl should register and connect
-// with.
-//
-//   - If identityFile is set (from -i/--identity-file) it is honored: the path
-//     is treated as a private key and its ".pub" sibling is the public key
-//     (or the path itself if it already ends in .pub). The .pub must exist.
-//   - Otherwise it scans ~/.ssh for the default key basenames in preference
-//     order and returns the first present one.
-//
-// It returns the public key path. Railway (and railctl) never generate a
-// keypair — if none is found the caller gets an actionable error pointing at
-// ssh-keygen. sshDir is the ~/.ssh directory to scan (parameterized for tests).
-func DiscoverPublicKey(sshDir, identityFile string) (pubKeyPath string, err error) {
-	if identityFile != "" {
-		pub := identityFile
-		if filepath.Ext(identityFile) != ".pub" {
-			pub = identityFile + ".pub"
-		}
-		if !fileExists(pub) {
-			return "", fmt.Errorf("no public key found for identity file %q (looked for %q) — pass a key whose .pub sibling exists, or run ssh-keygen", identityFile, pub)
-		}
-		return pub, nil
-	}
-
-	for _, base := range defaultKeyBasenames {
-		candidate := filepath.Join(sshDir, base)
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-	}
-
-	return "", fmt.Errorf("no SSH key found in %s (looked for %s). Generate one with:\n  ssh-keygen -t ed25519\nthen re-run railctl exec", sshDir, joinBasenames(defaultKeyBasenames))
-}
-
-// DefaultSSHDir returns the current user's ~/.ssh directory.
-func DefaultSSHDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not determine home directory: %w", err)
-	}
-	return filepath.Join(home, ".ssh"), nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func joinBasenames(bases []string) string {
-	out := ""
-	for i, b := range bases {
-		if i > 0 {
-			out += ", "
-		}
-		out += b
-	}
-	return out
 }

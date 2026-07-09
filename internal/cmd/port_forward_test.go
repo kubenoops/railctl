@@ -6,15 +6,15 @@ import (
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/sshx"
+	"github.com/kubenoops/railctl/internal/types"
 )
 
 // setPFEnv wires the global flags + injected seams for a port-forward test and
 // returns a restore func. Mirrors setExecEnv but for the port-forward globals.
-func setPFEnv(t *testing.T, client api.APIClient, runner sshx.Runner, pubKeyPath string) func() {
+func setPFEnv(t *testing.T, client api.APIClient, runner sshx.Runner) func() {
 	t.Helper()
 	origClient := newAPIClient
 	origRunner := pfRunner
-	origDiscover := pfDiscoverPublicKey
 	origToken := token
 	origProject := project
 	origEnv := environment
@@ -30,12 +30,10 @@ func setPFEnv(t *testing.T, client api.APIClient, runner sshx.Runner, pubKeyPath
 	pfAddress = "127.0.0.1"
 	newAPIClient = func(tkn string) api.APIClient { return client }
 	pfRunner = runner
-	pfDiscoverPublicKey = func(identityFile string) (string, error) { return pubKeyPath, nil }
 
 	return func() {
 		newAPIClient = origClient
 		pfRunner = origRunner
-		pfDiscoverPublicKey = origDiscover
 		token = origToken
 		project = origProject
 		environment = origEnv
@@ -45,42 +43,40 @@ func setPFEnv(t *testing.T, client api.APIClient, runner sshx.Runner, pubKeyPath
 	}
 }
 
-func TestRunPortForward_ProjectTokenFailsFast(t *testing.T) {
+// TestRunPortForward_ProjectTokenProceeds asserts the token gate is gone: a
+// project-scoped token no longer fails fast — port-forward resolves the
+// instance and runs ssh, because authentication is by the user's SSH key.
+func TestRunPortForward_ProjectTokenProceeds(t *testing.T) {
 	runner := &fakeRunner{}
-	var registerCalled bool
-	client := &api.MockClient{
-		IsProjectTokenFunc: func() (bool, error) { return true, nil },
-		RegisterSSHKeyFunc: func(name, publicKey, workspaceID string) (api.SSHKey, error) {
-			registerCalled = true
-			return api.SSHKey{}, nil
-		},
-		GetServiceInstanceIDFunc: func(environmentID, serviceID string) (string, error) {
-			t.Error("GetServiceInstanceID must not be called under a project token")
-			return "", nil
-		},
+	client := execTestClient("inst-xyz")
+	// A project-scoped token: ResolveContext derives project/env from the token
+	// (GetProjectContext). port-forward has NO SSH token gate, so it must
+	// proceed to build argv and run ssh.
+	client.IsProjectTokenFunc = func() (bool, error) { return true, nil }
+	client.GetProjectContextFunc = func() (string, string, error) { return "proj-1", "env-1", nil }
+	client.GetProjectFunc = func(id string) (types.Project, error) {
+		return types.Project{ID: "proj-1", Name: "my-project"}, nil
 	}
-	restore := setPFEnv(t, client, runner, writePubKey(t))
+
+	restore := setPFEnv(t, client, runner)
 	defer restore()
 
-	err := runPortForward(portForwardCmd, []string{"api", "5432"})
-	if err == nil {
-		t.Fatal("expected a fail-fast error for a project token")
+	if err := runPortForward(portForwardCmd, []string{"api", "5432"}); err != nil {
+		t.Fatalf("runPortForward must not fail under a project token: %v", err)
 	}
-	if !strings.Contains(err.Error(), "account or workspace token") {
-		t.Errorf("error should explain the token requirement, got: %v", err)
+	if !runner.called {
+		t.Error("port-forward should proceed to run ssh under a project token")
 	}
-	if runner.called {
-		t.Error("ssh must not be launched under a project token")
-	}
-	if registerCalled {
-		t.Error("no key registration must happen under a project token")
+	joined := strings.Join(runner.gotArgv, " ")
+	if !strings.Contains(joined, "inst-xyz@ssh.railway.com") {
+		t.Errorf("argv missing target: %v", runner.gotArgv)
 	}
 }
 
 func TestRunPortForward_BuildsSingleForwardArgv(t *testing.T) {
 	runner := &fakeRunner{}
 	client := execTestClient("inst-xyz")
-	restore := setPFEnv(t, client, runner, writePubKey(t))
+	restore := setPFEnv(t, client, runner)
 	defer restore()
 
 	if err := runPortForward(portForwardCmd, []string{"api", "5432"}); err != nil {
@@ -104,7 +100,7 @@ func TestRunPortForward_BuildsSingleForwardArgv(t *testing.T) {
 func TestRunPortForward_MultipleSpecsOneInvocation(t *testing.T) {
 	runner := &fakeRunner{}
 	client := execTestClient("inst-xyz")
-	restore := setPFEnv(t, client, runner, writePubKey(t))
+	restore := setPFEnv(t, client, runner)
 	defer restore()
 
 	if err := runPortForward(portForwardCmd, []string{"api", "5432", "6379:6379"}); err != nil {
@@ -130,7 +126,7 @@ func TestRunPortForward_MultipleSpecsOneInvocation(t *testing.T) {
 func TestRunPortForward_ThreeFieldRejected(t *testing.T) {
 	runner := &fakeRunner{}
 	client := execTestClient("api-inst")
-	restore := setPFEnv(t, client, runner, writePubKey(t))
+	restore := setPFEnv(t, client, runner)
 	defer restore()
 
 	// The three-field jump form is unsupported (Railway's relay only forwards
@@ -147,12 +143,12 @@ func TestRunPortForward_ThreeFieldRejected(t *testing.T) {
 func TestRunPortForward_InvalidSpecFailsBeforeAPI(t *testing.T) {
 	runner := &fakeRunner{}
 	client := &api.MockClient{
-		IsProjectTokenFunc: func() (bool, error) {
-			t.Error("token gate must not be reached for a malformed spec")
-			return false, nil
+		GetServiceInstanceIDFunc: func(environmentID, serviceID string) (string, error) {
+			t.Error("instance resolution must not be reached for a malformed spec")
+			return "", nil
 		},
 	}
-	restore := setPFEnv(t, client, runner, writePubKey(t))
+	restore := setPFEnv(t, client, runner)
 	defer restore()
 
 	err := runPortForward(portForwardCmd, []string{"api", "not-a-port"})

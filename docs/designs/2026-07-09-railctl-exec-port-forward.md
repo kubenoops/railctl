@@ -11,6 +11,26 @@
 > `[::]` binds are unreachable). The rest of this design (transport, auth, token
 > scope, exec) is accurate and implemented.
 
+> ## ⚠️ CORRECTION (operator decision, 2026-07-09) — in-tool SSH key management removed
+> railctl **no longer registers, discovers, lists, or manages SSH keys** in any
+> way. The user registers their SSH key **once** at
+> [railway.com/account/ssh-keys](https://railway.com/account/ssh-keys); `ssh`
+> then authenticates with it (agent / `~/.ssh` defaults, or an explicit `-i`
+> identity file). The following are **deleted**: the key discovery/registration
+> flow, the `ListSSHKeys`/`RegisterSSHKey` API methods and the `SSHKey` type, and
+> the `sshx` key-discovery/fingerprint helpers.
+>
+> **The token-scope constraint dissolves as a result.** The old
+> account/workspace-only gate existed *only* because key registration is
+> user/workspace-scoped. With registration gone, exec/port-forward authenticate
+> by the pre-registered key and use the token **only** to resolve the service
+> instance — and `serviceInstance(environmentId, serviceId)` resolves under **any
+> token, including a project token** (verified live). So the `IsProjectToken()`
+> fail-fast gate is **removed**: exec and port-forward now work with **any**
+> token. On an ssh auth failure (publickey/permission), the commands print a
+> one-line hint pointing at railway.com/account/ssh-keys. Sections below that
+> describe key registration or the project-token gate are superseded by this note.
+
 # Design: `railctl exec` + `railctl port-forward` — SSH transport to Railway service instances
 
 **Date:** 2026-07-09

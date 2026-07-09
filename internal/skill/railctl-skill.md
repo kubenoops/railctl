@@ -865,13 +865,14 @@ everything after `--` is the remote command, passed verbatim (omit it for an
 interactive shell). railctl shells out to your **local `ssh` binary** and dials
 Railway's global relay (`ssh.railway.com`), which brokers the session into the
 container docker-exec style — **the container needs NO sshd of its own**, but
-you DO need a local `ssh` binary and an SSH key. railctl registers your existing
-public key (`~/.ssh/id_ed25519.pub`, then `id_ecdsa.pub`, then `id_rsa.pub`, or
-the `-i` override) with Railway the first time (idempotent: it skips a key whose
-fingerprint is already registered) and **never generates or deletes keys**.
-**Token scope: exec needs an account or workspace token.** SSH keys attach to a
-user or workspace, never a project, so a **project token fails fast** — it
-cannot register a key. See the design in
+you DO need a local `ssh` binary and an SSH key. **railctl does not manage SSH
+keys** — register your key **once** at
+[railway.com/account/ssh-keys](https://railway.com/account/ssh-keys); ssh then
+authenticates with it (agent / `~/.ssh` defaults, or the `-i` override).
+**Token scope: exec works with ANY token — account, workspace, OR project.** The
+token is used only to resolve the service instance; authentication is by your
+SSH key, not the token. If ssh fails with a publickey/permission error, register
+your key at the URL above and retry. See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
 ### Port-forward — reach a service's ports over SSH (incl. private services)
@@ -886,7 +887,8 @@ kubectl-`port-forward`-style local forwarding over Railway's SSH relay. The
 service is a **positional argument**; every bare positional after it is a port
 spec (multiple `-L` forwards ride **one** ssh connection). It runs in the
 **foreground** and streams until **Ctrl-C**. Same transport and token model as
-`exec` (local `ssh` binary, auto-registered key, no sshd in the container).
+`exec` (local `ssh` binary, your pre-registered SSH key, no sshd in the
+container; works with any token).
 
 **Reaching a private service — you forward directly INTO it.** This is kubectl's
 actual model (`kubectl port-forward pod` targets the pod itself, not a bastion).
@@ -915,10 +917,13 @@ address). A three-field `LOCAL:HOST:REMOTE` spec is rejected.
 > (Postgres, Redis, kube-apiserver with `--bind-address 0.0.0.0`) bind IPv4;
 > ensure yours does if you need to forward to it.
 
-**Token scope: port-forward needs an account or workspace token** (same gate as
-`exec` — a project token cannot register the SSH key and fails fast). Flags:
-`-i/--identity-file`, `--deployment-instance <id>`, `--address` (local bind,
-default `127.0.0.1`; `0.0.0.0` to share on the LAN). See the design in
+**Token scope: port-forward works with ANY token — account, workspace, OR
+project** (same model as `exec`: the token only resolves the instance;
+authentication is by your **pre-registered SSH key**, which you register once at
+[railway.com/account/ssh-keys](https://railway.com/account/ssh-keys) — railctl
+does not manage keys). Flags: `-i/--identity-file`, `--deployment-instance
+<id>`, `--address` (local bind, default `127.0.0.1`; `0.0.0.0` to share on the
+LAN). See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
 ### Domains

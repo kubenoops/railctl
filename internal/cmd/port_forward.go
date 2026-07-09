@@ -21,8 +21,6 @@ var (
 	// pfRunner is the SSH runner used by `railctl port-forward`. Overridable in
 	// tests to assert the argv without ever launching ssh.
 	pfRunner sshx.Runner = sshx.ExecRunner{}
-	// pfDiscoverPublicKey is the key-discovery seam, overridable in tests.
-	pfDiscoverPublicKey = defaultDiscoverPublicKey
 )
 
 // portForwardCmd represents the `railctl port-forward` command.
@@ -36,12 +34,12 @@ connection. Runs in the foreground and streams until you press Ctrl-C.
 railctl shells out to your local 'ssh' binary and dials Railway's global relay
 (ssh.railway.com). The relay brokers the forward into the named service's own
 container — the container needs NO sshd of its own. You DO need a local 'ssh'
-binary and an SSH key registered with Railway (railctl registers your existing
-public key automatically the first time).
+binary and an SSH key you've registered ONCE with Railway at
+https://railway.com/account/ssh-keys (railctl does not manage keys).
 
-Token scope: port-forward needs an ACCOUNT or WORKSPACE token. SSH keys attach
-to a user or workspace, never a project, so a project-scoped token cannot
-register a key and port-forward fails fast under one.
+Token scope: port-forward works with ANY token (account, workspace, or
+project) — the token is used only to resolve the service instance.
+Authentication is by your SSH key, not the token.
 
 Reaching a PRIVATE service: forward directly INTO it — name the private
 service and it works even with no public domain/proxy (kubectl's model: you
@@ -116,20 +114,6 @@ func runPortForward(cmd *cobra.Command, args []string) error {
 	}
 	client := newAPIClient(tkn)
 
-	// --- Token gate (fail fast, BEFORE resolving anything) ---
-	isProject, err := client.IsProjectToken()
-	if err != nil {
-		return err
-	}
-	if isProject {
-		return errors.New("railctl port-forward requires an account or workspace token — SSH keys cannot be registered with a project-scoped token (Railway ties keys to a user/workspace, not a project). Re-run with a workspace or account token.")
-	}
-
-	workspaceID, err := client.GetWorkspaceID()
-	if err != nil {
-		return err
-	}
-
 	// --- Resolve project → environment → service ---
 	rctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),
@@ -151,16 +135,10 @@ func runPortForward(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// --- Ensure the local public key is registered (idempotent) ---
-	pubKeyPath, err := pfDiscoverPublicKey(pfIdentityFile)
-	if err != nil {
-		return err
-	}
-	if err := ensureKeyRegistered(client, pubKeyPath, workspaceID); err != nil {
-		return err
-	}
-
 	// --- Build the ssh argv ---
+	// No key discovery/registration: authentication is by the user's SSH key,
+	// which they register once at https://railway.com/account/ssh-keys. When
+	// -i/--identity-file is unset, ssh uses its own defaults (agent, ~/.ssh).
 	argv := sshx.ForwardArgs(sshx.ForwardOpts{
 		InstanceID:   instanceID,
 		IdentityFile: pfIdentityFile,
@@ -196,6 +174,10 @@ func runPortForward(cmd *cobra.Command, args []string) error {
 		}
 		var exitErr *sshx.ExitError
 		if errors.As(runErr, &exitErr) {
+			// A non-zero ssh exit that we did NOT initiate is often a
+			// publickey/permission failure. Surface the actionable key hint
+			// after ssh's own error, then propagate the exit code.
+			fmt.Fprintln(os.Stderr, sshKeyHint)
 			os.Exit(exitErr.Code)
 		}
 		return runErr

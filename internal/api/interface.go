@@ -51,8 +51,6 @@ type APIClient interface {
 
 	// SSH exec / port-forward
 	GetServiceInstanceID(environmentID, serviceID string) (string, error)
-	RegisterSSHKey(name, publicKey, workspaceID string) (SSHKey, error)
-	ListSSHKeys(workspaceID string) ([]SSHKey, error)
 
 	// Domains
 	ListDomains(projectID, environmentID, serviceID string) (DomainList, error)
