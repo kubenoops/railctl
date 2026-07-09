@@ -49,6 +49,11 @@ type APIClient interface {
 	RemoveDeployment(deploymentID string) error
 	GetDeploymentLogs(deploymentID string, limit int) ([]LogEntry, error)
 
+	// SSH exec / port-forward
+	GetServiceInstanceID(environmentID, serviceID string) (string, error)
+	RegisterSSHKey(name, publicKey, workspaceID string) (SSHKey, error)
+	ListSSHKeys(workspaceID string) ([]SSHKey, error)
+
 	// Domains
 	ListDomains(projectID, environmentID, serviceID string) (DomainList, error)
 	CreateServiceDomain(serviceID, environmentID string, targetPort int) (ServiceDomain, error)

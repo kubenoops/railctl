@@ -853,6 +853,27 @@ Deployment statuses: `INITIALIZING → BUILDING → DEPLOYING → SUCCESS`, or
 `create service` does **not** reliably deploy by itself — trigger explicitly
 with `create deployment` when you need a deterministic first deployment.
 
+### Exec — shell into a service container (SSH)
+```bash
+railctl exec api -p my-project -e production                  # interactive shell (kubectl-exec style)
+railctl exec api -p my-project -e production -- ls -la /data  # one-off command; exit code propagated
+railctl exec api ... -i ~/.ssh/id_ed25519 -- env             # use a specific private key
+railctl exec api ... --deployment-instance <id> -- <cmd>     # target a specific instance id
+```
+The service is a **positional argument** (like `logs <service>`, not `-s`);
+everything after `--` is the remote command, passed verbatim (omit it for an
+interactive shell). railctl shells out to your **local `ssh` binary** and dials
+Railway's global relay (`ssh.railway.com`), which brokers the session into the
+container docker-exec style — **the container needs NO sshd of its own**, but
+you DO need a local `ssh` binary and an SSH key. railctl registers your existing
+public key (`~/.ssh/id_ed25519.pub`, then `id_ecdsa.pub`, then `id_rsa.pub`, or
+the `-i` override) with Railway the first time (idempotent: it skips a key whose
+fingerprint is already registered) and **never generates or deletes keys**.
+**Token scope: exec needs an account or workspace token.** SSH keys attach to a
+user or workspace, never a project, so a **project token fails fast** — it
+cannot register a key. See the design in
+`docs/designs/2026-07-09-railctl-exec-port-forward.md`.
+
 ### Domains
 ```bash
 railctl get domains -s api                    # railway + custom, verification status

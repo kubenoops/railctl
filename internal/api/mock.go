@@ -41,6 +41,11 @@ type MockClient struct {
 	RemoveDeploymentFunc  func(deploymentID string) error
 	GetDeploymentLogsFunc func(deploymentID string, limit int) ([]LogEntry, error)
 
+	// SSH exec / port-forward
+	GetServiceInstanceIDFunc func(environmentID, serviceID string) (string, error)
+	RegisterSSHKeyFunc       func(name, publicKey, workspaceID string) (SSHKey, error)
+	ListSSHKeysFunc          func(workspaceID string) ([]SSHKey, error)
+
 	// Domains
 	ListDomainsFunc             func(projectID, environmentID, serviceID string) (DomainList, error)
 	CreateServiceDomainFunc     func(serviceID, environmentID string, targetPort int) (ServiceDomain, error)
@@ -317,6 +322,27 @@ func (m *MockClient) RemoveDeployment(deploymentID string) error {
 func (m *MockClient) GetDeploymentLogs(deploymentID string, limit int) ([]LogEntry, error) {
 	if m.GetDeploymentLogsFunc != nil {
 		return m.GetDeploymentLogsFunc(deploymentID, limit)
+	}
+	return nil, nil
+}
+
+func (m *MockClient) GetServiceInstanceID(environmentID, serviceID string) (string, error) {
+	if m.GetServiceInstanceIDFunc != nil {
+		return m.GetServiceInstanceIDFunc(environmentID, serviceID)
+	}
+	return "", nil
+}
+
+func (m *MockClient) RegisterSSHKey(name, publicKey, workspaceID string) (SSHKey, error) {
+	if m.RegisterSSHKeyFunc != nil {
+		return m.RegisterSSHKeyFunc(name, publicKey, workspaceID)
+	}
+	return SSHKey{}, nil
+}
+
+func (m *MockClient) ListSSHKeys(workspaceID string) ([]SSHKey, error) {
+	if m.ListSSHKeysFunc != nil {
+		return m.ListSSHKeysFunc(workspaceID)
 	}
 	return nil, nil
 }
