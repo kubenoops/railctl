@@ -119,19 +119,26 @@ type ExecOpts struct {
 	WantTTY bool
 }
 
-// ExecArgs builds the exact `ssh` argv for an exec/interactive session,
-// byte-for-byte mirroring Railway's Rust CLI (native.rs). Flag order:
+// ExecArgs builds the exact `ssh` argv for an exec/interactive session. Flag
+// order:
 //
 //	[-p <port>]  (only when the relay port is non-default)
 //	[-i <identityFile>]
 //	-t | -T
 //	<instanceID>@ssh.railway.com
-//	[-- <cmd> [args...]]   (each command token appended verbatim)
+//	[-- <cmd> [args...]]   (each command token shell-quoted, see below)
 //
-// The command tokens are appended individually with no local shell-join; ssh's
-// own remote tokenization applies. A `--` separator is emitted before the
-// command so remote args that look like flags are never parsed by the local
-// ssh.
+// Remote-command argv preservation (kubectl-consistent): ssh joins every
+// argument after the destination into ONE string and hands it to the remote
+// login shell, which re-tokenizes it. If we appended the tokens verbatim (as
+// Railway's Rust CLI does), a token carrying shell metacharacters would be
+// re-split remotely — e.g. `exec svc -- sh -c 'echo a; echo b'` arrives as
+// `sh -c echo a; echo b`, so the remote `sh -c echo` runs with $0=a and the
+// rest leaks to the outer shell. `railctl exec` advertises kubectl-exec
+// semantics, where the argv the user passed is the argv the container sees, so
+// we single-quote each token: the remote shell then reconstructs the exact
+// tokens. A `--` separator is still emitted so the local ssh never parses a
+// remote arg as one of its own flags.
 func ExecArgs(opts ExecOpts) []string {
 	args := baseArgs(opts.IdentityFile)
 
@@ -145,9 +152,45 @@ func ExecArgs(opts ExecOpts) []string {
 
 	if len(opts.Command) > 0 {
 		args = append(args, "--")
-		args = append(args, opts.Command...)
+		for _, tok := range opts.Command {
+			args = append(args, shellQuote(tok))
+		}
 	}
 	return args
+}
+
+// shellQuote wraps s so a POSIX remote shell reconstructs it as a single token,
+// exactly as passed — the standard "close the quote, escape a literal ', reopen"
+// dance for embedded single quotes. Empty stays as ” (an explicit empty arg).
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	// Fast path: tokens made only of shell-safe characters need no quoting,
+	// keeping the common case (bare command names, flags, paths) readable.
+	safe := true
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' ||
+			r == '.' || r == '/' || r == ':' || r == '@' || r == '%' || r == '+' || r == ',' || r == '=') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	out := make([]byte, 0, len(s)+2)
+	out = append(out, '\'')
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\'' {
+			out = append(out, '\'', '\\', '\'', '\'')
+			continue
+		}
+		out = append(out, s[i])
+	}
+	out = append(out, '\'')
+	return string(out)
 }
 
 // baseArgs emits the relay port (only when non-default) and the identity file

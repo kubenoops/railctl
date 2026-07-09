@@ -70,6 +70,19 @@ func TestExecArgs(t *testing.T) {
 				"--", "whoami",
 			},
 		},
+		{
+			// kubectl-consistent argv preservation: a token carrying shell
+			// metacharacters is single-quoted so the remote shell reconstructs
+			// it as ONE token instead of re-splitting it.
+			name: "sh -c pipeline is quoted so remote argv survives",
+			opts: ExecOpts{InstanceID: "inst-9", Command: []string{"sh", "-c", "echo a; echo b"}, WantTTY: false},
+			want: []string{
+				"-o", "StrictHostKeyChecking=accept-new",
+				"-T",
+				"inst-9@ssh.railway.com",
+				"--", "sh", "-c", "'echo a; echo b'",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -79,6 +92,24 @@ func TestExecArgs(t *testing.T) {
 				t.Errorf("ExecArgs() =\n  %#v\nwant\n  %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", "''"},
+		{"whoami", "whoami"},               // fast path: no quoting
+		{"/etc/hostname", "/etc/hostname"}, // paths stay bare
+		{"echo a; echo b", "'echo a; echo b'"},
+		{"a b", "'a b'"},
+		{`it's`, `'it'\''s'`}, // embedded single quote: close, escape, reopen
+	}
+	for _, tt := range tests {
+		if got := shellQuote(tt.in); got != tt.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
