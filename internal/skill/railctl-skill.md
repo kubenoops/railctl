@@ -80,7 +80,7 @@ moment they matter:
 | mint a project token, switch to it | "I've set up a safer, limited key that can only touch this one app" |
 | author `stack.yaml` | "I'm writing down your app's setup in one file, so every change is reviewable and repeatable" |
 | `diff` before `apply` | "here's exactly what will change before I touch anything: …" |
-| set `DELETE_PROTECTION` | "I've protected this environment so it can't be deleted by accident" |
+| set `DELETE_PROTECTION` | "I've locked this environment so its data and services can't be deleted by accident — you can still ship, tweak config, and roll back freely" |
 | CI pipeline + pull token | "every push will now build and publish your app automatically — I need one read-only credential from you for the registry" |
 
 **Tool-speak translation** (say the left, run the right): "preview of the
@@ -215,6 +215,11 @@ The raw token goes to **stdout only, once** — capture immediately, store as a
 secret, never echo, never commit. `token list` shows masked values only.
 Rotate by minting a replacement and deleting the old id.
 
+If you run a project-scoped command with a broad account/workspace token,
+railctl prints a one-line **least-privilege hint** to stderr nudging you toward
+a project token (leaf-bound to one project+environment). It's advisory — silence
+it per-run with `RAILCTL_NO_HINTS=1`, or better, switch to the project token.
+
 ---
 
 ## 3. Zero → Hero: the canonical path
@@ -343,6 +348,12 @@ deletion tripwire:
    `customDomains`).
 3. Verify: `railctl delete environment <env> --yes` must refuse with
    `environment '…' is delete-protected` — and so must `delete project`.
+
+Protection is not just about the environment as a whole: while it is armed, the
+environment's **data and structure** are shielded too — `delete service`,
+`delete volume`, `delete backup`, `delete -f`, and `apply --prune` all refuse —
+while updates, creates, and config/rollback deletes (domain, variable,
+deployment) keep working. See §7 for the exact allow/block matrix.
 
 There is **no bypass flag**; the only way to delete is consciously unprotecting
 first (`unprotect environment`, or `deleteProtection: false`) — which is exactly
@@ -692,6 +703,16 @@ An unauthenticated Postgres, Redis, etcd, or internal gRPC service on a
 services in the stack, it gets **no** `networking` block — full stop. When in
 doubt, start internal and add exposure deliberately, one service at a time.
 
+**You do not need to expose a port just to reach it yourself.** The old reason
+people opened a `tcpProxy` — "but I need to connect from my laptop to run a
+migration / open a psql shell / poke the admin API" — is gone: `railctl
+port-forward` tunnels straight into a **private** service over SSH, and
+`railctl exec` opens a shell inside it, both with **no public surface** (see the
+monitoring commands in §6). So a public proxy on an unauthenticated datastore is
+now not just dangerous, it's **unnecessary**: forward to it for admin/debug and
+leave it internal. Reserve `tcpProxy`/`domain` for traffic that genuinely
+originates *outside* Railway (real end users, third-party webhooks).
+
 **Un-exposing is declarative too:** removing a `tcpProxy`/`domain` block and
 re-applying closes the port (`diff` shows `- networking.tcpProxy.port: …`,
 `apply` removes it). So if you inherit an over-exposed stack, delete the
@@ -853,6 +874,16 @@ Deployment statuses: `INITIALIZING → BUILDING → DEPLOYING → SUCCESS`, or
 `create service` does **not** reliably deploy by itself — trigger explicitly
 with `create deployment` when you need a deterministic first deployment.
 
+**When logs aren't enough, go inside.** `logs` is the first-line monitoring
+tool; when you need to *interact* with a running service — open a shell, inspect
+files, run a one-off admin/migration command, or point a local client at an
+internal port — reach for **`railctl exec`** and **`railctl port-forward`**
+(next). They work on **private** services with no public exposure, over
+Railway's SSH relay. One-time prerequisite so it isn't a surprise later:
+register your SSH key **once** at
+[railway.com/account/ssh-keys](https://railway.com/account/ssh-keys) (railctl
+never manages keys); after that, exec/port-forward work with **any** token.
+
 ### Exec — shell into a service container (SSH)
 ```bash
 railctl exec api -p my-project -e production                  # interactive shell (kubectl-exec style)
@@ -946,16 +977,29 @@ Works with any token type; a project token self-mints for its own scope
 
 ## 7. Danger zone — deletion semantics & protection
 
-- **`DELETE_PROTECTION`**: an environment whose shared (environment-level)
-  variable `DELETE_PROTECTION` is truthy (`true`/`1`/`yes`/`on`,
-  case-insensitive) cannot be deleted, nor can its project — railctl refuses
-  with **no bypass flag** (`--yes` skips prompts, never protection); unprotect
-  to allow. Unreadable protection state → deletion refused (fail-closed). Arm it
-  on every environment you care about — imperatively with
+- **`DELETE_PROTECTION` — what a protected environment actually means.** An
+  environment whose shared (environment-level) variable `DELETE_PROTECTION` is
+  truthy (`true`/`1`/`yes`/`on`, case-insensitive) is a **read-mostly, no-delete
+  zone**: it protects **data and structure** while leaving day-to-day operation
+  fully open. Concretely, in a protected environment:
+  - **Blocked** (its data + structure are shielded): deleting the **environment**
+    itself or its **project**, and deleting a **service**, **volume**, or
+    **backup** — including `delete -f` (teardown) and `apply --prune` (which
+    deletes services). railctl refuses with **no bypass flag** (`--yes` skips
+    prompts, never protection); the message names the resource and points at
+    `unprotect environment <env>`.
+  - **Allowed** (configuration + operational, nothing destroyed irreversibly):
+    every **update** and **create**, plus deleting a **domain**, a **variable**,
+    or a **deployment** (a rollback). You keep shipping, tweaking config, and
+    rolling back at full speed; you just can't tear down the data or the
+    services holding it.
+  - Unreadable protection state → the delete is refused (fail-closed).
+  Arm it on every environment you care about — imperatively with
   `railctl protect environment <env>` (undo: `unprotect environment <env>`), or
   declaratively with the top-level `deleteProtection: true` manifest field
   (`false` clears it; **omitting it leaves the live state alone** — a dropped
-  line never silently unprotects).
+  line never silently unprotects). `apply --prune` checks **live** protection,
+  so unprotect first (or in a prior apply) to prune a protected environment.
 - `delete project` also refuses while the project still has services —
   delete them (or `delete -f` the manifest) first.
 - Deleting an **environment** destroys its variable values, volume instances,
