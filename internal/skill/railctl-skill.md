@@ -51,9 +51,12 @@ not an infrastructure engineer**. They come with one of three intents:
 2. **"Update my project"** (ship a change to something running)
 3. **"How is my app doing?"** (monitor / debug something running)
 
-Open by discovering which of the three it is — in their language, not yours:
-*"Are we putting something new online, updating what's already running, or
-checking on it?"*
+Open by discovering which of the three it is — in their language, not yours.
+**Your literal first question is the three-intent one** — *"Are we putting
+something new online, updating what's already running, or checking on it?"* —
+before any tool-shaped choices (token menus, "do you have a config file?",
+option forms). Those come later, and only if the intent doesn't already
+answer them.
 
 **Abstract railctl itself away.** The user is talking to you, not to a CLI:
 the tool's name, its commands, and its flags stay out of the conversation
@@ -113,6 +116,12 @@ It prints the token's **type** (`account` / `workspace` / `project`) and its
 containment chain (workspace → project → environment, names + ids) without
 ever printing the token value. Everything you may do follows from that type —
 see the capability matrix. In scripts, branch on the `type` field.
+
+**This is a hard gate, not advice.** When a token is handed to you
+mid-conversation, `whoami` is the first command that touches it — before any
+other API call. Do not infer the type from the token's shape, and do not
+hand-roll GraphQL probes to classify it: the one-liner above answers
+everything those would, for free.
 
 ---
 
@@ -322,16 +331,24 @@ here, so private images come from **your** CI:
 anything (production from day one; staging once real data lands), arm the
 deletion tripwire:
 
-1. Railway dashboard → the project → the environment → **Shared Variables**
-   → add `DELETE_PROTECTION` = `true`. (Shared/environment-level — not on a
-   service. The CLI cannot set shared variables yet, so this is a dashboard
-   step; railctl reads and enforces it.)
-2. Verify: `railctl delete environment <env> --yes` must refuse with
+1. Imperatively: `railctl protect environment <env> -p my-app`. This sets the
+   environment-level (shared, serviceless) `DELETE_PROTECTION` variable to
+   `true` — clobber-safe, so it preserves every other shared variable. Undo it
+   with `railctl unprotect environment <env> -p my-app`. Both require an
+   account/workspace token (a project token cannot write shared variables).
+2. Declaratively: add `deleteProtection: true` at the **top level** of the
+   manifest (a sibling of `project`/`environment`/`services`, not inside a
+   service). `apply` then ensures the flag is set; `deleteProtection: false`
+   clears it. **Omitting the field leaves the live state alone** — a dropped
+   line never silently unprotects an environment (same safety principle as
+   `customDomains`).
+3. Verify: `railctl delete environment <env> --yes` must refuse with
    `environment '…' is delete-protected` — and so must `delete project`.
 
-There is **no bypass flag**; the only way to delete is consciously unsetting
-the variable first — which is exactly the two-step friction you want on
-critical environments. Also: declare `backupSchedules` on stateful volumes,
+There is **no bypass flag**; the only way to delete is consciously unprotecting
+first (`unprotect environment`, or `deleteProtection: false`) — which is exactly
+the two-step friction you want on critical environments. Also: declare
+`backupSchedules` on stateful volumes,
 rotate tokens periodically (§6 Tokens), and tear down disposable
 environments with `delete -f`.
 
@@ -369,6 +386,9 @@ formats stay machine-readable: listings emit `[]` on empty, never prose.
 # stack.yaml — one file, the whole environment
 project: my-app          # optional; -p / env var / token scope override
 environment: production  # optional; same
+deleteProtection: true   # optional; ensures DELETE_PROTECTION on this env.
+                         # false clears it; OMITTING leaves live state alone
+                         # (a dropped line never silently unprotects).
 
 services:
   - name: api
@@ -405,6 +425,35 @@ services:
       password: "$env(REGISTRY_PASS)"
 ```
 
+### Wire services with Railway reference variables, never hardcoded endpoints
+
+When one service needs another's host, port, or URL, **always express it as a
+Railway reference variable** — `${{other-service.VAR}}`,
+`${{other-service.RAILWAY_PRIVATE_DOMAIN}}` — rather than a literal hostname,
+port, or URL. This is a standing directive, not a style preference:
+
+- **They resolve at deploy time**, so a value that only exists after the target
+  is provisioned (an internal domain, a generated port) is always correct.
+- **They survive renames and re-provisioning** — a hardcoded `api.internal:3000`
+  breaks the moment the target changes; `${{api.RAILWAY_PRIVATE_DOMAIN}}`
+  follows it.
+- **They draw the dependency graph in Railway's UI.** A reference creates a
+  visible edge between the two services; a hardcoded string shows *no edge*, so
+  the topology silently lies and nobody can see what talks to what.
+
+So prefer:
+
+```yaml
+    variables:
+      DATABASE_URL: "${{db.DATABASE_URL}}"
+      REDIS_HOST: "${{redis.RAILWAY_PRIVATE_DOMAIN}}"
+      API_URL: "https://${{api.RAILWAY_PRIVATE_DOMAIN}}"
+```
+
+over any form that bakes in `db.internal`, a fixed port, or a full literal URL.
+Reserve literals for genuinely external endpoints (third-party APIs) that
+Railway does not own.
+
 ### A complete worked example (n8n queue-mode, four services)
 
 The schema above, exercised for real — a production-shaped stack (database,
@@ -434,9 +483,7 @@ services:
       startCommand: "/bin/sh -c 'unset PGPORT; docker-entrypoint.sh postgres --port=5432'"
       restartPolicy: ON_FAILURE
       maxRetries: 10
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at n8n-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]
@@ -565,9 +612,7 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at temporal-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]
@@ -582,9 +627,10 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 7233
+    # Internal-only by default: the worker below reaches the frontend at
+    # temporal-server.railway.internal:7233. Temporal's frontend has NO auth
+    # out of the box — only add a public `tcpProxy` here if external clients
+    # must connect, and put authentication (mTLS) in front of it first.
     variables:
       DB: "postgres12"
       DB_PORT: "5432"
@@ -624,6 +670,35 @@ services:
       password: "$env(REGISTRY_PASSWORD)"
 ```
 
+### Networking: internal by default, public only on purpose
+
+**A `tcpProxy` or `domain` block is PUBLIC internet exposure — not "networking".**
+Getting this wrong is the most dangerous default in the whole tool.
+
+- **Service-to-service traffic needs neither.** Every service is reachable
+  from its siblings at `<service-name>.railway.internal` over Railway's
+  private mesh — free, and never internet-visible. A database, cache, or
+  internal API talks to its consumers over `.railway.internal` with **no
+  networking block at all**.
+- **`networking.domain.port`** publishes an HTTPS `*.up.railway.app` URL —
+  use it for the one or two services that are genuinely a public web surface
+  (the UI/API front door).
+- **`networking.tcpProxy.port`** opens a public TCP endpoint (`host:port`) —
+  use it only when something *outside* Railway must connect (e.g. you need to
+  reach a database from your laptop).
+
+**Hard rule: never put a service with no authentication on a public proxy.**
+An unauthenticated Postgres, Redis, etcd, or internal gRPC service on a
+`tcpProxy` is an open door to the internet. If a datastore only serves other
+services in the stack, it gets **no** `networking` block — full stop. When in
+doubt, start internal and add exposure deliberately, one service at a time.
+
+**Un-exposing is declarative too:** removing a `tcpProxy`/`domain` block and
+re-applying closes the port (`diff` shows `- networking.tcpProxy.port: …`,
+`apply` removes it). So if you inherit an over-exposed stack, delete the
+blocks and apply. (User-owned `customDomains` are the one exception — they are
+removed with `delete domain`, never silently on apply.)
+
 ### The three verbs
 
 | Command | Does | Exit |
@@ -639,8 +714,11 @@ services:
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
   with an explicit warning naming what was removed. A service with no
   `volume:` block is left untouched.
-- **`apply` never removes custom domains** — removal is `railctl delete
-  domain`, deliberately imperative-only.
+- **`domain.port` and `tcpProxy.port` reconcile removal**: omitting the block
+  and re-applying closes the port (railctl-generated public surface is fully
+  declarative — this is how you un-expose a service). **`customDomains` are the
+  exception** — user-owned, so they are never removed on absence; use
+  `railctl delete domain` (avoids an accidental outage + DNS rework).
 - **`--prune`** deletes live services not declared in the manifest — the only
   apply-path deletion; prompts unless `--yes`.
 - **`delete -f`** touches only what the manifest declares: services in
@@ -667,6 +745,13 @@ railctl diff -f stack.yaml       # clean diff — truth restored
 `diff` makes this trivial: it shows the delta field-by-field, so backporting
 is a copy of what it prints. The alternative direction also works — if the
 imperative change was a mistake, `apply` reverts live state to the manifest.
+
+**The loop is `diff → review → apply` EVERY time, not just the first.**
+During iterative troubleshooting it is tempting to edit the manifest and jump
+straight to `apply` — don't: each skipped diff is an unreviewed change, and
+skipping breeds the worse habit of *claiming* sync status from memory. Never
+state "no drift" / "state matches the manifest" to the user without a fresh
+`diff` exit-0 **run after your last apply** to back it.
 
 **Known blind spot:** `diff`/`apply` reconcile only what railctl models
 (services, deploy config, variables, volumes + backup schedules, domains,
@@ -699,6 +784,8 @@ railctl get environments -p my-app            # names visible to any token
 railctl describe environment production -p my-app
 railctl create environment staging -p my-app
 railctl delete environment staging -p my-app --yes   # refuses if delete-protected
+railctl protect environment production -p my-app     # sets DELETE_PROTECTION=true (shared var)
+railctl unprotect environment production -p my-app   # clears it (DELETE_PROTECTION=false)
 ```
 
 ### Services — any token, within scope
@@ -724,8 +811,11 @@ railctl delete variable KEY -s api --yes
 ```
 `${{service.VAR}}` references are stored as-is and resolve on Railway.
 Shared (environment-level) variables are readable by railctl (they power
-`DELETE_PROTECTION`) but **cannot be written via the CLI yet** — set them in
-the Railway dashboard.
+`DELETE_PROTECTION`). There is no general shared-variable write command, but the
+one shared variable that matters operationally — `DELETE_PROTECTION` — is
+managed first-class via `railctl protect`/`unprotect environment` (imperative)
+or the top-level `deleteProtection` manifest field (declarative). Other shared
+variables are still set in the Railway dashboard.
 
 ### Volumes & backups
 ```bash
@@ -753,8 +843,11 @@ railctl get deployments -s api [--limit N]    # -o json: [] when empty (script-s
 railctl create deployment -s api [--await-completion]    # explicit redeploy
 railctl delete deployment <id> -s api --yes   # rollback if latest; status → REMOVED
 railctl update deployment <id> --set-active   # reactivation — workspace token required
-railctl logs api [--tail N(≤500)] [-f] [--deployment <id>]
+railctl logs api [--tail N(≤500)] [-f] [--deployment <id>]   # logs <service> — one arg
 ```
+If any command errors unexpectedly on syntax, check `railctl <cmd> --help`
+before retrying variations — the help text is authoritative for the installed
+version.
 Deployment statuses: `INITIALIZING → BUILDING → DEPLOYING → SUCCESS`, or
 `FAILED / CRASHED / REMOVED / SKIPPED`. Poll
 `get deployments -o json --limit 1` for the latest status in scripts.
@@ -784,10 +877,13 @@ Works with any token type; a project token self-mints for its own scope
 - **`DELETE_PROTECTION`**: an environment whose shared (environment-level)
   variable `DELETE_PROTECTION` is truthy (`true`/`1`/`yes`/`on`,
   case-insensitive) cannot be deleted, nor can its project — railctl refuses
-  with **no bypass flag** (`--yes` skips prompts, never protection); unset
-  the variable to allow. Unreadable protection state → deletion refused
-  (fail-closed). Set it on every environment you care about — today via the
-  Railway dashboard (shared variables).
+  with **no bypass flag** (`--yes` skips prompts, never protection); unprotect
+  to allow. Unreadable protection state → deletion refused (fail-closed). Arm it
+  on every environment you care about — imperatively with
+  `railctl protect environment <env>` (undo: `unprotect environment <env>`), or
+  declaratively with the top-level `deleteProtection: true` manifest field
+  (`false` clears it; **omitting it leaves the live state alone** — a dropped
+  line never silently unprotects).
 - `delete project` also refuses while the project still has services —
   delete them (or `delete -f` the manifest) first.
 - Deleting an **environment** destroys its variable values, volume instances,
@@ -808,9 +904,11 @@ Works with any token type; a project token self-mints for its own scope
 | `token is scoped to … but -p/-e/-w '…' was given` | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token. |
 | `cannot … with a project token` | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token. |
 | `… not found — available: a, b, c` | Typo — the listed candidates are what exists. |
-| `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — unset it in the dashboard to allow deletion. |
+| `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion. |
 | Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace. |
 | `diff` "fails" in CI | `diff` always exits 0 on drift — a non-zero exit now means a real error (bad file, auth, API); read the message. To gate CI on drift, parse the summary line (`0 to create, 0 to update, 0 to delete`), not the exit code. |
+| Container exits instantly / `startCommand` seems ignored | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
+| `logs` prints nothing, no error | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs. |
 | Volume/backup op right after creation says not found | Propagation lag; railctl retries with backoff — re-run if it still misses. |
 | Backup restore "did nothing" | Restore is staged — **deploy the service** to finalize. |
 | Apply cleared backup schedules unexpectedly | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them. |

@@ -23,6 +23,14 @@ func Render(cs *ChangeSet, w io.Writer, useColor bool) {
 		return
 	}
 
+	// Environment-level changes render first, above the per-service blocks.
+	if cs.Environment != nil {
+		renderEnvironmentChange(w, cs.Environment, useColor)
+		if len(cs.Changes) > 0 {
+			fmt.Fprintln(w)
+		}
+	}
+
 	for i, rc := range cs.Changes {
 		if rc.Type == ChangeNone {
 			continue
@@ -59,6 +67,25 @@ func IsColorSupported(w io.Writer) bool {
 	}
 	info, err := f.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// renderEnvironmentChange writes the environment-level deleteProtection change.
+// It renders as an addition (+ deleteProtection: true) when protection is being
+// switched on from an unset/false state, and as a change (~ deleteProtection:
+// true → false) otherwise.
+func renderEnvironmentChange(w io.Writer, ec *EnvironmentChange, useColor bool) {
+	if useColor {
+		fmt.Fprintf(w, "%sEnvironment (update)%s\n", colorBold, colorReset)
+	} else {
+		fmt.Fprintln(w, "Environment (update)")
+	}
+
+	f := FieldDiff{
+		Path:    "deleteProtection",
+		Current: fmt.Sprintf("%t", ec.CurrentDeleteProtection),
+		Desired: fmt.Sprintf("%t", ec.DeleteProtection),
+	}
+	printChange(w, f, useColor)
 }
 
 // changeLabel returns the human-readable label for a change type.

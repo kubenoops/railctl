@@ -123,7 +123,7 @@ The script will:
 railctl get services -p my-temporal -e production
 
 # Check Temporal Server logs
-railctl logs service temporal-server -p my-temporal -e production
+railctl logs temporal-server -p my-temporal -e production
 
 # Check UI is accessible
 railctl describe service temporal-ui -p my-temporal -e production

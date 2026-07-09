@@ -23,9 +23,7 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at temporal-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]
@@ -40,9 +38,10 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 7233
+    # Internal-only by default: the worker below reaches the frontend at
+    # temporal-server.railway.internal:7233. Temporal's frontend has NO auth
+    # out of the box — only add a public `tcpProxy` here if external clients
+    # must connect, and put authentication (mTLS) in front of it first.
     variables:
       DB: "postgres12"
       DB_PORT: "5432"

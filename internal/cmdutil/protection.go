@@ -40,8 +40,8 @@ func CheckDeleteProtection(client api.APIClient, projectID string, env types.Env
 		return err
 	}
 	if protected {
-		return fmt.Errorf("environment '%s' is delete-protected (%s=%s) — unset the shared variable %s on that environment to allow deletion",
-			env.Name, DeleteProtectionVar, value, DeleteProtectionVar)
+		return fmt.Errorf("environment '%s' is delete-protected (%s=%s) — run 'railctl unprotect environment %s' to allow deletion",
+			env.Name, DeleteProtectionVar, value, env.Name)
 	}
 	return nil
 }
@@ -63,10 +63,51 @@ func CheckProjectDeleteProtection(client api.APIClient, project types.Project, e
 		}
 	}
 	if len(protectedNames) > 0 {
-		return fmt.Errorf("project '%s' contains delete-protected environment(s): %s — unset the shared variable %s on them to allow deletion",
-			project.Name, strings.Join(protectedNames, ", "), DeleteProtectionVar)
+		return fmt.Errorf("project '%s' contains delete-protected environment(s): %s — run 'railctl unprotect environment <name>' on each to allow deletion",
+			project.Name, strings.Join(protectedNames, ", "))
 	}
 	return nil
+}
+
+// SetDeleteProtection sets or clears the DELETE_PROTECTION shared variable on an
+// environment. When protect is true it writes DELETE_PROTECTION=true; when false
+// it writes DELETE_PROTECTION=false (a falsy value the guard treats as
+// unprotected — Railway has no serviceless delete-shared-variable path, so
+// falsifying stands in for unsetting).
+//
+// The write is clobber-safe: it reads the current shared variables first and
+// only replaces the DELETE_PROTECTION key, preserving every other shared
+// variable. Setting a value that already matches is a no-op write (idempotent).
+func SetDeleteProtection(client api.APIClient, projectID, environmentID string, protect bool) error {
+	vars, err := client.GetSharedVariables(projectID, environmentID)
+	if err != nil {
+		return fmt.Errorf("failed to read shared variables: %w", err)
+	}
+	if vars == nil {
+		vars = make(map[string]string)
+	}
+
+	if protect {
+		vars[DeleteProtectionVar] = "true"
+	} else {
+		vars[DeleteProtectionVar] = "false"
+	}
+
+	if err := client.SetSharedVariables(projectID, environmentID, vars); err != nil {
+		return fmt.Errorf("failed to set shared variable %s: %w", DeleteProtectionVar, err)
+	}
+	return nil
+}
+
+// EnvironmentIsProtected reports whether the environment currently carries a
+// truthy DELETE_PROTECTION shared variable. A read failure is returned as a
+// wrapped error so callers can fail closed.
+func EnvironmentIsProtected(client api.APIClient, projectID, environmentID string) (bool, error) {
+	vars, err := client.GetSharedVariables(projectID, environmentID)
+	if err != nil {
+		return false, fmt.Errorf("failed to read shared variables: %w", err)
+	}
+	return isTruthy(vars[DeleteProtectionVar]), nil
 }
 
 // environmentDeleteProtection reads the environment's shared variables and

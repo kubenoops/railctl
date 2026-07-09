@@ -121,6 +121,17 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// 5. Compute diff.
 	cs := diff.Compute(cfg.Services, liveServices, applyPrune)
 
+	// 5b. Environment-level deleteProtection. Only read the live state when the
+	// manifest declares the field — an omitted field is left alone (nil), so we
+	// avoid an extra shared-variables read in the common case.
+	if cfg.DeleteProtection != nil {
+		liveProtected, err := cmdutil.EnvironmentIsProtected(client, projectID, envID)
+		if err != nil {
+			return fmt.Errorf("reading delete protection: %w", err)
+		}
+		cs.Environment = diff.ComputeEnvironment(cfg.DeleteProtection, liveProtected)
+	}
+
 	// Determine color support.
 	useColor := !applyNoColor && (applyColor || diff.IsColorSupported(os.Stdout))
 

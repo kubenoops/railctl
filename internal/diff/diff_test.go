@@ -842,9 +842,10 @@ func TestCompute_CustomDomainPortDrift(t *testing.T) {
 	}
 }
 
-func TestCompute_DomainPortUndeclaredNoDiff(t *testing.T) {
-	// An undeclared domain.port (0) must not diff against a live domain's port,
-	// otherwise apply (which skips port 0) would leave a perma-diff.
+func TestCompute_DomainPortRemovedReconciles(t *testing.T) {
+	// Omitting networking (port 0) with a live domain present is a REMOVAL:
+	// the declared manifest is authoritative, so apply must close the domain.
+	// Rendered as "- networking.domain.port: 8080" (empty Desired).
 	desired := []config.ServiceConfig{{Name: "web", Image: "web:latest"}}
 	live := []LiveService{{
 		Name:    "web",
@@ -853,8 +854,42 @@ func TestCompute_DomainPortUndeclaredNoDiff(t *testing.T) {
 	}}
 
 	cs := Compute(desired, live, false)
-	if len(cs.Changes) != 0 {
-		t.Errorf("expected no changes when domain.port is undeclared, got %+v", cs.Changes)
+	if len(cs.Changes) != 1 || cs.Changes[0].Type != ChangeUpdate {
+		t.Fatalf("expected one update (domain removal), got %+v", cs.Changes)
+	}
+	f := cs.Changes[0].Fields
+	if len(f) != 1 || f[0].Path != "networking.domain.port" || f[0].Current != "8080" || f[0].Desired != "" {
+		t.Errorf("expected removal diff {networking.domain.port 8080 -> \"\"}, got %+v", f)
+	}
+}
+
+func TestCompute_TCPProxyRemovedReconciles(t *testing.T) {
+	// The security-critical case: omitting tcpProxy must close a live public
+	// proxy (un-expose declaratively).
+	desired := []config.ServiceConfig{{Name: "db", Image: "postgres:16"}}
+	live := []LiveService{{
+		Name:       "db",
+		Image:      "postgres:16",
+		TCPProxies: []LiveTCPProxy{{ApplicationPort: 5432, ProxyPort: 33863}},
+	}}
+	cs := Compute(desired, live, false)
+	if len(cs.Changes) != 1 || len(cs.Changes[0].Fields) != 1 {
+		t.Fatalf("expected one tcpProxy removal, got %+v", cs.Changes)
+	}
+	f := cs.Changes[0].Fields[0]
+	if f.Path != "networking.tcpProxy.port" || f.Current != "5432" || f.Desired != "" {
+		t.Errorf("expected {networking.tcpProxy.port 5432 -> \"\"}, got %+v", f)
+	}
+}
+
+func TestCompute_NetworkingUnchangedNoDiff(t *testing.T) {
+	// Declared port matching live must NOT diff (idempotent, no perma-diff).
+	desired := []config.ServiceConfig{{Name: "web", Image: "web:latest",
+		Networking: config.NetworkingConfig{Domain: config.DomainConfig{Port: 8080}}}}
+	live := []LiveService{{Name: "web", Image: "web:latest",
+		Domains: []LiveDomain{{Domain: "web.up.railway.app", Port: 8080}}}}
+	if cs := Compute(desired, live, false); len(cs.Changes) != 0 {
+		t.Errorf("expected no changes when declared port matches live, got %+v", cs.Changes)
 	}
 }
 

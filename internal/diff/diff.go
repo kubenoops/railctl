@@ -40,16 +40,51 @@ type ResourceChange struct {
 // ChangeSet is the full set of changes needed to reconcile desired → live state.
 type ChangeSet struct {
 	Changes []ResourceChange
+	// Environment holds an environment-level change (currently just the
+	// deleteProtection toggle). It is nil when the manifest omits deleteProtection
+	// or the live state already matches — an omitted field never produces a
+	// change, so a dropped line never silently weakens the safety control.
+	Environment *EnvironmentChange
 }
 
-// HasChanges returns true if there are any create, update, or delete operations.
+// EnvironmentChange represents an environment-level (not per-service) change.
+// DeleteProtection is the desired truthiness of the DELETE_PROTECTION shared
+// variable; Current is the live truthiness it will replace.
+type EnvironmentChange struct {
+	DeleteProtection        bool
+	CurrentDeleteProtection bool
+}
+
+// HasChanges returns true if there are any create, update, or delete operations,
+// or an environment-level change.
 func (cs *ChangeSet) HasChanges() bool {
+	if cs.Environment != nil {
+		return true
+	}
 	for _, c := range cs.Changes {
 		if c.Type != ChangeNone {
 			return true
 		}
 	}
 	return false
+}
+
+// ComputeEnvironment compares the manifest's desired deleteProtection against the
+// live DELETE_PROTECTION truthiness and returns an EnvironmentChange when they
+// differ, or nil when they match. A nil desired pointer means the field was
+// omitted: it always returns nil (leave the live state alone — never
+// auto-unprotect).
+func ComputeEnvironment(desired *bool, liveProtected bool) *EnvironmentChange {
+	if desired == nil {
+		return nil
+	}
+	if *desired == liveProtected {
+		return nil
+	}
+	return &EnvironmentChange{
+		DeleteProtection:        *desired,
+		CurrentDeleteProtection: liveProtected,
+	}
 }
 
 // Summary returns a human-readable summary like "2 to create, 1 to update, 0 to delete".
@@ -341,6 +376,16 @@ func buildDeleteChange(ls LiveService) ResourceChange {
 	}
 }
 
+// portStr renders a port for a FieldDiff: 0 (absent/unmanaged) becomes the
+// empty string so the renderer shows a clean add ("+") or removal ("-")
+// instead of "→ 0".
+func portStr(p int) string {
+	if p == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", p)
+}
+
 // compareService compares a desired config against a live service and returns field diffs.
 func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 	var fields []FieldDiff
@@ -378,48 +423,48 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		}
 	}
 
-	// Port 0 is unmanaged; diffing it would perma-diff (apply skips port 0).
-	if d.Networking.Domain.Port > 0 {
-		liveDomainPort := 0
+	// Service domain (railctl-generated public surface) is declaratively
+	// authoritative: a declared port ensures it, an omitted block (port 0)
+	// with a live domain present removes it — same reconcile model as
+	// volume.backupSchedules. (User-owned customDomains below are NOT removed
+	// on absence — that stays imperative-only to avoid accidental outages.)
+	liveDomainPort := 0
+	if len(ls.Domains) > 0 {
+		liveDomainPort = ls.Domains[0].Port
 		for _, dom := range ls.Domains {
 			if dom.Port == d.Networking.Domain.Port {
 				liveDomainPort = dom.Port
 				break
 			}
 		}
-		// If no match found, use the first domain's port as the "current" value for the diff.
-		if liveDomainPort == 0 && len(ls.Domains) > 0 {
-			liveDomainPort = ls.Domains[0].Port
-		}
-		if d.Networking.Domain.Port != liveDomainPort {
-			fields = append(fields, FieldDiff{
-				Path:    "networking.domain.port",
-				Current: fmt.Sprintf("%d", liveDomainPort),
-				Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
-			})
-		}
+	}
+	if d.Networking.Domain.Port != liveDomainPort {
+		fields = append(fields, FieldDiff{
+			Path:    "networking.domain.port",
+			Current: portStr(liveDomainPort),
+			Desired: portStr(d.Networking.Domain.Port),
+		})
 	}
 
-	// Port 0 is unmanaged, same as domain port above.
-	if d.Networking.TCPProxy.Port > 0 {
-		liveTCPPort := 0
+	// TCP proxy: same declarative-authoritative model as the service domain.
+	// Omitting the block (port 0) with a live proxy present removes it — this
+	// is how you un-expose a service declaratively (close a public port).
+	liveTCPPort := 0
+	if len(ls.TCPProxies) > 0 {
+		liveTCPPort = ls.TCPProxies[0].ApplicationPort
 		for _, tp := range ls.TCPProxies {
 			if tp.ApplicationPort == d.Networking.TCPProxy.Port {
 				liveTCPPort = tp.ApplicationPort
 				break
 			}
 		}
-		// If no match found, use the first proxy's port as the "current" value for the diff.
-		if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
-			liveTCPPort = ls.TCPProxies[0].ApplicationPort
-		}
-		if d.Networking.TCPProxy.Port != liveTCPPort {
-			fields = append(fields, FieldDiff{
-				Path:    "networking.tcpProxy.port",
-				Current: fmt.Sprintf("%d", liveTCPPort),
-				Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
-			})
-		}
+	}
+	if d.Networking.TCPProxy.Port != liveTCPPort {
+		fields = append(fields, FieldDiff{
+			Path:    "networking.tcpProxy.port",
+			Current: portStr(liveTCPPort),
+			Desired: portStr(d.Networking.TCPProxy.Port),
+		})
 	}
 
 	// Custom domains: diff absent (create) and port drift. Port defaults to domain.port.

@@ -22,7 +22,7 @@ var (
 
 // logsServiceCmd represents the logs service command.
 var logsServiceCmd = &cobra.Command{
-	Use:   "logs service <name>",
+	Use:   "logs <service>",
 	Short: "View deployment logs for a service",
 	Long: `View deployment logs for a service.
 
@@ -32,18 +32,20 @@ a particular deployment ID.
 
 Examples:
   # View latest logs for a service
-  railctl logs service backend -p my-project -e production
+  railctl logs backend -p my-project -e production
 
   # View only the last 20 log lines
-  railctl logs service backend -p my-project -e production --tail 20
+  railctl logs backend -p my-project -e production --tail 20
 
   # Follow logs in real-time (Ctrl+C to stop)
-  railctl logs service backend -f -p my-project -e production
+  railctl logs backend -f -p my-project -e production
 
   # View logs for a specific deployment
-  railctl logs service backend -p my-project -e production --deployment abc123
+  railctl logs backend -p my-project -e production --deployment abc123
 `,
-	Args: cobra.ExactArgs(1),
+	// One service name; "logs service <name>" is tolerated for compatibility
+	// (the old help text and docs taught it for months).
+	Args: cobra.RangeArgs(1, 2),
 	RunE: runLogsService,
 }
 
@@ -58,6 +60,14 @@ func init() {
 
 func runLogsService(cmd *cobra.Command, args []string) error {
 	serviceName := args[0]
+	if len(args) == 2 {
+		// Compatibility: `railctl logs service <name>` (the syntax previously
+		// shown in help/docs). Anything else with two args is a mistake.
+		if args[0] != "service" {
+			return fmt.Errorf("unexpected argument %q — usage: railctl logs <service>", args[1])
+		}
+		serviceName = args[1]
+	}
 
 	tkn, err := getToken()
 	if err != nil {

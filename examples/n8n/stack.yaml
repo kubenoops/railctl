@@ -20,9 +20,7 @@ services:
       startCommand: "/bin/sh -c 'unset PGPORT; docker-entrypoint.sh postgres --port=5432'"
       restartPolicy: ON_FAILURE
       maxRetries: 10
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at n8n-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]

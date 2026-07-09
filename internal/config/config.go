@@ -14,9 +14,15 @@ import (
 
 // Config represents a full declarative config file.
 type Config struct {
-	Project     string          `yaml:"project,omitempty"`
-	Environment string          `yaml:"environment,omitempty"`
-	Services    []ServiceConfig `yaml:"services"`
+	Project     string `yaml:"project,omitempty"`
+	Environment string `yaml:"environment,omitempty"`
+	// DeleteProtection is an environment-level safety toggle. It is a pointer so
+	// that an omitted field (nil) is distinct from an explicit false: nil means
+	// "leave the live DELETE_PROTECTION state alone" (a dropped line must never
+	// silently weaken a safety control), true ensures the environment is
+	// protected, and false ensures it is unprotected.
+	DeleteProtection *bool           `yaml:"deleteProtection,omitempty"`
+	Services         []ServiceConfig `yaml:"services"`
 }
 
 // ServiceConfig describes a single service's desired state.
@@ -262,6 +268,15 @@ func LoadDir(dir string) (*Config, error) {
 				return nil, fmt.Errorf("conflicting environment: %q (previous) vs %q (in %s)", merged.Environment, fileCfg.Environment, name)
 			}
 			merged.Environment = fileCfg.Environment
+		}
+		// deleteProtection is environment-level: an explicit value in any file
+		// applies, but two files disagreeing is a conflict. An omitted field
+		// (nil) never overrides an explicit one.
+		if fileCfg.DeleteProtection != nil {
+			if merged.DeleteProtection != nil && *merged.DeleteProtection != *fileCfg.DeleteProtection {
+				return nil, fmt.Errorf("conflicting deleteProtection: %v (previous) vs %v (in %s)", *merged.DeleteProtection, *fileCfg.DeleteProtection, name)
+			}
+			merged.DeleteProtection = fileCfg.DeleteProtection
 		}
 
 		merged.Services = append(merged.Services, fileCfg.Services...)
