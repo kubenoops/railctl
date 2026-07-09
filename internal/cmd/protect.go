@@ -106,7 +106,7 @@ func toggleDeleteProtection(cmd *cobra.Command, envName string, protect bool) er
 	default:
 		if protect {
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"Environment '%s' is now delete-protected — it and its project cannot be deleted until unprotected.\n",
+				"Environment '%s' is now delete-protected — the environment, its project, and its services/volumes/backups cannot be deleted until unprotected (updates, creates, and config/rollback deletes still work).\n",
 				ctx.Environment.Name)
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(),
