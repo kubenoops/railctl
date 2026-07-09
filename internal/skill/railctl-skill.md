@@ -874,6 +874,55 @@ user or workspace, never a project, so a **project token fails fast** — it
 cannot register a key. See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
+### Port-forward — reach a service's ports (incl. private hosts) over SSH
+```bash
+railctl port-forward db 5432 -p my-project -e production                       # localhost:5432 -> db's own 127.0.0.1:5432
+railctl port-forward db 6543:5432 -p my-project -e production                  # map a different local port
+railctl port-forward db 5432 6379 -p my-project -e production                  # multiple ports, ONE ssh connection
+railctl port-forward jump-svc 6443:kube-apiserver.railway.internal:6443 ...    # JUMP form: reach a private host (headline)
+railctl port-forward db 5432 --address 0.0.0.0 -i ~/.ssh/id_ed25519            # share on the LAN + specific key
+```
+kubectl-`port-forward`-style local forwarding over Railway's SSH relay. The
+service is a **positional argument**; every bare positional after it is a port
+spec (multiple `-L` forwards ride **one** ssh connection). It runs in the
+**foreground** and streams until **Ctrl-C**. Same transport and token model as
+`exec` (local `ssh` binary, auto-registered key, no sshd in the container).
+
+**Port-spec grammar — three forms:**
+
+| Form | Emits | Meaning |
+|---|---|---|
+| `REMOTE` (e.g. `8080`) | `-L 127.0.0.1:8080:127.0.0.1:8080` | local == remote; remote host pinned to `127.0.0.1` |
+| `LOCAL:REMOTE` (e.g. `6543:5432`) | `-L 127.0.0.1:6543:127.0.0.1:5432` | remote host **forced** to `127.0.0.1` (foot-gun guard) |
+| `LOCAL:HOST:REMOTE` (**jump form**) | `-L 127.0.0.1:LOCAL:HOST:REMOTE` | `HOST` (a `*.railway.internal` name or IP) passed **verbatim** |
+
+The one- and two-field forms always pin the remote host to the literal
+`127.0.0.1`; a bare number can **never** smuggle `localhost` (which the relay
+resolves to an unreachable mesh address).
+
+**Headline — the JUMP form (reach a private, unexposed service).** SSH into a
+chosen **jump service** whose container sits on the environment's private
+network and forward to a *different* internal host — the relay resolves the
+internal DNS server-side from inside the jump container's netns:
+```bash
+# Reach a private Kubernetes apiserver THROUGH a jump service:
+railctl port-forward jump-svc 6443:kube-apiserver.railway.internal:6443 -p my-project -e production
+# → then: kubectl --server https://127.0.0.1:6443 …
+```
+
+> ⚠️ **IPv6 caveat (verified live).** `*.railway.internal` names resolve to an
+> **IPv6** address. A jump forward only reaches internal targets that bind their
+> internal/IPv6 interface (`[::]:port`). An **IPv4-only** service (e.g. default
+> nginx on `0.0.0.0:80`) gives an "empty reply" — this is a **target-binding
+> property, not a railctl bug**. The service you forward TO must listen on its
+> internal/IPv6 interface.
+
+**Token scope: port-forward needs an account or workspace token** (same gate as
+`exec` — a project token cannot register the SSH key and fails fast). Flags:
+`-i/--identity-file`, `--deployment-instance <id>`, `--address` (local bind,
+default `127.0.0.1`; `0.0.0.0` to share on the LAN). See the design in
+`docs/designs/2026-07-09-railctl-exec-port-forward.md`.
+
 ### Domains
 ```bash
 railctl get domains -s api                    # railway + custom, verification status
