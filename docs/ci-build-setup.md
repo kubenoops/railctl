@@ -127,6 +127,11 @@ source.
 
 #### Phase 1: Auto Pre-Release (on push to main)
 
+> Version computation uses the **semver-highest existing tag** (`git tag |
+> sort -V`), not `git describe` — describe returns the nearest tag on the
+> commit graph, which can resurrect an older lineage after a manual
+> minor/major release (issue #64).
+
 Every merge to `main` automatically:
 
 1. Finds the latest git tag (or defaults to `v0.0.0`)

@@ -30,8 +30,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Get all tags sorted by version
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Semver-highest tag (git describe picks the nearest tag on the
+          # graph, which can be an older lineage — issue #64)
+          LATEST_TAG=$(git tag --list 'v*' | sort -V | tail -n1)
+          LATEST_TAG=${LATEST_TAG:-v0.0.0}
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
           
           # Parse version components

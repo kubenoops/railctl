@@ -25,7 +25,12 @@ jobs:
       - name: Get latest release tag
         id: latest
         run: |
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Semver-highest tag, NOT git describe: describe returns the nearest
+          # tag on the commit graph, which after a manual minor/major release
+          # can be an older lineage (this is how v0.0.14 got minted after
+          # v1.0.0 existed — see issue #64).
+          TAG=$(git tag --list 'v*' | sort -V | tail -n1)
+          TAG=${TAG:-v0.0.0}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Generate next version
