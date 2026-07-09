@@ -628,7 +628,7 @@ services:
 
 | Command | Does | Exit |
 |---|---|---|
-| `railctl diff -f <file-or-dir> [--prune]` | show create/update/delete deltas, secrets masked | 0 = in sync, 1 = drift |
+| `railctl diff -f <file-or-dir> [--prune]` | show create/update/delete deltas, secrets masked | always 0; read the summary line for drift |
 | `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest | 0 = applied |
 | `railctl delete -f <file-or-dir> [--yes]` | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled |
 
@@ -838,9 +838,8 @@ railctl logs web --tail 50                                 # it's alive
 first even in CI — its output in the job log is the reviewable change record:
 ```bash
 export RAILWAY_TOKEN="$RAILWAY_PROJECT_TOKEN"
-if ! railctl diff -f stack.yaml; then      # prints the pending changes to the log
-  railctl apply -f stack.yaml --await
-fi
+railctl diff -f stack.yaml                 # prints the pending changes to the log
+railctl apply -f stack.yaml --await        # idempotent — a no-op when already in sync
 ```
 
 **Private image end-to-end**: CI builds & pushes `ghcr.io/owner/app:$SHA` →
