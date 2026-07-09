@@ -330,15 +330,24 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	}
 
 	// Domain changes: reconcile the target port (idempotent).
-	if domainChanged && cfg.Networking.Domain.Port > 0 {
+	if domainChanged {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
 			return fmt.Errorf("listing domains: %w", err)
 		}
 
-		// domain.port governs the service domain; custom domains reconcile below.
 		port := cfg.Networking.Domain.Port
 		switch {
+		case port == 0:
+			// Removal: the manifest omitted networking.domain, so close the
+			// service domain(s). Custom domains are user-owned and never
+			// removed on absence (reconcileCustomDomains only adds/updates).
+			for _, sd := range domains.ServiceDomains {
+				if err := client.DeleteServiceDomain(sd.ID); err != nil {
+					return fmt.Errorf("removing service domain %q: %w", sd.Domain, err)
+				}
+				fmt.Fprintf(w, "  ✓ removed domain %s\n", sd.Domain)
+			}
 		case len(domains.ServiceDomains) > 0:
 			sd := domains.ServiceDomains[0]
 			if sd.TargetPort == nil || *sd.TargetPort != port {
@@ -379,35 +388,41 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// TCP proxy changes: check existing proxies first, delete old one if port changed.
-	if tcpChanged && cfg.Networking.TCPProxy.Port > 0 {
+	// TCP proxy changes: reconcile to exactly the declared port. Desired port 0
+	// (omitted block) removes any live proxy — this is how a service is
+	// un-exposed declaratively (closing a public port).
+	if tcpChanged {
 		existingProxies, err := client.ListTCPProxies(envID, serviceID)
 		if err != nil {
 			return fmt.Errorf("listing TCP proxies: %w", err)
 		}
 
-		// Delete any existing proxy that doesn't match the desired port.
+		// Delete any existing proxy that doesn't match the desired port
+		// (all of them when the desired port is 0 — a removal).
 		for _, tp := range existingProxies {
 			if tp.ApplicationPort != cfg.Networking.TCPProxy.Port {
 				if err := client.DeleteTCPProxy(tp.ID); err != nil {
 					return fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
 				}
+				if cfg.Networking.TCPProxy.Port == 0 {
+					fmt.Fprintf(w, "  ✓ removed TCP proxy (port %d)\n", tp.ApplicationPort)
+				}
 			}
 		}
-
-		// Check if desired proxy already exists.
-		proxyExists := false
-		for _, tp := range existingProxies {
-			if tp.ApplicationPort == cfg.Networking.TCPProxy.Port {
-				proxyExists = true
-				break
+		// Create the desired proxy if it doesn't already exist (skipped on
+		// removal, where the desired port is 0 and all proxies were deleted).
+		if cfg.Networking.TCPProxy.Port > 0 {
+			proxyExists := false
+			for _, tp := range existingProxies {
+				if tp.ApplicationPort == cfg.Networking.TCPProxy.Port {
+					proxyExists = true
+					break
+				}
 			}
-		}
-
-		// Create only if it doesn't already exist.
-		if !proxyExists {
-			if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
-				return fmt.Errorf("creating TCP proxy: %w", err)
+			if !proxyExists {
+				if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
+					return fmt.Errorf("creating TCP proxy: %w", err)
+				}
 			}
 		}
 	}

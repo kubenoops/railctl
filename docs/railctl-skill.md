@@ -442,9 +442,7 @@ services:
       startCommand: "/bin/sh -c 'unset PGPORT; docker-entrypoint.sh postgres --port=5432'"
       restartPolicy: ON_FAILURE
       maxRetries: 10
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at n8n-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]
@@ -573,9 +571,7 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 5432
+    # No public networking: internal clients reach it at temporal-postgres.railway.internal.
     volume:
       mountPath: /var/lib/postgresql/data
       backupSchedules: [daily]
@@ -590,9 +586,10 @@ services:
     deploy:
       restartPolicy: ON_FAILURE
       maxRetries: 5
-    networking:
-      tcpProxy:
-        port: 7233
+    # Internal-only by default: the worker below reaches the frontend at
+    # temporal-server.railway.internal:7233. Temporal's frontend has NO auth
+    # out of the box — only add a public `tcpProxy` here if external clients
+    # must connect, and put authentication (mTLS) in front of it first.
     variables:
       DB: "postgres12"
       DB_PORT: "5432"
@@ -632,6 +629,35 @@ services:
       password: "$env(REGISTRY_PASSWORD)"
 ```
 
+### Networking: internal by default, public only on purpose
+
+**A `tcpProxy` or `domain` block is PUBLIC internet exposure — not "networking".**
+Getting this wrong is the most dangerous default in the whole tool.
+
+- **Service-to-service traffic needs neither.** Every service is reachable
+  from its siblings at `<service-name>.railway.internal` over Railway's
+  private mesh — free, and never internet-visible. A database, cache, or
+  internal API talks to its consumers over `.railway.internal` with **no
+  networking block at all**.
+- **`networking.domain.port`** publishes an HTTPS `*.up.railway.app` URL —
+  use it for the one or two services that are genuinely a public web surface
+  (the UI/API front door).
+- **`networking.tcpProxy.port`** opens a public TCP endpoint (`host:port`) —
+  use it only when something *outside* Railway must connect (e.g. you need to
+  reach a database from your laptop).
+
+**Hard rule: never put a service with no authentication on a public proxy.**
+An unauthenticated Postgres, Redis, etcd, or internal gRPC service on a
+`tcpProxy` is an open door to the internet. If a datastore only serves other
+services in the stack, it gets **no** `networking` block — full stop. When in
+doubt, start internal and add exposure deliberately, one service at a time.
+
+**Un-exposing is declarative too:** removing a `tcpProxy`/`domain` block and
+re-applying closes the port (`diff` shows `- networking.tcpProxy.port: …`,
+`apply` removes it). So if you inherit an over-exposed stack, delete the
+blocks and apply. (User-owned `customDomains` are the one exception — they are
+removed with `delete domain`, never silently on apply.)
+
 ### The three verbs
 
 | Command | Does | Exit |
@@ -647,8 +673,11 @@ services:
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
   with an explicit warning naming what was removed. A service with no
   `volume:` block is left untouched.
-- **`apply` never removes custom domains** — removal is `railctl delete
-  domain`, deliberately imperative-only.
+- **`domain.port` and `tcpProxy.port` reconcile removal**: omitting the block
+  and re-applying closes the port (railctl-generated public surface is fully
+  declarative — this is how you un-expose a service). **`customDomains` are the
+  exception** — user-owned, so they are never removed on absence; use
+  `railctl delete domain` (avoids an accidental outage + DNS rework).
 - **`--prune`** deletes live services not declared in the manifest — the only
   apply-path deletion; prompts unless `--yes`.
 - **`delete -f`** touches only what the manifest declares: services in

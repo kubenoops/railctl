@@ -341,6 +341,16 @@ func buildDeleteChange(ls LiveService) ResourceChange {
 	}
 }
 
+// portStr renders a port for a FieldDiff: 0 (absent/unmanaged) becomes the
+// empty string so the renderer shows a clean add ("+") or removal ("-")
+// instead of "→ 0".
+func portStr(p int) string {
+	if p == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", p)
+}
+
 // compareService compares a desired config against a live service and returns field diffs.
 func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 	var fields []FieldDiff
@@ -378,48 +388,48 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		}
 	}
 
-	// Port 0 is unmanaged; diffing it would perma-diff (apply skips port 0).
-	if d.Networking.Domain.Port > 0 {
-		liveDomainPort := 0
+	// Service domain (railctl-generated public surface) is declaratively
+	// authoritative: a declared port ensures it, an omitted block (port 0)
+	// with a live domain present removes it — same reconcile model as
+	// volume.backupSchedules. (User-owned customDomains below are NOT removed
+	// on absence — that stays imperative-only to avoid accidental outages.)
+	liveDomainPort := 0
+	if len(ls.Domains) > 0 {
+		liveDomainPort = ls.Domains[0].Port
 		for _, dom := range ls.Domains {
 			if dom.Port == d.Networking.Domain.Port {
 				liveDomainPort = dom.Port
 				break
 			}
 		}
-		// If no match found, use the first domain's port as the "current" value for the diff.
-		if liveDomainPort == 0 && len(ls.Domains) > 0 {
-			liveDomainPort = ls.Domains[0].Port
-		}
-		if d.Networking.Domain.Port != liveDomainPort {
-			fields = append(fields, FieldDiff{
-				Path:    "networking.domain.port",
-				Current: fmt.Sprintf("%d", liveDomainPort),
-				Desired: fmt.Sprintf("%d", d.Networking.Domain.Port),
-			})
-		}
+	}
+	if d.Networking.Domain.Port != liveDomainPort {
+		fields = append(fields, FieldDiff{
+			Path:    "networking.domain.port",
+			Current: portStr(liveDomainPort),
+			Desired: portStr(d.Networking.Domain.Port),
+		})
 	}
 
-	// Port 0 is unmanaged, same as domain port above.
-	if d.Networking.TCPProxy.Port > 0 {
-		liveTCPPort := 0
+	// TCP proxy: same declarative-authoritative model as the service domain.
+	// Omitting the block (port 0) with a live proxy present removes it — this
+	// is how you un-expose a service declaratively (close a public port).
+	liveTCPPort := 0
+	if len(ls.TCPProxies) > 0 {
+		liveTCPPort = ls.TCPProxies[0].ApplicationPort
 		for _, tp := range ls.TCPProxies {
 			if tp.ApplicationPort == d.Networking.TCPProxy.Port {
 				liveTCPPort = tp.ApplicationPort
 				break
 			}
 		}
-		// If no match found, use the first proxy's port as the "current" value for the diff.
-		if liveTCPPort == 0 && len(ls.TCPProxies) > 0 {
-			liveTCPPort = ls.TCPProxies[0].ApplicationPort
-		}
-		if d.Networking.TCPProxy.Port != liveTCPPort {
-			fields = append(fields, FieldDiff{
-				Path:    "networking.tcpProxy.port",
-				Current: fmt.Sprintf("%d", liveTCPPort),
-				Desired: fmt.Sprintf("%d", d.Networking.TCPProxy.Port),
-			})
-		}
+	}
+	if d.Networking.TCPProxy.Port != liveTCPPort {
+		fields = append(fields, FieldDiff{
+			Path:    "networking.tcpProxy.port",
+			Current: portStr(liveTCPPort),
+			Desired: portStr(d.Networking.TCPProxy.Port),
+		})
 	}
 
 	// Custom domains: diff absent (create) and port drift. Port defaults to domain.port.
