@@ -38,6 +38,7 @@ type APIClient interface {
 	// Variables
 	GetVariables(projectID, environmentID, serviceID string) (map[string]string, error)
 	GetSharedVariables(projectID, environmentID string) (map[string]string, error)
+	SetSharedVariables(projectID, environmentID string, variables map[string]string) error
 	GetRawVariables(projectID, environmentID, serviceID string) (map[string]string, error)
 	GetSealedVariables(environmentID, serviceID string) (map[string]bool, error)
 	SetVariables(projectID, environmentID, serviceID string, variables map[string]string, skipDeploys bool) error

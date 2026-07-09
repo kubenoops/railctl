@@ -99,6 +99,16 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// 5. Compute diff.
 	cs := diff.Compute(cfg.Services, liveServices, diffPrune)
 
+	// 5b. Environment-level deleteProtection. Only read the live state when the
+	// manifest declares the field — an omitted field is left alone (nil).
+	if cfg.DeleteProtection != nil {
+		liveProtected, err := cmdutil.EnvironmentIsProtected(client, projectID, envID)
+		if err != nil {
+			return fmt.Errorf("reading delete protection: %w", err)
+		}
+		cs.Environment = diff.ComputeEnvironment(cfg.DeleteProtection, liveProtected)
+	}
+
 	// 6. Render diff with colors.
 	useColor := !diffNoColor && (diffColor || diff.IsColorSupported(os.Stdout))
 	diff.Render(cs, os.Stdout, useColor)

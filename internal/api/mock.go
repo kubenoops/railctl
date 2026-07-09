@@ -30,6 +30,7 @@ type MockClient struct {
 	// Variables
 	GetVariablesFunc       func(projectID, environmentID, serviceID string) (map[string]string, error)
 	GetSharedVariablesFunc func(projectID, environmentID string) (map[string]string, error)
+	SetSharedVariablesFunc func(projectID, environmentID string, variables map[string]string) error
 	GetRawVariablesFunc    func(projectID, environmentID, serviceID string) (map[string]string, error)
 	GetSealedVariablesFunc func(environmentID, serviceID string) (map[string]bool, error)
 	SetVariablesFunc       func(projectID, environmentID, serviceID string, variables map[string]string, skipDeploys bool) error
@@ -262,6 +263,13 @@ func (m *MockClient) GetSharedVariables(projectID, environmentID string) (map[st
 		return m.GetSharedVariablesFunc(projectID, environmentID)
 	}
 	return make(map[string]string), nil
+}
+
+func (m *MockClient) SetSharedVariables(projectID, environmentID string, variables map[string]string) error {
+	if m.SetSharedVariablesFunc != nil {
+		return m.SetSharedVariablesFunc(projectID, environmentID, variables)
+	}
+	return nil
 }
 
 func (m *MockClient) GetRawVariables(projectID, environmentID, serviceID string) (map[string]string, error) {

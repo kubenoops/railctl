@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/config"
 	"github.com/kubenoops/railctl/internal/diff"
 	"github.com/kubenoops/railctl/internal/types"
@@ -44,6 +45,24 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 	}
 
 	result := &Result{}
+
+	// Environment-level change (deleteProtection). Applied before per-service
+	// work so protection is asserted early. A nil cs.Environment means the
+	// manifest omitted deleteProtection (or live already matches) — leave it
+	// alone.
+	if cs.Environment != nil {
+		if opts.DryRun {
+			fmt.Fprintf(opts.Output, "Would set deleteProtection to %t\n", cs.Environment.DeleteProtection)
+		} else {
+			if err := setEnvironmentDeleteProtection(client, projectID, envID, cs.Environment.DeleteProtection); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("setting deleteProtection: %w", err))
+			} else if cs.Environment.DeleteProtection {
+				fmt.Fprintf(opts.Output, "✓ Environment delete-protected\n")
+			} else {
+				fmt.Fprintf(opts.Output, "✓ Environment delete protection removed\n")
+			}
+		}
+	}
 
 	// Separate changes by type.
 	var creates, updates, deletes []diff.ResourceChange
@@ -510,6 +529,15 @@ func findVolumeInstanceIDByVolume(client api.APIClient, projectID, envID, volume
 		lastErr = fmt.Errorf("volume instance for volume %q not found", volumeID)
 	}
 	return "", lastErr
+}
+
+// setEnvironmentDeleteProtection sets or clears the DELETE_PROTECTION shared
+// variable on the environment. It delegates to cmdutil.SetDeleteProtection,
+// whose write is clobber-safe (read-merge-write, preserving every other shared
+// variable). Clearing writes "false" (Railway has no serviceless
+// delete-shared-variable path; the guard treats "false" as unprotected).
+func setEnvironmentDeleteProtection(client api.APIClient, projectID, envID string, protect bool) error {
+	return cmdutil.SetDeleteProtection(client, projectID, envID, protect)
 }
 
 // registryCreds returns the configured private-registry credentials, or nil

@@ -40,16 +40,51 @@ type ResourceChange struct {
 // ChangeSet is the full set of changes needed to reconcile desired → live state.
 type ChangeSet struct {
 	Changes []ResourceChange
+	// Environment holds an environment-level change (currently just the
+	// deleteProtection toggle). It is nil when the manifest omits deleteProtection
+	// or the live state already matches — an omitted field never produces a
+	// change, so a dropped line never silently weakens the safety control.
+	Environment *EnvironmentChange
 }
 
-// HasChanges returns true if there are any create, update, or delete operations.
+// EnvironmentChange represents an environment-level (not per-service) change.
+// DeleteProtection is the desired truthiness of the DELETE_PROTECTION shared
+// variable; Current is the live truthiness it will replace.
+type EnvironmentChange struct {
+	DeleteProtection        bool
+	CurrentDeleteProtection bool
+}
+
+// HasChanges returns true if there are any create, update, or delete operations,
+// or an environment-level change.
 func (cs *ChangeSet) HasChanges() bool {
+	if cs.Environment != nil {
+		return true
+	}
 	for _, c := range cs.Changes {
 		if c.Type != ChangeNone {
 			return true
 		}
 	}
 	return false
+}
+
+// ComputeEnvironment compares the manifest's desired deleteProtection against the
+// live DELETE_PROTECTION truthiness and returns an EnvironmentChange when they
+// differ, or nil when they match. A nil desired pointer means the field was
+// omitted: it always returns nil (leave the live state alone — never
+// auto-unprotect).
+func ComputeEnvironment(desired *bool, liveProtected bool) *EnvironmentChange {
+	if desired == nil {
+		return nil
+	}
+	if *desired == liveProtected {
+		return nil
+	}
+	return &EnvironmentChange{
+		DeleteProtection:        *desired,
+		CurrentDeleteProtection: liveProtected,
+	}
 }
 
 // Summary returns a human-readable summary like "2 to create, 1 to update, 0 to delete".
