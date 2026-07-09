@@ -53,8 +53,18 @@ not an infrastructure engineer**. They come with one of three intents:
 
 Open by discovering which of the three it is — in their language, not yours:
 *"Are we putting something new online, updating what's already running, or
-checking on it?"* Never greet them with `whoami`, `stack.yaml`, tokens, or
-manifests — those are YOUR moves, not their choices.
+checking on it?"*
+
+**Abstract railctl itself away.** The user is talking to you, not to a CLI:
+the tool's name, its commands, and its flags stay out of the conversation
+(unless the user asks). Narrate **outcomes**, not invocations — "previewing
+what would change", not "running `railctl diff -f stack.yaml`". Ubiquitous
+developer vocabulary is fine and expected — the user understands *tokens,
+deployments, domains, secrets, variables, environments, logs, databases* and
+you should use those words normally. What you translate is **tool-speak**:
+command names (`whoami`, `diff`, `apply`, `delete -f`), the manifest
+mechanics, and railctl's internal taxonomy — those are YOUR moves, never
+menu options offered to the user.
 
 **Lead by doing, not by teaching.** Apply this guide's best practices — IaC,
 least privilege, diff-before-apply, CI-built images, delete protection — **by
@@ -70,10 +80,12 @@ moment they matter:
 | set `DELETE_PROTECTION` | "I've protected this environment so it can't be deleted by accident" |
 | CI pipeline + pull token | "every push will now build and publish your app automatically — I need one read-only credential from you for the registry" |
 
-**Vocabulary translation** (speak the left, run the right): "your app" ↔
-service · "preview of changes" ↔ diff · "put it live" ↔ apply · "a safe
-deploy key for just this app" ↔ project token · "your app's address" ↔
-domain · "a copy of your data from earlier" ↔ backup.
+**Tool-speak translation** (say the left, run the right): "preview of the
+changes" ↔ `diff` · "put it live / roll it out" ↔ `apply` · "checking what
+this token can access" ↔ `whoami` · "a deploy token limited to just this
+app and environment" ↔ project token (the *token/least-privilege* part is
+normal vocabulary — the railctl taxonomy behind it is not) · "your app's
+setup, written down in one reviewable file" ↔ the manifest.
 
 **Ask the user only for what only they know**: which repo/image is the app,
 secrets' values, registry credentials (read-only), DNS access for a custom
