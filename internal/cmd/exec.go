@@ -63,9 +63,10 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(execCmd)
-	// Everything after `--` is the remote command, verbatim — don't let cobra
-	// interpret remote flags as railctl's.
-	execCmd.Flags().SetInterspersed(false)
+	// railctl's own flags (-p/-e/-i/--deployment-instance) parse anywhere
+	// before `--`; everything after `--` is the remote command, verbatim
+	// (split via ArgsLenAtDash in runExec). Mirrors `kubectl exec pod -it -- cmd`.
+	execCmd.Flags().SetInterspersed(true)
 	execCmd.Flags().StringVarP(&execIdentityFile, "identity-file", "i", "",
 		"SSH private key to use (default: your ~/.ssh default key or ssh-agent)")
 	execCmd.Flags().StringVar(&execInstanceID, "deployment-instance", "",
@@ -74,7 +75,16 @@ func init() {
 
 func runExec(cmd *cobra.Command, args []string) error {
 	serviceName := args[0]
-	remoteCmd := args[1:] // everything after the service name (post `--`)
+	// The remote command is only what follows `--`. Args between the service
+	// name and `--` are not a command (they'd be railctl flags, already parsed).
+	var remoteCmd []string
+	if dash := cmd.ArgsLenAtDash(); dash >= 0 {
+		remoteCmd = args[dash:]
+	} else if len(args) > 1 {
+		// No `--`: extra bare positionals are taken as the command (lenient,
+		// works for flagless commands like `exec api ls`).
+		remoteCmd = args[1:]
+	}
 
 	// Fail fast if the local ssh binary is missing before doing any API work.
 	if err := sshx.EnsureSSHAvailable(); err != nil {

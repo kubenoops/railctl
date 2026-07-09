@@ -148,9 +148,11 @@ func TestClient_ListSSHKeys(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
-				"sshPublicKeys": []map[string]any{
-					{"id": "k1", "name": "a", "fingerprint": "SHA256:one"},
-					{"id": "k2", "name": "b", "fingerprint": "SHA256:two"},
+				"sshPublicKeys": map[string]any{
+					"edges": []map[string]any{
+						{"node": map[string]any{"id": "k1", "name": "a", "fingerprint": "SHA256:one"}},
+						{"node": map[string]any{"id": "k2", "name": "b", "fingerprint": "SHA256:two"}},
+					},
 				},
 			},
 		})

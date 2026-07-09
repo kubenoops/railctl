@@ -20,7 +20,7 @@ type SSHKey struct {
 // There is no projectId — keys attach to a user or workspace, never a project,
 // which is why a project-scoped token cannot register a key.
 const sshPublicKeyCreateMutation = `
-mutation SshPublicKeyCreate($input: SSHPublicKeyCreateInput!) {
+mutation SshPublicKeyCreate($input: SshPublicKeyCreateInput!) {
 	sshPublicKeyCreate(input: $input) {
 		id
 		name
@@ -34,9 +34,13 @@ mutation SshPublicKeyCreate($input: SSHPublicKeyCreateInput!) {
 const sshPublicKeysQuery = `
 query SshPublicKeys($workspaceId: String) {
 	sshPublicKeys(workspaceId: $workspaceId) {
-		id
-		name
-		fingerprint
+		edges {
+			node {
+				id
+				name
+				fingerprint
+			}
+		}
 	}
 }
 `
@@ -50,12 +54,17 @@ type sshPublicKeyCreateResponse struct {
 	} `json:"sshPublicKeyCreate"`
 }
 
-// sshPublicKeysResponse is the response for sshPublicKeysQuery.
+// sshPublicKeysResponse is the response for sshPublicKeysQuery (a GraphQL
+// connection: sshPublicKeys { edges { node { … } } }).
 type sshPublicKeysResponse struct {
-	SSHPublicKeys []struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Fingerprint string `json:"fingerprint"`
+	SSHPublicKeys struct {
+		Edges []struct {
+			Node struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Fingerprint string `json:"fingerprint"`
+			} `json:"node"`
+		} `json:"edges"`
 	} `json:"sshPublicKeys"`
 }
 
@@ -112,12 +121,12 @@ func (c *Client) ListSSHKeys(workspaceID string) ([]SSHKey, error) {
 		return nil, err
 	}
 
-	keys := make([]SSHKey, 0, len(resp.SSHPublicKeys))
-	for _, k := range resp.SSHPublicKeys {
+	keys := make([]SSHKey, 0, len(resp.SSHPublicKeys.Edges))
+	for _, e := range resp.SSHPublicKeys.Edges {
 		keys = append(keys, SSHKey{
-			ID:          k.ID,
-			Name:        k.Name,
-			Fingerprint: k.Fingerprint,
+			ID:          e.Node.ID,
+			Name:        e.Node.Name,
+			Fingerprint: e.Node.Fingerprint,
 		})
 	}
 	return keys, nil
