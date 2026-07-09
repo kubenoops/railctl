@@ -127,19 +127,20 @@ func TestRunPortForward_MultipleSpecsOneInvocation(t *testing.T) {
 	}
 }
 
-func TestRunPortForward_JumpForm(t *testing.T) {
+func TestRunPortForward_ThreeFieldRejected(t *testing.T) {
 	runner := &fakeRunner{}
-	client := execTestClient("jump-inst")
+	client := execTestClient("api-inst")
 	restore := setPFEnv(t, client, runner, writePubKey(t))
 	defer restore()
 
+	// The three-field jump form is unsupported (Railway's relay only forwards
+	// to the target's own loopback) — it must fail before launching ssh.
 	err := runPortForward(portForwardCmd, []string{"api", "6443:kube-apiserver.railway.internal:6443"})
-	if err != nil {
-		t.Fatalf("runPortForward error: %v", err)
+	if err == nil {
+		t.Fatal("expected the three-field spec to be rejected")
 	}
-	joined := strings.Join(runner.gotArgv, " ")
-	if !strings.Contains(joined, "-L 127.0.0.1:6443:kube-apiserver.railway.internal:6443") {
-		t.Errorf("jump form must pass the internal host verbatim: %v", runner.gotArgv)
+	if len(runner.gotArgv) != 0 {
+		t.Errorf("ssh must not be launched on a bad spec: %v", runner.gotArgv)
 	}
 }
 

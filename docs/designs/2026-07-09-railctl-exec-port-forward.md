@@ -1,3 +1,16 @@
+> ## ⚠️ CORRECTION (verified live 2026-07-09, post-design)
+> The **three-field `LOCAL:HOST:REMOTE` "jump" form was removed** — it does not
+> work. Railway's SSH relay forwards **only to the target container's own
+> loopback**; an `-L` to any other host (even a resolvable `*.railway.internal`
+> name) yields an empty reply, while the SAME name is reachable with `curl` from
+> *inside* that container (proving internal networking is fine — the relay's `-L`
+> handler simply doesn't honor non-loopback targets). This is why Railway's own
+> CLI always pins `127.0.0.1`. **Private services are reached by forwarding
+> directly INTO them** (kubectl's model), which is proven and shipped. Also
+> verified: the forward target must bind IPv4 loopback/`0.0.0.0` (IPv6-only
+> `[::]` binds are unreachable). The rest of this design (transport, auth, token
+> scope, exec) is accurate and implemented.
+
 # Design: `railctl exec` + `railctl port-forward` — SSH transport to Railway service instances
 
 **Date:** 2026-07-09

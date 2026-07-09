@@ -27,55 +27,48 @@ var (
 
 // portForwardCmd represents the `railctl port-forward` command.
 var portForwardCmd = &cobra.Command{
-	Use:   "port-forward <service> [LOCAL:]REMOTE [[LOCAL:]HOST:REMOTE ...]",
+	Use:   "port-forward <service> [LOCAL:]REMOTE [[LOCAL:]REMOTE ...]",
 	Short: "Forward local ports to a service over SSH (kubectl-style)",
 	Long: `Forward one or more local ports to a Railway service container over
 Railway's SSH relay, kubectl-port-forward style. Multiple ports ride ONE ssh
 connection. Runs in the foreground and streams until you press Ctrl-C.
 
 railctl shells out to your local 'ssh' binary and dials Railway's global relay
-(ssh.railway.com). The relay brokers the forward into the container — the
-container needs NO sshd of its own. You DO need a local 'ssh' binary and an SSH
-key you've registered with Railway (railctl registers your existing public key
-automatically the first time).
+(ssh.railway.com). The relay brokers the forward into the named service's own
+container — the container needs NO sshd of its own. You DO need a local 'ssh'
+binary and an SSH key registered with Railway (railctl registers your existing
+public key automatically the first time).
 
 Token scope: port-forward needs an ACCOUNT or WORKSPACE token. SSH keys attach
 to a user or workspace, never a project, so a project-scoped token cannot
 register a key and port-forward fails fast under one.
 
-Port-spec grammar (three forms):
+Reaching a PRIVATE service: forward directly INTO it — name the private
+service and it works even with no public domain/proxy (kubectl's model: you
+port-forward the target itself, not a bastion). Railway's relay forwards only
+to the target container's OWN loopback, so there is no jump/bastion form.
 
-  REMOTE              e.g. 8080        → localhost:8080  -> 127.0.0.1:8080 in the service
-  LOCAL:REMOTE        e.g. 6543:5432   → localhost:6543  -> 127.0.0.1:5432 in the service
-  LOCAL:HOST:REMOTE   the JUMP form    → localhost:LOCAL -> HOST:REMOTE (a DIFFERENT private host)
+Port-spec grammar:
 
-The one- and two-field forms always pin the remote host to the literal
-127.0.0.1 (the service's own loopback) — a bare number can never smuggle
-"localhost", which the relay resolves to an unreachable mesh address.
+  REMOTE          e.g. 8080       → localhost:8080 -> the service's 127.0.0.1:8080
+  LOCAL:REMOTE    e.g. 6543:5432  → localhost:6543 -> the service's 127.0.0.1:5432
 
-The three-field JUMP form is the headline: reach a DIFFERENT private,
-unexposed host (a *.railway.internal DNS name) THROUGH a chosen jump service
-whose container sits on the environment's private network. The relay resolves
-the internal name server-side from inside the jump container's netns.
-
-  IMPORTANT: *.railway.internal names resolve to an IPv6 address. A jump
-  forward only reaches internal targets that bind their internal/IPv6
-  interface ([::]:port). An IPv4-only service (e.g. default nginx on
-  0.0.0.0:80) gives "empty reply" — a target-binding property, not a railctl
-  bug.
+The remote side is always the service's own loopback (127.0.0.1). NOTE: the
+target must LISTEN on IPv4 loopback/0.0.0.0. A service that binds IPv6-only
+([::]) is not reachable this way (an SSH -L to loopback finds nothing).
 
 Examples:
   # Forward localhost:5432 -> the db service's own 127.0.0.1:5432
   railctl port-forward db 5432 -p my-project -e production
+
+  # Reach a PRIVATE apiserver directly (no public exposure needed)
+  railctl port-forward kube-apiserver 6443 -p my-project -e production
 
   # Map a different local port
   railctl port-forward db 6543:5432 -p my-project -e production
 
   # Multiple ports over one connection
   railctl port-forward db 5432 6379 -p my-project -e production
-
-  # JUMP form: reach a private apiserver THROUGH a jump service
-  railctl port-forward jump-svc 6443:kube-apiserver.railway.internal:6443 -p my-project -e production
 
   # Share the forward on the LAN (opt-in) and use a specific key
   railctl port-forward db 5432 --address 0.0.0.0 -i ~/.ssh/id_ed25519
@@ -222,14 +215,8 @@ func printForwardBanner(w *os.File, serviceName string, forwards []sshx.PortForw
 		host = bind
 	}
 	for _, f := range forwards {
-		if f.RemoteHost == "" || f.RemoteHost == "127.0.0.1" {
-			// Direct forward into the service's own loopback.
-			fmt.Fprintf(w, "Forwarding: %s:%d → %s:%d … (Ctrl-C to stop)\n",
-				host, f.LocalPort, serviceName, f.RemotePort)
-		} else {
-			// Jump form: reaching a different private host via the service.
-			fmt.Fprintf(w, "Forwarding: %s:%d → %s:%d (via %s) … (Ctrl-C to stop)\n",
-				host, f.LocalPort, f.RemoteHost, f.RemotePort, serviceName)
-		}
+		// The remote side is always the service's own loopback.
+		fmt.Fprintf(w, "Forwarding: %s:%d → %s:%d … (Ctrl-C to stop)\n",
+			host, f.LocalPort, serviceName, f.RemotePort)
 	}
 }

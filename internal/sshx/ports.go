@@ -73,24 +73,13 @@ func ParsePortSpec(spec string) (PortForward, error) {
 		}
 		return PortForward{LocalPort: local, RemoteHost: loopback, RemotePort: remote}, nil
 
-	case 3:
-		// LOCAL:HOST:REMOTE — the jump form; HOST passed through verbatim.
-		local, err := parsePort(parts[0], "local port")
-		if err != nil {
-			return PortForward{}, specErr(spec, err)
-		}
-		host := strings.TrimSpace(parts[1])
-		if host == "" {
-			return PortForward{}, specErr(spec, fmt.Errorf("empty remote host in LOCAL:HOST:REMOTE form"))
-		}
-		remote, err := parsePort(parts[2], "remote port")
-		if err != nil {
-			return PortForward{}, specErr(spec, err)
-		}
-		return PortForward{LocalPort: local, RemoteHost: host, RemotePort: remote}, nil
-
 	default:
-		return PortForward{}, specErr(spec, fmt.Errorf("too many ':'-separated fields — use REMOTE, LOCAL:REMOTE, or LOCAL:HOST:REMOTE"))
+		// A LOCAL:HOST:REMOTE "jump" form was considered, but Railway's SSH
+		// relay only forwards to the target container's OWN loopback — it does
+		// not honor -L forwards to other hosts (verified live). So a spec is
+		// always [LOCAL:]REMOTE and forwards into the service you name. To
+		// reach a private service, port-forward directly into IT.
+		return PortForward{}, specErr(spec, fmt.Errorf("expected REMOTE or LOCAL:REMOTE (port-forward reaches the target service's own loopback; forward directly into the service you want to reach)"))
 	}
 }
 

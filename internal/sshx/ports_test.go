@@ -30,22 +30,6 @@ func TestParsePortSpec(t *testing.T) {
 			spec: "5432:5432",
 			want: PortForward{LocalPort: 5432, RemoteHost: "127.0.0.1", RemotePort: 5432},
 		},
-		// LOCAL:HOST:REMOTE (three fields, the jump form) — HOST verbatim.
-		{
-			name: "jump form: HOST passed through verbatim (railway.internal)",
-			spec: "6443:kube-apiserver.railway.internal:6443",
-			want: PortForward{LocalPort: 6443, RemoteHost: "kube-apiserver.railway.internal", RemotePort: 6443},
-		},
-		{
-			name: "jump form: IP host verbatim",
-			spec: "9000:10.0.0.5:9000",
-			want: PortForward{LocalPort: 9000, RemoteHost: "10.0.0.5", RemotePort: 9000},
-		},
-		{
-			name: "jump form: distinct local and remote ports",
-			spec: "16443:kube-apiserver.railway.internal:6443",
-			want: PortForward{LocalPort: 16443, RemoteHost: "kube-apiserver.railway.internal", RemotePort: 6443},
-		},
 		// Invalid inputs.
 		{name: "empty", spec: "", wantErr: true},
 		{name: "port zero", spec: "0", wantErr: true},
@@ -54,8 +38,10 @@ func TestParsePortSpec(t *testing.T) {
 		{name: "non-numeric local", spec: "abc:5432", wantErr: true},
 		{name: "non-numeric remote", spec: "5432:abc", wantErr: true},
 		{name: "out-of-range remote in two-field", spec: "5432:99999", wantErr: true},
-		{name: "out-of-range remote in jump form", spec: "6443:host:70000", wantErr: true},
-		{name: "empty host in jump form", spec: "6443::6443", wantErr: true},
+		// The three-field "jump" form is rejected: Railway's relay only forwards
+		// to the target container's own loopback (verified live), so a spec is
+		// always [LOCAL:]REMOTE.
+		{name: "three-field jump form rejected", spec: "6443:kube-apiserver.railway.internal:6443", wantErr: true},
 		{name: "too many colons", spec: "1:2:3:4", wantErr: true},
 		{name: "empty local", spec: ":5432", wantErr: true},
 	}
@@ -119,22 +105,6 @@ func TestForwardArgs(t *testing.T) {
 				"-L", "127.0.0.1:5432:127.0.0.1:5432",
 				"-L", "127.0.0.1:6379:127.0.0.1:6379",
 				"inst-123@ssh.railway.com",
-			},
-		},
-		{
-			name: "jump form: internal host verbatim in -L",
-			opts: ForwardOpts{
-				InstanceID: "jump-inst",
-				Forwards:   []PortForward{{LocalPort: 6443, RemoteHost: "kube-apiserver.railway.internal", RemotePort: 6443}},
-			},
-			want: []string{
-				"-o", "StrictHostKeyChecking=accept-new",
-				"-N",
-				"-o", "ExitOnForwardFailure=yes",
-				"-o", "ServerAliveInterval=30",
-				"-o", "ServerAliveCountMax=3",
-				"-L", "127.0.0.1:6443:kube-apiserver.railway.internal:6443",
-				"jump-inst@ssh.railway.com",
 			},
 		},
 		{
