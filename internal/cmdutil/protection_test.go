@@ -142,7 +142,7 @@ func TestCheckProjectDeleteProtection_CollectsAllProtected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for project with protected environments, got nil")
 	}
-	for _, want := range []string{"my-app", "production", "qa", DeleteProtectionVar, "delete-protected"} {
+	for _, want := range []string{"my-app", "production", "qa", "unprotect environment", "delete-protected"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("expected error to contain %q, got: %v", want, err)
 		}
