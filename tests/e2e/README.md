@@ -44,18 +44,27 @@ account fails; explicit `-w` round-trips).
 
 **`workspace/`** — exclusive to a workspace token: project and environment
 lifecycle (with implicit workspace inference — no `-w` needed), minting project
-tokens for arbitrary projects, `-w` rejection on a bound token, and the `TestSmoke`
-full-lifecycle walk.
+tokens for arbitrary projects, `-w` rejection on a bound token, the `TestSmoke`
+full-lifecycle walk, the **`DELETE_PROTECTION` resource matrix**
+(`TestDeleteProtectionResources`: a protected environment blocks service/volume
+deletes but allows image updates + variable set/delete), and the
+**least-privilege hint** (`TestLeastPrivilegeHint`: the stderr nudge fires in
+text mode, is silent under `-o json` and `RAILCTL_NO_HINTS=1`).
 
 **`project/`** — the bulk. In-scope mechanics (services, variables, volumes,
 backups, deployments, apply/diff) run **flag-free**: the token carries its
 (project, environment) scope, so dropping `-p`/`-e` is itself the implicit-scoping
 assertion. Plus the boundary fail-fasts: project enumeration denied, contradicting
-`-p`/`-e` flags refused, self-minting within scope. Its `TestMain` fixture: the
-workspace token creates a fixture project, mints a project token scoped to it
-(that bootstrap is itself the proof that workspace→project minting works), every
-test runs under the minted token — which lives only in process memory — and
-teardown runs with the workspace token.
+`-p`/`-e` flags refused, self-minting within scope. Also **`exec` and
+`port-forward` over Railway's SSH relay** (`TestExec`, `TestPortForward`): both
+run under the minted project token — proving the v1.1.0 removal of the SSH
+project-token gate — after registering a throwaway SSH key (an account/workspace
+operation, so it uses the bootstrap workspace token and revokes it at the end;
+these two tests `t.Skip` if `ssh`/`ssh-keygen` are not on `PATH`). Its `TestMain`
+fixture: the workspace token creates a fixture project, mints a project token
+scoped to it (that bootstrap is itself the proof that workspace→project minting
+works), every test runs under the minted token — which lives only in process
+memory — and teardown runs with the workspace token.
 
 ## How to run
 

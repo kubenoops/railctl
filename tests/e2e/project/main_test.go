@@ -33,6 +33,12 @@ var (
 	fixtureProject string
 	// projectToken is minted in TestMain and held only in process memory.
 	projectToken string
+	// bootstrapToken is the workspace token this group was bootstrapped with.
+	// The bulk of tests run under the project token, but SSH-key registration
+	// (for exec/port-forward) is an account/workspace-level operation a project
+	// token cannot perform, so those tests register their ephemeral key with
+	// this credential. Held only in process memory.
+	bootstrapToken string
 )
 
 // fixtureEnvName is the environment the project token is scoped to.
@@ -50,6 +56,7 @@ const fixtureEnvName = "production"
 
 func TestMain(m *testing.M) {
 	wsToken := harness.RequireToken("RAILWAY_WORKSPACE_TOKEN", harness.TokenWorkspace)
+	bootstrapToken = wsToken
 
 	// Compile-check mode (-run '^$'): RequireToken skipped classification and
 	// may have returned an empty token. No test will execute, so skip all
