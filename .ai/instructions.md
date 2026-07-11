@@ -69,8 +69,8 @@ requirements and group-specific commands.
 
 - Confirm the issue is still open, unassigned, and not already covered by an open
   pull request before starting work.
-- Inspect `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`, and
-  `.gemini/styleguide.md` before editing code.
+- Inspect `CONTRIBUTING.md`, `.github/PULL_REQUEST_TEMPLATE.md`, and `SKILL.md`
+  before editing code.
 - Keep generated files in sync when touching generated sources.
 - Do not commit local binaries, coverage output, credentials, or `.env` files.
 - Fill out the PR template with the checks actually run and note when E2E tests
