@@ -339,8 +339,10 @@ deletion tripwire:
 1. Imperatively: `railctl protect environment <env> -p my-app`. This sets the
    environment-level (shared, serviceless) `DELETE_PROTECTION` variable to
    `true` — clobber-safe, so it preserves every other shared variable. Undo it
-   with `railctl unprotect environment <env> -p my-app`. Both require an
-   account/workspace token (a project token cannot write shared variables).
+   with `railctl unprotect environment <env> -p my-app`. Both work with **any**
+   token scoped to the environment — including a **project token** — so you can
+   arm protection with the same least-privilege token you use for everything
+   else (flag-free under a project token; the scope is baked in).
 2. Declaratively: add `deleteProtection: true` at the **top level** of the
    manifest (a sibling of `project`/`environment`/`services`, not inside a
    service). `apply` then ensures the flag is set; `deleteProtection: false`

@@ -27,8 +27,9 @@ to a truthy value. While protected, the environment cannot be deleted, and its
 project cannot be deleted either (deleting a project is refused when any of its
 environments is protected).
 
-This sets an environment-level (shared, serviceless) variable, so it requires an
-account or workspace token — a project token cannot write shared variables.
+This sets an environment-level (shared, serviceless) variable. It works with ANY
+token scoped to the environment — including a project token — so you can protect
+with the same least-privilege token you use for everything else.
 
 The operation is idempotent: protecting an already-protected environment simply
 re-asserts the flag and preserves every other shared variable.`,
@@ -70,21 +71,14 @@ func toggleDeleteProtection(cmd *cobra.Command, envName string, protect bool) er
 	}
 	client := newAPIClient(tkn)
 
-	op := "protect an environment"
-	if !protect {
-		op = "unprotect an environment"
-	}
-	if err := cmdutil.RequireWorkspaceScope(client, op); err != nil {
-		return err
-	}
-
-	projectName := getProject()
-	if projectName == "" {
-		return fmt.Errorf("project required: use -p flag or set RAILCTL_PROJECT")
-	}
-
+	// No token-scope gate: writing an environment-level shared variable works
+	// with ANY token scoped to that environment — including a project token
+	// (verified live; the earlier "project token cannot write shared variables"
+	// belief was a raw-probe artifact of the wrong auth header). ResolveContext
+	// handles both cases: a project token derives its own project/env scope, and
+	// a broader token with no -p gets a clear "project required" error.
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
-		ProjectName:     projectName,
+		ProjectName:     getProject(),
 		EnvironmentName: envName,
 		NeedEnvironment: true,
 	})

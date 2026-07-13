@@ -22,8 +22,9 @@ var unprotectEnvironmentCmd = &cobra.Command{
 shared variable to a falsy value. Once unprotected, the environment (and its
 project) can be deleted again.
 
-This writes an environment-level (shared, serviceless) variable, so it requires
-an account or workspace token — a project token cannot write shared variables.
+This writes an environment-level (shared, serviceless) variable. It works with
+ANY token scoped to the environment — including a project token — so you can
+unprotect with the same least-privilege token you use for everything else.
 
 The operation is idempotent: unprotecting an already-unprotected environment is
 a no-op that preserves every other shared variable.`,

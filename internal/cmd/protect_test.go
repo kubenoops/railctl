@@ -143,22 +143,30 @@ func TestProtectEnvironment_Idempotent(t *testing.T) {
 	}
 }
 
-func TestProtectEnvironment_RejectsProjectToken(t *testing.T) {
+// TestProtectEnvironment_ProjectTokenProceeds asserts the token-scope gate is
+// gone: a project token can write its own environment's shared variable, so
+// protect must resolve the token's baked scope and set DELETE_PROTECTION rather
+// than fail fast. (A project token uses the Project-Access-Token header, under
+// which the shared-variable upsert is authorized — verified live.)
+func TestProtectEnvironment_ProjectTokenProceeds(t *testing.T) {
 	var captured map[string]string
 	mock := protectTestMock(nil, &captured)
+	// Wire the project-token resolution path: ResolveContext derives project +
+	// environment from the token instead of listing projects.
 	mock.IsProjectTokenFunc = func() (bool, error) { return true, nil }
+	mock.GetProjectContextFunc = func() (string, string, error) { return "proj-1", "env-1", nil }
+	mock.GetProjectFunc = func(id string) (types.Project, error) {
+		return types.Project{ID: "proj-1", Name: "my-project"}, nil
+	}
 
 	_, err := runProtectTest(t, mock, func() error {
 		return runProtectEnvironment(protectEnvironmentCmd, []string{"production"})
 	}, "", "table")
-	if err == nil {
-		t.Fatal("expected error with a project token, got nil")
+	if err != nil {
+		t.Fatalf("protect must proceed under a project token, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "project token") {
-		t.Errorf("expected project-token error, got: %v", err)
-	}
-	if captured != nil {
-		t.Errorf("expected no shared-variable write with a project token, got %v", captured)
+	if got := captured["DELETE_PROTECTION"]; got != "true" {
+		t.Errorf("expected DELETE_PROTECTION=true written under a project token, got %q", got)
 	}
 }
 
