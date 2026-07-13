@@ -14,15 +14,15 @@ railctl/
 ├── cmd/railctl/             # Go CLI main entry point
 ├── internal/                # Go implementation (primary focus)
 │   ├── api/                 # Railway GraphQL API client (+ mock client)
-│   ├── apply/                # Declarative config apply engine
+│   ├── apply/               # Declarative config apply engine
 │   ├── cmd/                 # Cobra command implementations
-│   ├── cmdutil/              # Shared command scaffolding (ResolveContext, PrintResult)
-│   ├── config/                # Declarative config parsing
-│   ├── diff/                  # Drift diff engine
-│   ├── output/               # Output formatting (table, JSON, YAML, wide)
+│   ├── cmdutil/             # Shared command scaffolding (ResolveContext, PrintResult)
+│   ├── config/              # Declarative config parsing
+│   ├── diff/                # Drift diff engine
+│   ├── output/              # Output formatting (table, JSON, YAML, wide)
 │   ├── resolver/            # Name/ID resolution logic (exact → substring → ambiguous)
-│   ├── skill/                 # Embedded copy of docs/railctl-skill.md
-│   ├── sshx/                  # SSH exec/port-forward helpers
+│   ├── skill/               # Embedded copy of docs/railctl-skill.md
+│   ├── sshx/                # SSH exec/port-forward helpers
 │   └── types/               # Data structures
 ├── tests/e2e/               # Live-Railway E2E tests (account/workspace/project groups, build tag: e2e)
 ├── examples/                # Deployment examples (n8n, temporal, shared scripts)
