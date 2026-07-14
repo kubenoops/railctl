@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // replicasQuery lists the running replica (deployment-instance) ids of a
@@ -71,12 +72,12 @@ func (c *Client) ListReplicas(environmentID, serviceID string) (ReplicaList, err
 		"serviceId":     serviceID,
 	})
 	if err != nil {
-		return ReplicaList{}, err
+		return ReplicaList{}, fmt.Errorf("failed to execute replicas query: %w", err)
 	}
 
 	var resp replicasResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return ReplicaList{}, err
+		return ReplicaList{}, fmt.Errorf("failed to unmarshal replicas response: %w", err)
 	}
 
 	dep := resp.ServiceInstance.LatestDeployment
