@@ -1,1 +1,1 @@
-.ai/instructions.md
+See `.ai/instructions.md`.

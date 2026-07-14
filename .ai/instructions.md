@@ -2,7 +2,7 @@
 
 Use these instructions as the canonical project context for AI coding agents.
 Tool-specific files such as `CLAUDE.md`, `.cursorrules`, `.windsurfrules`, and
-`.github/copilot-instructions.md` link here so every agent reads the same rules.
+`.github/copilot-instructions.md` point here so every agent reads the same rules.
 
 ## Project Snapshot
 
