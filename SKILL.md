@@ -1,43 +1,36 @@
 ---
 name: Railway CLI Development
-description: Guidelines for developing the Railway CLI (railctl-go) - a Go-based CLI tool for Railway.app infrastructure management
+description: Guidelines for developing the Railway CLI (railctl) - a Go-based CLI tool for Railway.app infrastructure management
 ---
 
 # Railway CLI Development Skill
 
-This skill provides guidelines for developing features in the `railctl-go` project, a Go-based CLI tool for managing Railway.app infrastructure.
+This skill provides guidelines for developing features in the `railctl` project, a Go-based CLI tool for managing Railway.app infrastructure.
 
 ## Project Structure
 
 ```
-railway-cli/
+railctl/
 ├── cmd/railctl/             # Go CLI main entry point
 ├── internal/                # Go implementation (primary focus)
-│   ├── api/                 # Railway GraphQL API client
+│   ├── api/                 # Railway GraphQL API client (+ mock client)
+│   ├── apply/               # Declarative config apply engine
 │   ├── cmd/                 # Cobra command implementations
-│   ├── output/              # Output formatting (table, JSON, YAML)
-│   ├── resolver/            # Name/ID resolution logic
+│   ├── cmdutil/             # Shared command scaffolding (ResolveContext, PrintResult)
+│   ├── config/              # Declarative config parsing
+│   ├── diff/                # Drift diff engine
+│   ├── output/              # Output formatting (table, JSON, YAML, wide)
+│   ├── resolver/            # Name/ID resolution logic (exact → substring → ambiguous)
+│   ├── skill/               # Embedded copy of docs/railctl-skill.md
+│   ├── sshx/                # SSH exec/port-forward helpers
 │   └── types/               # Data structures
-├── experiments/             # Experimental code and prototypes
-│   ├── tests/               # Python E2E integration tests
-│   │   └── e2e/             # End-to-end test suite
-│   └── tools/               # Experimental tools
-│       ├── compose-importer/  # Docker Compose to Railway importer
-│       └── railctl/         # Python prototype (reference)
-├── railway-cli-rust/        # Rust CLI (git submodule - reference implementation)
-│   ├── src/
-│   │   ├── commands/        # Command implementations
-│   │   └── gql/             # GraphQL queries/mutations
-│   │       ├── queries/strings/   # GraphQL query definitions
-│   │       ├── mutations/strings/ # GraphQL mutation definitions
-│   │       └── schema.json  # Railway GraphQL schema
-│   └── Cargo.toml
+├── tests/e2e/               # Live-Railway E2E tests (account/workspace/project groups, build tag: e2e)
+├── examples/                # Deployment examples (n8n, temporal, shared scripts)
+├── experiments/             # Legacy Python prototypes — not part of the build or CI, reference only
+├── docs/                    # railctl-skill.md, declarative-config.md, testing-architecture.md, etc.
 ├── go.mod                   # Go module definition
 ├── go.sum                   # Go dependencies
 ├── SKILL.md                 # This file - development guidelines
-├── JOURNAL.md               # Development journal and history
-├── IMPLEMENTATION_TASKS.md  # Task tracking and progress
-├── BUGS.md                  # Known bugs and resolutions
 └── README.md                # Project documentation
 ```
 
@@ -46,21 +39,18 @@ railway-cli/
 ### 1. Research Phase
 **Always start by understanding the existing implementation:**
 
-1. **Check the Rust CLI first** (`railway-cli-rust/` submodule):
-   - Look for GraphQL queries in `railway-cli-rust/src/gql/queries/strings/*.graphql`
-   - Check mutations in `railway-cli-rust/src/gql/mutations/strings/*.graphql`
-   - Review command implementations in `railway-cli-rust/src/commands/*.rs`
-   - The Rust CLI is the reference implementation - it's battle-tested
-
-2. **Study the GraphQL schema**:
-   - Located at `railway-cli-rust/src/gql/schema.json`
-   - Understand field types, especially scalars like `DeploymentMeta` (JSON)
-   - Check for nested structures and relationships
-
-3. **Review existing Go code**:
+1. **Review existing Go code**:
    - Check `internal/api/` for similar API patterns
    - Look at `internal/cmd/` for command structure examples
    - Review `internal/types/` for data structures
+
+2. **Check the docs**:
+   - `docs/token-capability-matrix.md` for what each Railway token scope can do
+   - `docs/testing-architecture.md` and `tests/e2e/README.md` for existing E2E coverage
+   - `docs/designs/` for prior design decisions on related features
+
+3. **Study field types as needed** by querying the live Railway GraphQL API directly
+   (see Debugging Workflow below) — there is no local copy of the schema.
 
 ### 2. Implementation Pattern
 
@@ -359,17 +349,19 @@ if image == "" && creds == nil {
 
 ### 8. Commit Message Format
 
-**Use conventional commits:**
+**Use conventional commits, scoped to the affected package or area:**
 ```
-feat(railctl-go): Add feature description
-fix(railctl-go): Fix issue description
-docs(railctl-go): Update documentation
-test(railctl-go): Add tests for feature
+feat(cmd): add feature description
+fix(api): fix issue description
+docs(skill): update documentation
+test(e2e): add tests for feature
 ```
+
+A scope is optional for changes that span multiple areas (`feat: add deployment status to services`).
 
 **Multi-line commits for complex changes:**
 ```
-feat(railctl-go): Add deployment status to services
+feat(api): add deployment status to services
 
 - Add GetBuildLogs API method
 - Update ServiceDetail struct with status fields
@@ -436,17 +428,20 @@ curl -X POST https://backboard.railway.app/graphql/v2 \
   -d '{"query": "query { ... }"}'
 ```
 
-### 2. Compare with Rust CLI
+### 2. Schema Introspection
 ```bash
-# Check how Rust CLI does it
-rg "mutation_name" railway-cli-rust/src/
-rg "query_name" railway-cli-rust/src/gql/
+# Query the live schema directly — there is no local schema.json
+curl -X POST https://backboard.railway.app/graphql/v2 \
+  -H "Authorization: Bearer $RAILWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { __type(name: \"TypeName\") { fields { name type { name kind } } } }"}'
 ```
 
-### 3. Schema Validation
+### 3. Compare with Existing Go Code
 ```bash
-# Check field types in schema
-jq '.data.__schema.types[] | select(.name=="TypeName")' railway-cli-rust/src/gql/schema.json
+# Check how a similar query/mutation is already handled
+rg "mutationName" internal/api/
+rg "queryName" internal/api/
 ```
 
 ## Key Learnings from This Session
@@ -661,8 +656,8 @@ fi
 
 ## Checklist for New Features
 
-- [ ] Research Rust CLI implementation
-- [ ] Check GraphQL schema for field types
+- [ ] Check `internal/api/` for existing similar patterns
+- [ ] Query the live GraphQL schema for field types (see Debugging Workflow)
 - [ ] Define GraphQL query/mutation constant
 - [ ] Create response type structs
 - [ ] Implement API client method
@@ -683,9 +678,9 @@ fi
 ## Resources
 
 - **Railway GraphQL API:** `https://backboard.railway.app/graphql/v2`
-- **Schema:** `railway-cli-rust/src/gql/schema.json`
-- **Rust CLI Reference:** `railway-cli-rust/src/commands/*.rs`
-- **GraphQL Queries:** `railway-cli-rust/src/gql/queries/strings/*.graphql`
-- **GraphQL Mutations:** `railway-cli-rust/src/gql/mutations/strings/*.graphql`
-- **Python Prototype:** `experiments/tools/railctl/` (for reference)
-- **Docker Compose Importer:** `experiments/tools/compose-importer/`
+- **Token capability matrix:** `docs/token-capability-matrix.md`
+- **E2E test suite:** `tests/e2e/README.md`
+- **Testing architecture:** `docs/testing-architecture.md`
+- **Declarative config:** `docs/declarative-config.md`
+- **Embedded skill guide (source):** `docs/railctl-skill.md`
+- **Design docs:** `docs/designs/`
