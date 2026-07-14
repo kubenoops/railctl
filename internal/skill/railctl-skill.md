@@ -774,7 +774,8 @@ During iterative troubleshooting it is tempting to edit the manifest and jump
 straight to `apply` — don't: each skipped diff is an unreviewed change, and
 skipping breeds the worse habit of *claiming* sync status from memory. Never
 state "no drift" / "state matches the manifest" to the user without a fresh
-`diff` exit-0 **run after your last apply** to back it.
+`diff` **run after your last apply** showing nothing to change (`0 to create,
+0 to update, 0 to delete`) to back it.
 
 **Known blind spot:** `diff`/`apply` reconcile only what railctl models
 (services, deploy config, variables, volumes + backup schedules, domains,
