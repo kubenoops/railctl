@@ -194,9 +194,10 @@ project and environment; use an account or workspace token`).
   but cannot see or switch workspaces — a mismatching `-w` **errors**, a
   matching one is accepted silently. `create project` infers the workspace
   from the token; no `-w` needed.
-- **Any token can mint project tokens** within its reach: account/workspace
-  tokens target any project they can see (`-p`/`-e` required); a project token
-  self-mints for its own scope only (no flags needed).
+- **Minting project tokens needs an account/workspace token** — they can target
+  any project they can see (`-p`/`-e` required). A **project token cannot mint,
+  list, or delete tokens at all**, not even for its own scope: Railway denies
+  it (verified live). Keep a workspace/account token for rotation.
 
 ### The least-privilege workflow (always)
 
@@ -1032,8 +1033,10 @@ railctl token list -p my-app [-e env] [-o wide]       # values masked
 railctl token delete <id> -p my-app --yes
 ```
 
-Works with any token type; a project token self-mints for its own scope
-(no flags). Rotate: mint new → switch consumers → delete old id.
+**All three need an account/workspace token** — Railway denies token minting,
+listing, and deletion to project-scoped tokens (railctl fails fast rather than
+surfacing a bare `Not Authorized`). Rotate: mint new → switch consumers →
+delete old id.
 
 ---
 
@@ -1138,10 +1141,13 @@ railctl create deployment -s db --await-completion   # deploy finalizes restore
 **Token rotation**:
 
 ```bash
-NEW=$(railctl token create deployer-2)         # project token self-mints its scope
+# Rotation needs a WORKSPACE/ACCOUNT token — a project token cannot mint,
+# list, or delete tokens (Railway denies it), not even its own.
+export RAILWAY_TOKEN="$WORKSPACE_TOKEN"
+NEW=$(railctl token create deployer-2 -p my-app -e production)   # capture: shown ONCE
 # switch consumers to $NEW, then:
-railctl token list -o json                     # find the old id
-railctl token delete <old-id> --yes
+railctl token list -p my-app -o json           # find the old id
+railctl token delete <old-id> -p my-app --yes
 ```
 
 ---

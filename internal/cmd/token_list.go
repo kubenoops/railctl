@@ -40,6 +40,12 @@ func runTokenList(cmd *cobra.Command, args []string) error {
 	}
 	client := newAPIClient(tkn)
 
+	// Railway denies token enumeration to project-scoped tokens (verified
+	// live). Fail fast rather than surfacing a bare "Not Authorized".
+	if err := cmdutil.RequireWorkspaceScope(client, "list project tokens"); err != nil {
+		return err
+	}
+
 	needEnv := getEnvironment() != ""
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),

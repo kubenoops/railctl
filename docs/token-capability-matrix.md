@@ -41,7 +41,8 @@ one. There is no "all environments" variant (verified: mint without
 | Services / variables / volumes / backups / deployments / logs / apply / diff | ✅ | ✅ | ✅ within its (project, environment), flag-free | entire `project/` group |
 | Deployment rollback (`delete deployment`) | ✅ | ✅ | ✅ | `project/TestDeploymentLifecycle` |
 | Deployment **reactivation** (`update deployment --set-active`) | ✅ | ✅ | ❌ `Not Authorized` (workspace-reserved) | `project/.../reactivate_previous_denied`, `workspace/TestDeploymentReactivate` |
-| Mint project token (`token create`) | ✅ any project | ✅ any project in workspace | ✅ **its own scope only** (self-mint) | `workspace/TestProjectTokens`, `project/TestBoundaries/self_mint` |
+| Mint project token (`token create`) | ✅ any project | ✅ any project in workspace | ❌ **denied by Railway** — cannot self-mint | `workspace/TestProjectTokens`, `project/TestBoundaries/self_mint` |
+| List / delete project tokens (`token list`/`delete`) | ✅ | ✅ | ❌ **denied by Railway** (delete resolves by listing) | `workspace/TestProjectTokens` |
 | List / delete project tokens | ✅ | ✅ | ✅ within its project | same |
 | Mint workspace/account token (`apiTokenCreate`) | ✅ (`workspaceId` set → workspace token; omitted → account token) | untested | ❌ (assumed) | direct API probe |
 | Exec / port-forward into a service (`exec`, `port-forward`) | ✅ | ✅ | ✅ | works with **any** token — the token only resolves the instance; auth is by a **pre-registered SSH key** the *user* registers at railway.com/account/ssh-keys (railctl does **not** manage keys). Design `2026-07-09-railctl-exec-port-forward.md` |

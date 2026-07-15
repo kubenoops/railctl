@@ -56,6 +56,12 @@ func TestSmoke(t *testing.T) {
 	// ── Create volume ────────────────────────────────────────
 	env.RunOK(t, env.WithPES("create", "volume", "smoke-vol", "--mount-path", "/data")...)
 
+	// Volumes provision asynchronously: listing straight after create can miss
+	// one that exists. Poll before asserting, or the walk flakes.
+	if err := harness.WaitForVolume(env, "smoke-vol", env.WithPES()...); err != nil {
+		t.Fatalf("volume propagation: %v", err)
+	}
+
 	// ── List volumes ─────────────────────────────────────────
 	r = env.RunOK(t, env.WithPES("get", "volumes")...)
 	harness.AssertContains(t, r.Stdout, "/data")

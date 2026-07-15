@@ -49,6 +49,15 @@ func runTokenCreate(cmd *cobra.Command, args []string) error {
 	}
 	client := newAPIClient(tkn)
 
+	// Railway denies projectTokenCreate to project-scoped tokens (verified
+	// live: the raw mutation with the correct Project-Access-Token header
+	// returns "Not Authorized", while the identical input succeeds with a
+	// workspace token). A project token cannot mint — not even for its own
+	// scope. Fail fast with something actionable instead of a bare API error.
+	if err := cmdutil.RequireWorkspaceScope(client, "create a project token"); err != nil {
+		return err
+	}
+
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),
 		EnvironmentName: getEnvironment(),
