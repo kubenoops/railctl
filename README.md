@@ -61,11 +61,11 @@ export RAILWAY_TOKEN=your-api-token-here
 
 railctl automatically detects the token type on first use — no extra configuration needed:
 
-| Token type | What it can do |
-|------------|----------------|
-| **Account** (personal) | Access all workspaces and projects |
-| **Workspace-scoped** | Access all projects in one workspace |
-| **Project-scoped** | Access one project and environment |
+| Token type             | What it can do                       |
+| ---------------------- | ------------------------------------ |
+| **Account** (personal) | Access all workspaces and projects   |
+| **Workspace-scoped**   | Access all projects in one workspace |
+| **Project-scoped**     | Access one project and environment   |
 
 When using a workspace or project token, flags like `-w`, `-p`, and `-e` (or their `RAILCTL_*` equivalents) are ignored with a warning — the scope is already baked into the token.
 
@@ -255,6 +255,56 @@ railctl logs api -f -p my-app -e production
 railctl logs api --deployment abc123 -p my-app -e production
 ```
 
+### Exec & Port-Forward (over SSH)
+
+`railctl exec` and `railctl port-forward` connect into a running service
+container over Railway's SSH relay (`ssh.railway.com`), kubectl-style. railctl
+shells out to your local `ssh` binary — the container needs no sshd of its own.
+
+You need a local `ssh` binary and an SSH key registered **once** with Railway at
+<https://railway.com/account/ssh-keys>. railctl does not manage keys;
+authentication is by your SSH key, not the token, so any token type works.
+
+```bash
+# Open an interactive shell in a service container (no command = shell)
+railctl exec api -p my-app -e production
+
+# Run a one-off command and propagate its exit code
+railctl exec api -p my-app -e production -- ls -la /data
+
+# Use a specific private key
+railctl exec api -p my-app -e production -i ~/.ssh/id_ed25519 -- env
+
+# Forward a local port to the service's own loopback (Ctrl-C to stop)
+railctl port-forward api 8080:80 -p my-app -e production
+
+# Forward multiple ports over one connection
+railctl port-forward api 5432 6379 -p my-app -e production
+
+# Reach a PRIVATE service directly (no public domain/proxy needed)
+railctl port-forward postgres 5432 -p my-app -e production
+```
+
+### Replicas
+
+When a service is scaled to multiple replicas, `get replicas` lists the running
+instances and their IDs. Pass an ID to `exec`/`port-forward` via
+`--deployment-instance` to target that exact replica instead of letting the
+relay pick one.
+
+```bash
+# List a service's running replicas (INSTANCE ID + STATUS)
+railctl get replicas api -p my-app -e production
+
+# Wide adds the parent deployment ID; json/yaml carry the full context
+railctl get replicas api -p my-app -e production -o wide
+railctl get replicas api -p my-app -e production -o json
+
+# Discover an instance id, then target that specific replica
+railctl exec api --deployment-instance <instance-id> -p my-app -e production -- hostname
+railctl port-forward api 8080:80 --deployment-instance <instance-id> -p my-app -e production
+```
+
 ### Volumes
 
 ```bash
@@ -401,34 +451,26 @@ railctl update service app \
 
 These flags are available on every command:
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--token` | | Railway API token (default: `RAILWAY_TOKEN` env var) |
-| `--workspace` | `-w` | Workspace name (default: `RAILCTL_WORKSPACE` env var) |
-| `--project` | `-p` | Project name (default: `RAILCTL_PROJECT` env var) |
-| `--environment` | `-e` | Environment name (default: `RAILCTL_ENVIRONMENT` env var) |
-| `--service` | `-s` | Service name (default: `RAILCTL_SERVICE` env var) |
-| `--output` | `-o` | Output format: `table`, `wide`, `json`, `yaml` (default: `table`) |
+| Flag            | Short | Description                                                       |
+| --------------- | ----- | ----------------------------------------------------------------- |
+| `--token`       |       | Railway API token (default: `RAILWAY_TOKEN` env var)              |
+| `--workspace`   | `-w`  | Workspace name (default: `RAILCTL_WORKSPACE` env var)             |
+| `--project`     | `-p`  | Project name (default: `RAILCTL_PROJECT` env var)                 |
+| `--environment` | `-e`  | Environment name (default: `RAILCTL_ENVIRONMENT` env var)         |
+| `--service`     | `-s`  | Service name (default: `RAILCTL_SERVICE` env var)                 |
+| `--output`      | `-o`  | Output format: `table`, `wide`, `json`, `yaml` (default: `table`) |
 
 ### Environment Variables
 
-| Variable                    | Description                  | Example         |
-| --------------------------- | ---------------------------- | --------------- |
-| `RAILWAY_TOKEN`             | Railway API token (required) | `frp_xxxxxxxxx` |
-| `RAILCTL_PROJECT`           | Default project name/ID      | `my-app`        |
-| `RAILCTL_ENVIRONMENT`       | Default environment name/ID  | `production`    |
-| `RAILCTL_SERVICE`           | Default service name/ID      | `api`           |
-| `RAILCTL_REGISTRY_USERNAME` | Docker registry username     | `myuser`        |
-| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password     | `mytoken`       |
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `RAILWAY_TOKEN` | Railway API token (required) | `frp_xxxxxxxxx` |
-| `RAILCTL_WORKSPACE` | Default workspace name (required when multiple workspaces exist) | `my-team` |
-| `RAILCTL_PROJECT` | Default project name | `my-app` |
-| `RAILCTL_ENVIRONMENT` | Default environment name | `production` |
-| `RAILCTL_SERVICE` | Default service name | `api` |
-| `RAILCTL_REGISTRY_USERNAME` | Docker registry username | `myuser` |
-| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password | `mytoken` |
+| Variable                    | Description                                                      | Example         |
+| --------------------------- | ---------------------------------------------------------------- | --------------- |
+| `RAILWAY_TOKEN`             | Railway API token (required)                                     | `frp_xxxxxxxxx` |
+| `RAILCTL_WORKSPACE`         | Default workspace name (required when multiple workspaces exist) | `my-team`       |
+| `RAILCTL_PROJECT`           | Default project name/ID                                          | `my-app`        |
+| `RAILCTL_ENVIRONMENT`       | Default environment name/ID                                      | `production`    |
+| `RAILCTL_SERVICE`           | Default service name/ID                                          | `api`           |
+| `RAILCTL_REGISTRY_USERNAME` | Docker registry username                                         | `myuser`        |
+| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password                                         | `mytoken`       |
 
 ### Output Formats
 

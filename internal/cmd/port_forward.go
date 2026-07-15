@@ -129,10 +129,14 @@ func runPortForward(cmd *cobra.Command, args []string) error {
 	// --- Resolve the connectable instance id (the SSH username) ---
 	instanceID := pfInstanceID
 	if instanceID == "" {
+		// Default path: let the relay pick a replica. No extra API call.
 		instanceID, err = client.GetServiceInstanceID(rctx.Environment.ID, rctx.Service.ID)
 		if err != nil {
 			return fmt.Errorf("failed to resolve the service instance: %w", err)
 		}
+	} else {
+		// User targeted a specific replica — validate softly (warn, don't block).
+		warnIfUnknownReplica(client, rctx.Environment.ID, rctx.Service.ID, instanceID)
 	}
 
 	// --- Build the ssh argv ---

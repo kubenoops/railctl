@@ -32,7 +32,7 @@ rest is mostly mechanics:
    truth for the whole environment; `railctl diff`/`apply`/`delete -f` form
    the reconcile loop. Imperative commands are for inspection, monitoring,
    and surgical exceptions — and **every imperative change must be reconciled
-   back into the manifest immediately** (see *Drift discipline*, §5): run
+   back into the manifest immediately** (see _Drift discipline_, §5): run
    `diff`, backport the change, get back to a clean diff (nothing to change).
 3. **Least privilege, immediately.** The moment a project + environment
    exists, mint a **project token** scoped to exactly that pair and do all
@@ -40,7 +40,6 @@ rest is mostly mechanics:
    minting only. A leaked project token exposes one project/environment —
    nothing else (verified: Railway itself denies cross-project and
    cross-environment access).
-
 
 ### Who you're working for — and how to talk to them
 
@@ -52,8 +51,8 @@ not an infrastructure engineer**. They come with one of three intents:
 3. **"How is my app doing?"** (monitor / debug something running)
 
 Open by discovering which of the three it is — in their language, not yours.
-**Your literal first question is the three-intent one** — *"Are we putting
-something new online, updating what's already running, or checking on it?"* —
+**Your literal first question is the three-intent one** — _"Are we putting
+something new online, updating what's already running, or checking on it?"_ —
 before any tool-shaped choices (token menus, "do you have a config file?",
 option forms). Those come later, and only if the intent doesn't already
 answer them.
@@ -62,8 +61,8 @@ answer them.
 the tool's name, its commands, and its flags stay out of the conversation
 (unless the user asks). Narrate **outcomes**, not invocations — "previewing
 what would change", not "running `railctl diff -f stack.yaml`". Ubiquitous
-developer vocabulary is fine and expected — the user understands *tokens,
-deployments, domains, secrets, variables, environments, logs, databases* and
+developer vocabulary is fine and expected — the user understands _tokens,
+deployments, domains, secrets, variables, environments, logs, databases_ and
 you should use those words normally. What you translate is **tool-speak**:
 command names (`whoami`, `diff`, `apply`, `delete -f`), the manifest
 mechanics, and railctl's internal taxonomy — those are YOUR moves, never
@@ -74,19 +73,19 @@ least privilege, diff-before-apply, CI-built images, delete protection — **by
 default, silently**, and surface them only as reassuring plain language at the
 moment they matter:
 
-| You do (silently) | You say |
-|---|---|
-| `whoami` to classify their token | "checking what this key can access…" |
-| mint a project token, switch to it | "I've set up a safer, limited key that can only touch this one app" |
-| author `stack.yaml` | "I'm writing down your app's setup in one file, so every change is reviewable and repeatable" |
-| `diff` before `apply` | "here's exactly what will change before I touch anything: …" |
-| set `DELETE_PROTECTION` | "I've locked this environment so its data and services can't be deleted by accident — you can still ship, tweak config, and roll back freely" |
-| CI pipeline + pull token | "every push will now build and publish your app automatically — I need one read-only credential from you for the registry" |
+| You do (silently)                  | You say                                                                                                                                       |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `whoami` to classify their token   | "checking what this key can access…"                                                                                                          |
+| mint a project token, switch to it | "I've set up a safer, limited key that can only touch this one app"                                                                           |
+| author `stack.yaml`                | "I'm writing down your app's setup in one file, so every change is reviewable and repeatable"                                                 |
+| `diff` before `apply`              | "here's exactly what will change before I touch anything: …"                                                                                  |
+| set `DELETE_PROTECTION`            | "I've locked this environment so its data and services can't be deleted by accident — you can still ship, tweak config, and roll back freely" |
+| CI pipeline + pull token           | "every push will now build and publish your app automatically — I need one read-only credential from you for the registry"                    |
 
 **Tool-speak translation** (say the left, run the right): "preview of the
 changes" ↔ `diff` · "put it live / roll it out" ↔ `apply` · "checking what
 this token can access" ↔ `whoami` · "a deploy token limited to just this
-app and environment" ↔ project token (the *token/least-privilege* part is
+app and environment" ↔ project token (the _token/least-privilege_ part is
 normal vocabulary — the railctl taxonomy behind it is not) · "your app's
 setup, written down in one reviewable file" ↔ the manifest.
 
@@ -138,14 +137,14 @@ export RAILWAY_TOKEN=your-token     # or: railctl --token your-token ...
 node (minus a few workspace-reserved mutations), name-visibility of its own
 chain, hard denial everywhere else.
 
-| Token | Can list (one level down) | Bound? | What "list" grants |
-|---|---|---|---|
-| Account | workspaces | not bound — full access to all | full access |
-| Workspace | projects | not bound — full access to all | full access |
-| Project | environments | **bound to one** | **names only** for siblings — content access solely in its bound environment |
+| Token     | Can list (one level down) | Bound?                         | What "list" grants                                                           |
+| --------- | ------------------------- | ------------------------------ | ---------------------------------------------------------------------------- |
+| Account   | workspaces                | not bound — full access to all | full access                                                                  |
+| Workspace | projects                  | not bound — full access to all | full access                                                                  |
+| Project   | environments              | **bound to one**               | **names only** for siblings — content access solely in its bound environment |
 
 The project token is the only **leaf-bound** token: it is really a
-*(project, environment)* token. The API cannot mint an environment-unbound
+_(project, environment)_ token. The API cannot mint an environment-unbound
 project token; every project token carries exactly one environment.
 
 ### How detection works (so you can debug it)
@@ -167,31 +166,31 @@ The result is cached for the process; detection runs once per invocation.
 
 ### Capability matrix — what each token can and cannot do
 
-| Capability | Account token | Workspace token | Project token |
-|---|---|---|---|
-| List/switch workspaces (`-w`) | yes | no — scoped to its workspace | no |
-| List projects | yes (all workspaces) | yes (its workspace) | no |
-| Create / delete **projects** | yes | yes | no |
-| Create / delete **environments** | yes | yes | no |
-| Services / variables / volumes / backups / domains / logs / deploys | yes | yes | yes — within its one project+environment |
-| `apply` / `diff` / `delete -f` (declarative) | yes | yes | yes — its environment only |
-| Deployment **rollback** (`delete deployment`) | yes | yes | yes |
-| Deployment **reactivation** (`update deployment --set-active`) | yes | yes | no — workspace-level capability |
-| Mint project tokens (`token create`) | yes (any project) | yes (any project in its workspace) | yes — **its own project+environment only** |
-| `-w` / `-p` / `-e` flags | honored (selection) | `-w` must match its workspace or the command **errors**; `-p`/`-e` honored | flags must **match** the token's baked scope (then accepted silently) or the command **errors** |
+| Capability                                                          | Account token        | Workspace token                                                            | Project token                                                                                   |
+| ------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| List/switch workspaces (`-w`)                                       | yes                  | no — scoped to its workspace                                               | no                                                                                              |
+| List projects                                                       | yes (all workspaces) | yes (its workspace)                                                        | no                                                                                              |
+| Create / delete **projects**                                        | yes                  | yes                                                                        | no                                                                                              |
+| Create / delete **environments**                                    | yes                  | yes                                                                        | no                                                                                              |
+| Services / variables / volumes / backups / domains / logs / deploys | yes                  | yes                                                                        | yes — within its one project+environment                                                        |
+| `apply` / `diff` / `delete -f` (declarative)                        | yes                  | yes                                                                        | yes — its environment only                                                                      |
+| Deployment **rollback** (`delete deployment`)                       | yes                  | yes                                                                        | yes                                                                                             |
+| Deployment **reactivation** (`update deployment --set-active`)      | yes                  | yes                                                                        | no — workspace-level capability                                                                 |
+| Mint project tokens (`token create`)                                | yes (any project)    | yes (any project in its workspace)                                         | yes — **its own project+environment only**                                                      |
+| `-w` / `-p` / `-e` flags                                            | honored (selection)  | `-w` must match its workspace or the command **errors**; `-p`/`-e` honored | flags must **match** the token's baked scope (then accepted silently) or the command **errors** |
 
 **Key semantics to remember:**
 
 - A **project token** is pinned to exactly one project **and one environment**
   at mint time. You cannot point it elsewhere: a `-w`/`-p`/`-e` value that
   contradicts the baked scope **fails fast** (`token is scoped to … but -e '…'
-  was given — refusing to operate …`); a value matching the scope proceeds
-  silently. To operate on staging *and* production you need two tokens.
+was given — refusing to operate …`); a value matching the scope proceeds
+  silently. To operate on staging _and_ production you need two tokens.
 - A **project token cannot** enumerate anything above its project: no
   `get projects`, no workspace queries, no project/environment lifecycle —
   these fail fast (`cannot … with a project token — it is scoped to a single
-  project and environment; use an account or workspace token`).
-- A **workspace token** behaves like an account token *inside* its workspace
+project and environment; use an account or workspace token`).
+- A **workspace token** behaves like an account token _inside_ its workspace
   but cannot see or switch workspaces — a mismatching `-w` **errors**, a
   matching one is accepted silently. `create project` infers the workspace
   from the token; no `-w` needed.
@@ -264,7 +263,7 @@ wiring uses Railway references `${{service.VAR}}`.
 **Step 5 — the reconcile loop. Diff first, always.**
 
 Never apply blind: **always run `diff` before `apply`** — interactively at the
-console *and* in CI. It costs one command and shows exactly what is about to
+console _and_ in CI. It costs one command and shows exactly what is about to
 change (creates, field-level updates, prune deletions), with secrets masked.
 An apply whose diff you haven't read is an unreviewed change to production.
 
@@ -276,8 +275,8 @@ railctl diff  -f stack.yaml            # clean: live state matches manifest
 
 `diff` always exits 0 — read its **output**, not its exit code: a summary of
 "0 to create, 0 to update, 0 to delete" means in sync; any non-zero count is
-drift. A non-zero *exit* now means a real error (bad file, auth, API). Keep
-this loop closed: after ANY imperative change, reconcile (see *Drift discipline*, §5).
+drift. A non-zero _exit_ now means a real error (bad file, auth, API). Keep
+this loop closed: after ANY imperative change, reconcile (see _Drift discipline_, §5).
 
 **Step 6 — publish.**
 
@@ -325,9 +324,10 @@ here, so private images come from **your** CI:
    `--registry-username/--registry-password` (or
    `RAILCTL_REGISTRY_USERNAME`/`RAILCTL_REGISTRY_PASSWORD`). Private
    registries require a Railway Pro plan.
+
 4. Releasing = bump the image tag in `stack.yaml` + `apply --await`
    (hotfix path: `railctl update service app --image ghcr.io/o/app:SHA
-   --await-completion`, then reconcile per *Drift discipline*, §5 — the tag
+--await-completion`, then reconcile per _Drift discipline_, §5 — the tag
    goes into the manifest until `diff` returns to 0).
 
 **Step 8 — monitor & operate** (§6: deployments & logs).
@@ -371,20 +371,20 @@ environments with `delete -f`.
 
 Every command resolves context in the order **flag → `RAILCTL_*` env var →
 default**. With a project token, project/environment come from the token
-itself; a flag or env var naming the *same* project/environment is accepted
-silently, while a *different* one fails fast (contradiction) — stale
+itself; a flag or env var naming the _same_ project/environment is accepted
+silently, while a _different_ one fails fast (contradiction) — stale
 `RAILCTL_PROJECT`/`RAILCTL_ENVIRONMENT` values cannot silently redirect
 commands to the token's scope.
 
-| Flag | Env var | Meaning |
-|---|---|---|
-| `--token` | `RAILWAY_TOKEN` | API token (required) |
-| `-w` / `--workspace` | `RAILCTL_WORKSPACE` | Workspace (account tokens with >1 workspace) |
-| `-p` / `--project` | `RAILCTL_PROJECT` | Project name or ID |
-| `-e` / `--environment` | `RAILCTL_ENVIRONMENT` | Environment name or ID |
-| `-s` / `--service` | `RAILCTL_SERVICE` | Service name or ID (never baked into a token) |
-| `-o` / `--output` | — | `table` (default), `wide`, `json`, `yaml` |
-| `--debug` | — | Dump GraphQL requests/responses to stderr |
+| Flag                   | Env var               | Meaning                                       |
+| ---------------------- | --------------------- | --------------------------------------------- |
+| `--token`              | `RAILWAY_TOKEN`       | API token (required)                          |
+| `-w` / `--workspace`   | `RAILCTL_WORKSPACE`   | Workspace (account tokens with >1 workspace)  |
+| `-p` / `--project`     | `RAILCTL_PROJECT`     | Project name or ID                            |
+| `-e` / `--environment` | `RAILCTL_ENVIRONMENT` | Environment name or ID                        |
+| `-s` / `--service`     | `RAILCTL_SERVICE`     | Service name or ID (never baked into a token) |
+| `-o` / `--output`      | —                     | `table` (default), `wide`, `json`, `yaml`     |
+| `--debug`              | —                     | Dump GraphQL requests/responses to stderr     |
 
 Name arguments resolve **exact match → case-insensitive substring**; ambiguous
 matches error listing candidates. Unknown names list what exists:
@@ -397,43 +397,43 @@ formats stay machine-readable: listings emit `[]` on empty, never prose.
 
 ```yaml
 # stack.yaml — one file, the whole environment
-project: my-app          # optional; -p / env var / token scope override
-environment: production  # optional; same
-deleteProtection: true   # optional; ensures DELETE_PROTECTION on this env.
-                         # false clears it; OMITTING leaves live state alone
-                         # (a dropped line never silently unprotects).
+project: my-app # optional; -p / env var / token scope override
+environment: production # optional; same
+deleteProtection: true # optional; ensures DELETE_PROTECTION on this env.
+# false clears it; OMITTING leaves live state alone
+# (a dropped line never silently unprotects).
 
 services:
   - name: api
-    image: ghcr.io/owner/app:sha-abc123   # always a prebuilt image reference
+    image: ghcr.io/owner/app:sha-abc123 # always a prebuilt image reference
 
     deploy:
       startCommand: "npm start"
-      restartPolicy: ON_FAILURE       # ON_FAILURE | ALWAYS | NEVER
-      maxRetries: 3                   # requires restartPolicy
-      replicas: 2                     # >= 1 if set
+      restartPolicy: ON_FAILURE # ON_FAILURE | ALWAYS | NEVER
+      maxRetries: 3 # requires restartPolicy
+      replicas: 2 # >= 1 if set
       healthcheckPath: /health
       healthcheckTimeout: 300
 
     networking:
       domain:
-        port: 3000                    # Railway domain (*.up.railway.app)
+        port: 3000 # Railway domain (*.up.railway.app)
       tcpProxy:
-        port: 5432                    # public TCP proxy to this app port
+        port: 5432 # public TCP proxy to this app port
       customDomains:
-        - name: app.example.com       # DNS records printed on apply
-          port: 3000                  # optional; defaults to domain.port
+        - name: app.example.com # DNS records printed on apply
+          port: 3000 # optional; defaults to domain.port
 
     volume:
       mountPath: /app/data
-      backupSchedules: [daily, weekly]   # daily/weekly/monthly
+      backupSchedules: [daily, weekly] # daily/weekly/monthly
 
     variables:
       PORT: "3000"
-      DATABASE_URL: "${{db.DATABASE_URL}}"   # Railway-side service reference
-      API_KEY: "$env(API_KEY)"               # expanded from local env at apply
+      DATABASE_URL: "${{db.DATABASE_URL}}" # Railway-side service reference
+      API_KEY: "$env(API_KEY)" # expanded from local env at apply
 
-    registry:                          # private registries (Pro plan)
+    registry: # private registries (Pro plan)
       username: "$env(REGISTRY_USER)"
       password: "$env(REGISTRY_PASS)"
 ```
@@ -451,12 +451,14 @@ port, or URL. This is a standing directive, not a style preference:
   breaks the moment the target changes; `${{api.RAILWAY_PRIVATE_DOMAIN}}`
   follows it.
 - **They draw the dependency graph in Railway's UI.** A reference creates a
-  visible edge between the two services; a hardcoded string shows *no edge*, so
+  visible edge between the two services; a hardcoded string shows _no edge_, so
   the topology silently lies and nobody can see what talks to what.
 
 So prefer:
 
 ```yaml
+services:
+  - name: api
     variables:
       DATABASE_URL: "${{db.DATABASE_URL}}"
       REDIS_HOST: "${{redis.RAILWAY_PRIVATE_DOMAIN}}"
@@ -697,7 +699,7 @@ Getting this wrong is the most dangerous default in the whole tool.
   use it for the one or two services that are genuinely a public web surface
   (the UI/API front door).
 - **`networking.tcpProxy.port`** opens a public TCP endpoint (`host:port`) —
-  use it only when something *outside* Railway must connect (e.g. you need to
+  use it only when something _outside_ Railway must connect (e.g. you need to
   reach a database from your laptop).
 
 **Hard rule: never put a service with no authentication on a public proxy.**
@@ -714,7 +716,7 @@ port-forward` tunnels straight into a **private** service over SSH, and
 monitoring commands in §6). So a public proxy on an unauthenticated datastore is
 now not just dangerous, it's **unnecessary**: forward to it for admin/debug and
 leave it internal. Reserve `tcpProxy`/`domain` for traffic that genuinely
-originates *outside* Railway (real end users, third-party webhooks).
+originates _outside_ Railway (real end users, third-party webhooks).
 
 **Un-exposing is declarative too:** removing a `tcpProxy`/`domain` block and
 re-applying closes the port (`diff` shows `- networking.tcpProxy.port: …`,
@@ -724,16 +726,16 @@ removed with `delete domain`, never silently on apply.)
 
 ### The three verbs
 
-| Command | Does | Exit |
-|---|---|---|
-| `railctl diff -f <file-or-dir> [--prune]` | show create/update/delete deltas, secrets masked | always 0; read the summary line for drift |
-| `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest | 0 = applied |
-| `railctl delete -f <file-or-dir> [--yes]` | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled |
+| Command                                                                                    | Does                                                                                           | Exit                                      |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `railctl diff -f <file-or-dir> [--prune]`                                                  | show create/update/delete deltas, secrets masked                                               | always 0; read the summary line for drift |
+| `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest                                                           | 0 = applied                               |
+| `railctl delete -f <file-or-dir> [--yes]`                                                  | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled                      |
 
 ### Semantics that matter
 
 - **Declared state is authoritative for managed fields.** A service with a
-  declared `volume.mountPath` is a *managed volume*: omitting
+  declared `volume.mountPath` is a _managed volume_: omitting
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
   with an explicit warning naming what was removed. A service with no
   `volume:` block is left untouched.
@@ -772,7 +774,7 @@ imperative change was a mistake, `apply` reverts live state to the manifest.
 **The loop is `diff → review → apply` EVERY time, not just the first.**
 During iterative troubleshooting it is tempting to edit the manifest and jump
 straight to `apply` — don't: each skipped diff is an unreviewed change, and
-skipping breeds the worse habit of *claiming* sync status from memory. Never
+skipping breeds the worse habit of _claiming_ sync status from memory. Never
 state "no drift" / "state matches the manifest" to the user without a fresh
 `diff` exit-0 **run after your last apply** to back it.
 
@@ -791,6 +793,7 @@ Verb-first, kubectl-style: `railctl <verb> <resource> [name] [flags]`.
 Listing/describing commands accept `-o table|wide|json|yaml`.
 
 ### Identity & meta
+
 ```bash
 railctl whoami [-o json]        # token type + scope chain; never prints the token
 railctl skill                   # print this guide
@@ -798,6 +801,7 @@ railctl --version | completion <shell> | <cmd> --help
 ```
 
 ### Projects & environments — workspace/account token required
+
 ```bash
 railctl get projects                          # project tokens: fails fast by design
 railctl describe project my-app
@@ -812,6 +816,7 @@ railctl unprotect environment production -p my-app   # clears it (DELETE_PROTECT
 ```
 
 ### Services — any token, within scope
+
 ```bash
 railctl get services
 railctl describe service api [--show-values]
@@ -824,14 +829,17 @@ railctl update service api [--image TAG] [--await-completion] [...same config fl
     [--remove-domain] [--remove-tcp]          # update triggers a deployment
 railctl delete service api --yes              # orphans its volume — see volumes
 ```
+
 The service is created **in the target environment only**.
 
 ### Variables — service-scoped
+
 ```bash
 railctl get variables -s api                  # values masked; --show-values reveals
 railctl set variable KEY=VALUE [K2=V2 ...] -s api [--skip-deployment]
 railctl delete variable KEY -s api --yes
 ```
+
 `${{service.VAR}}` references are stored as-is and resolve on Railway.
 Shared (environment-level) variables are readable by railctl (they power
 `DELETE_PROTECTION`). There is no general shared-variable write command, but the
@@ -841,6 +849,7 @@ or the top-level `deleteProtection` manifest field (declarative). Other shared
 variables are still set in the Railway dashboard.
 
 ### Volumes & backups
+
 ```bash
 railctl get volumes | railctl describe volume data
 railctl create volume --mount-path /data -s api
@@ -851,6 +860,7 @@ railctl create backup data [--name pre-migration]        # async — poll get ba
 railctl restore backup <backup-id> --volume data --yes
 railctl delete backup <backup-id> --volume data --yes
 ```
+
 **Backups are welded to their volume instance in its environment** (verified):
 no cross-volume restore, no following an environment name — deleting the
 environment effectively destroys its backups, and recreating a same-named
@@ -861,13 +871,16 @@ point are removed. Schedule retention is fixed per kind (~6d/1m/3m). Prefer
 managing schedules declaratively (`volume.backupSchedules`).
 
 ### Deployments & logs (monitoring)
+
 ```bash
 railctl get deployments -s api [--limit N]    # -o json: [] when empty (script-safe)
+railctl get replicas -s api                   # running replicas (INSTANCE ID + STATUS) for --deployment-instance
 railctl create deployment -s api [--await-completion]    # explicit redeploy
 railctl delete deployment <id> -s api --yes   # rollback if latest; status → REMOVED
 railctl update deployment <id> --set-active   # reactivation — workspace token required
 railctl logs api [--tail N(≤500)] [-f] [--deployment <id>]   # logs <service> — one arg
 ```
+
 If any command errors unexpectedly on syntax, check `railctl <cmd> --help`
 before retrying variations — the help text is authoritative for the installed
 version.
@@ -878,7 +891,7 @@ Deployment statuses: `INITIALIZING → BUILDING → DEPLOYING → SUCCESS`, or
 with `create deployment` when you need a deterministic first deployment.
 
 **When logs aren't enough, go inside.** `logs` is the first-line monitoring
-tool; when you need to *interact* with a running service — open a shell, inspect
+tool; when you need to _interact_ with a running service — open a shell, inspect
 files, run a one-off admin/migration command, or point a local client at an
 internal port — reach for **`railctl exec`** and **`railctl port-forward`**
 (next). They work on **private** services with no public exposure, over
@@ -888,12 +901,14 @@ register your SSH key **once** at
 never manages keys); after that, exec/port-forward work with **any** token.
 
 ### Exec — shell into a service container (SSH)
+
 ```bash
 railctl exec api -p my-project -e production                  # interactive shell (kubectl-exec style)
 railctl exec api -p my-project -e production -- ls -la /data  # one-off command; exit code propagated
 railctl exec api ... -i ~/.ssh/id_ed25519 -- env             # use a specific private key
-railctl exec api ... --deployment-instance <id> -- <cmd>     # target a specific instance id
+railctl exec api ... --deployment-instance <id> -- <cmd>     # target a specific replica (list ids: railctl get replicas -s api)
 ```
+
 The service is a **positional argument** (like `logs <service>`, not `-s`);
 everything after `--` is the remote command, passed verbatim (omit it for an
 interactive shell). railctl shells out to your **local `ssh` binary** and dials
@@ -910,6 +925,7 @@ your key at the URL above and retry. See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
 ### Port-forward — reach a service's ports over SSH (incl. private services)
+
 ```bash
 railctl port-forward db 5432 -p my-project -e production            # localhost:5432 -> db's own 127.0.0.1:5432
 railctl port-forward kube-apiserver 6443 -p my-project -e production # reach a PRIVATE service directly (no public exposure)
@@ -917,6 +933,7 @@ railctl port-forward db 6543:5432 -p my-project -e production       # map a diff
 railctl port-forward db 5432 6379 -p my-project -e production       # multiple ports, ONE ssh connection
 railctl port-forward db 5432 --address 0.0.0.0 -i ~/.ssh/id_ed25519 # share on the LAN + specific key
 ```
+
 kubectl-`port-forward`-style local forwarding over Railway's SSH relay. The
 service is a **positional argument**; every bare positional after it is a port
 spec (multiple `-L` forwards ride **one** ssh connection). It runs in the
@@ -927,17 +944,19 @@ container; works with any token).
 **Reaching a private service — you forward directly INTO it.** This is kubectl's
 actual model (`kubectl port-forward pod` targets the pod itself, not a bastion).
 Name the private service — it works with no public domain/proxy:
+
 ```bash
 railctl port-forward kube-apiserver 6443    # then: kubectl --server https://127.0.0.1:6443 …
 ```
+
 There is **no jump/bastion form** — verified live, Railway's relay forwards
-only to the *target container's own loopback*, not to other hosts through it.
+only to the _target container's own loopback_, not to other hosts through it.
 
 **Port-spec grammar:**
 
-| Form | Emits | Meaning |
-|---|---|---|
-| `REMOTE` (e.g. `8080`) | `-L 127.0.0.1:8080:127.0.0.1:8080` | local == remote |
+| Form                              | Emits                              | Meaning                    |
+| --------------------------------- | ---------------------------------- | -------------------------- |
+| `REMOTE` (e.g. `8080`)            | `-L 127.0.0.1:8080:127.0.0.1:8080` | local == remote            |
 | `LOCAL:REMOTE` (e.g. `6543:5432`) | `-L 127.0.0.1:6543:127.0.0.1:5432` | map a different local port |
 
 The remote side is always the service's own loopback (`127.0.0.1`); a bare
@@ -961,6 +980,7 @@ LAN). See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
 ### Domains
+
 ```bash
 railctl get domains -s api                    # railway + custom, verification status
 railctl create domain app.example.com -s api [--port N]   # prints DNS records
@@ -968,11 +988,13 @@ railctl delete domain app.example.com -s api --yes        # not-found lists avai
 ```
 
 ### Tokens
+
 ```bash
 railctl token create <name> -p my-app -e production   # raw token → stdout, ONCE
 railctl token list -p my-app [-e env] [-o wide]       # values masked
 railctl token delete <id> -p my-app --yes
 ```
+
 Works with any token type; a project token self-mints for its own scope
 (no flags). Rotate: mint new → switch consumers → delete old id.
 
@@ -997,12 +1019,12 @@ Works with any token type; a project token self-mints for its own scope
     rolling back at full speed; you just can't tear down the data or the
     services holding it.
   - Unreadable protection state → the delete is refused (fail-closed).
-  Arm it on every environment you care about — imperatively with
-  `railctl protect environment <env>` (undo: `unprotect environment <env>`), or
-  declaratively with the top-level `deleteProtection: true` manifest field
-  (`false` clears it; **omitting it leaves the live state alone** — a dropped
-  line never silently unprotects). `apply --prune` checks **live** protection,
-  so unprotect first (or in a prior apply) to prune a protected environment.
+    Arm it on every environment you care about — imperatively with
+    `railctl protect environment <env>` (undo: `unprotect environment <env>`), or
+    declaratively with the top-level `deleteProtection: true` manifest field
+    (`false` clears it; **omitting it leaves the live state alone** — a dropped
+    line never silently unprotects). `apply --prune` checks **live** protection,
+    so unprotect first (or in a prior apply) to prune a protected environment.
 - `delete project` also refuses while the project still has services —
   delete them (or `delete -f` the manifest) first.
 - Deleting an **environment** destroys its variable values, volume instances,
@@ -1017,28 +1039,29 @@ Works with any token type; a project token self-mints for its own scope
 
 ## 8. Troubleshooting
 
-| Symptom | Cause / fix |
-|---|---|
-| `token is not authorized` | Expired/revoked token, or all three detection probes failed. `railctl whoami`, re-mint. |
-| `token is scoped to … but -p/-e/-w '…' was given` | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token. |
-| `cannot … with a project token` | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token. |
-| `… not found — available: a, b, c` | Typo — the listed candidates are what exists. |
-| `environment '…' is delete-protected` | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion. |
-| Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace. |
-| `diff` "fails" in CI | `diff` always exits 0 on drift — a non-zero exit now means a real error (bad file, auth, API); read the message. To gate CI on drift, parse the summary line (`0 to create, 0 to update, 0 to delete`), not the exit code. |
-| Container exits instantly / `startCommand` seems ignored | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
-| `logs` prints nothing, no error | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs. |
-| Volume/backup op right after creation says not found | Propagation lag; railctl retries with backoff — re-run if it still misses. |
-| Backup restore "did nothing" | Restore is staged — **deploy the service** to finalize. |
-| Apply cleared backup schedules unexpectedly | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them. |
-| Custom domain stuck pending | DNS records not added/propagated — `get domains -s <svc>` shows verification status. |
-| `--debug` | Global flag: dumps GraphQL traffic to stderr. |
+| Symptom                                                    | Cause / fix                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token is not authorized`                                  | Expired/revoked token, or all three detection probes failed. `railctl whoami`, re-mint.                                                                                                                                                       |
+| `token is scoped to … but -p/-e/-w '…' was given`          | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token.                                                                                                        |
+| `cannot … with a project token`                            | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token.                                                                                                                    |
+| `… not found — available: a, b, c`                         | Typo — the listed candidates are what exists.                                                                                                                                                                                                 |
+| `environment '…' is delete-protected`                      | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion.                                                                                                      |
+| Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace.                                                                  |
+| `diff` "fails" in CI                                       | `diff` always exits 0 on drift — a non-zero exit now means a real error (bad file, auth, API); read the message. To gate CI on drift, parse the summary line (`0 to create, 0 to update, 0 to delete`), not the exit code.                    |
+| Container exits instantly / `startCommand` seems ignored   | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
+| `logs` prints nothing, no error                            | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs.                                               |
+| Volume/backup op right after creation says not found       | Propagation lag; railctl retries with backoff — re-run if it still misses.                                                                                                                                                                    |
+| Backup restore "did nothing"                               | Restore is staged — **deploy the service** to finalize.                                                                                                                                                                                       |
+| Apply cleared backup schedules unexpectedly                | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them.                                                                                                                          |
+| Custom domain stuck pending                                | DNS records not added/propagated — `get domains -s <svc>` shows verification status.                                                                                                                                                          |
+| `--debug`                                                  | Global flag: dumps GraphQL traffic to stderr.                                                                                                                                                                                                 |
 
 ---
 
 ## 9. Recipes
 
 **Zero-to-hero in nine lines** (new project, public image):
+
 ```bash
 railctl whoami                                             # workspace token
 railctl create project my-app
@@ -1053,6 +1076,7 @@ railctl logs web --tail 50                                 # it's alive
 
 **CI deploy gate** (project token in CI secrets; no flags anywhere). Diff
 first even in CI — its output in the job log is the reviewable change record:
+
 ```bash
 export RAILWAY_TOKEN="$RAILWAY_PROJECT_TOKEN"
 railctl diff -f stack.yaml                 # prints the pending changes to the log
@@ -1065,6 +1089,7 @@ ask the user for a read-only pull credential (`read:packages`) → export as
 the manifest → bump the tag per release → `apply --await`.
 
 **Pre-migration safety**:
+
 ```bash
 railctl create backup pg-data --name pre-migration
 railctl get backups pg-data                    # wait until it appears
@@ -1074,6 +1099,7 @@ railctl create deployment -s db --await-completion   # deploy finalizes restore
 ```
 
 **Token rotation**:
+
 ```bash
 NEW=$(railctl token create deployer-2)         # project token self-mints its scope
 # switch consumers to $NEW, then:

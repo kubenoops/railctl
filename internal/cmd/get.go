@@ -17,6 +17,7 @@ Available resources:
   variables     List variables for a service (requires -p, -e, -s)
   deployments   List deployments for a service (requires -p, -e, -s)
   domains       List domains for a service (requires -p, -e, -s)
+  replicas      List running replicas of a service (requires -p, -e, -s)
 
 Examples:
   railctl get projects
