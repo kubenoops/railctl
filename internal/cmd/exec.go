@@ -56,7 +56,7 @@ Examples:
   railctl exec api -p my-project -e production -i ~/.ssh/id_ed25519 -- env
 
   # Target a specific instance id (skip the instance lookup)
-  railctl exec api -p my-project -e production --deployment-instance <id>
+  railctl exec api -p my-project -e production -d <id>
 `,
 	Args:               cobra.MinimumNArgs(1),
 	DisableFlagParsing: false,
@@ -71,7 +71,7 @@ func init() {
 	execCmd.Flags().SetInterspersed(true)
 	execCmd.Flags().StringVarP(&execIdentityFile, "identity-file", "i", "",
 		"SSH private key to use (default: your ~/.ssh default key or ssh-agent)")
-	execCmd.Flags().StringVar(&execInstanceID, "deployment-instance", "",
+	execCmd.Flags().StringVarP(&execInstanceID, "deployment-instance", "d", "",
 		"Service instance id to target (advanced; skips the instance lookup)")
 }
 

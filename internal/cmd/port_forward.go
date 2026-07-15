@@ -82,7 +82,7 @@ func init() {
 	portForwardCmd.Flags().SetInterspersed(true)
 	portForwardCmd.Flags().StringVarP(&pfIdentityFile, "identity-file", "i", "",
 		"SSH private key to use (default: your ~/.ssh default key or ssh-agent)")
-	portForwardCmd.Flags().StringVar(&pfInstanceID, "deployment-instance", "",
+	portForwardCmd.Flags().StringVarP(&pfInstanceID, "deployment-instance", "d", "",
 		"Service instance id to target (advanced; skips the instance lookup)")
 	portForwardCmd.Flags().StringVar(&pfAddress, "address", "127.0.0.1",
 		"Local bind address for the forwarded ports (use 0.0.0.0 to share on the LAN)")
