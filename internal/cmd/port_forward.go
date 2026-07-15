@@ -68,6 +68,9 @@ Examples:
   # Multiple ports over one connection
   railctl port-forward db 5432 6379 -p my-project -e production
 
+  # Target a specific replica (-d = --deployment-instance; list ids with 'get replicas')
+  railctl port-forward db 5432 -d <instance-id> -p my-project -e production
+
   # Share the forward on the LAN (opt-in) and use a specific key
   railctl port-forward db 5432 --address 0.0.0.0 -i ~/.ssh/id_ed25519
 `,
