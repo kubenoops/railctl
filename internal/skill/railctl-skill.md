@@ -457,10 +457,12 @@ port, or URL. This is a standing directive, not a style preference:
 So prefer:
 
 ```yaml
-variables:
-  DATABASE_URL: "${{db.DATABASE_URL}}"
-  REDIS_HOST: "${{redis.RAILWAY_PRIVATE_DOMAIN}}"
-  API_URL: "https://${{api.RAILWAY_PRIVATE_DOMAIN}}"
+services:
+  - name: api
+    variables:
+      DATABASE_URL: "${{db.DATABASE_URL}}"
+      REDIS_HOST: "${{redis.RAILWAY_PRIVATE_DOMAIN}}"
+      API_URL: "https://${{api.RAILWAY_PRIVATE_DOMAIN}}"
 ```
 
 over any form that bakes in `db.internal`, a fixed port, or a full literal URL.
