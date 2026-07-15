@@ -732,6 +732,14 @@ removed with `delete domain`, never silently on apply.)
 
 ### Semantics that matter
 
+- **Every service `apply` creates gets a deployment.** apply rolls the new
+  service out explicitly, *after* staging its config, so the deployment
+  reflects the final start command/variables/volume — it never leans on
+  Railway's implicit (and unreliable) rollout-on-create. A service that exists
+  with **zero** deployments is a systemic failure, not an unhealthy one, so
+  `--await` **fails** if any created/updated service has no deployment rather
+  than reporting success. (The imperative `create service` still does *not*
+  reliably deploy on its own — see §6.)
 - **Declared state is authoritative for managed fields.** A service with a
   declared `volume.mountPath` is a *managed volume*: omitting
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —

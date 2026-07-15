@@ -57,6 +57,58 @@ func TestApply_CreateService(t *testing.T) {
 	}
 }
 
+// TestApply_CreateServiceTriggersDeployment pins the rule that a created
+// service must end up WITH a deployment. Creating a service used to rely on
+// serviceCreate rolling out implicitly, which is unreliable — a multi-service
+// apply routinely left services existing with zero deployments (nothing
+// running at all, which is a systemic failure rather than an unhealthy
+// deploy), and --await then had nothing to wait on and reported success.
+// applyCreate must therefore roll out explicitly, after staging config, so the
+// deployment reflects the final service.
+func TestApply_CreateServiceTriggersDeployment(t *testing.T) {
+	var deployedService, deployedEnv string
+	deployCalls := 0
+	mock := &api.MockClient{
+		CreateServiceFunc: func(projectID, envID, name, image string, creds *api.RegistryCredentials) (types.Service, error) {
+			return types.Service{ID: "svc-1", Name: name}, nil
+		},
+		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
+			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+		},
+		DeployServiceInstanceFunc: func(serviceID, environmentID string) (string, error) {
+			deployCalls++
+			deployedService = serviceID
+			deployedEnv = environmentID
+			return "deploy-1", nil
+		},
+	}
+
+	cs := &diff.ChangeSet{
+		Changes: []diff.ResourceChange{
+			{
+				Type:        diff.ChangeCreate,
+				ServiceName: "web",
+				Fields:      []diff.FieldDiff{{Path: "image", Desired: "node:20-alpine"}},
+			},
+		},
+	}
+	configMap := map[string]config.ServiceConfig{
+		"web": {Name: "web", Image: "node:20-alpine"},
+	}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if deployCalls != 1 {
+		t.Fatalf("expected exactly 1 explicit rollout for the created service, got %d", deployCalls)
+	}
+	if deployedService != "svc-1" || deployedEnv != "env-1" {
+		t.Errorf("rollout targeted %s/%s, want svc-1/env-1", deployedService, deployedEnv)
+	}
+}
+
 func TestApply_CreateServiceWithVariables(t *testing.T) {
 	setVarsCalled := false
 	var capturedVars map[string]string
