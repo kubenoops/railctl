@@ -55,22 +55,19 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	cs, err := computeDiffChangeSet()
 	if err != nil {
 		if diffExitCode {
-			// With --exit-code, exit 1 is reserved for "changes found" — real
-			// failures must stay distinguishable.
+			// Exit 1 is reserved for "changes found".
 			return &exitCodeError{code: 2, err: err}
 		}
 		return err
 	}
 
-	// Render diff with colors.
 	useColor := !diffNoColor && (diffColor || diff.IsColorSupported(os.Stdout))
 	diff.Render(cs, os.Stdout, useColor)
 
-	// Print summary.
 	fmt.Fprintf(os.Stdout, "\n%s\n", cs.Summary())
 
 	if diffExitCode && cs.HasChanges() {
-		// Silent: the rendered diff is the output — only the exit code changes.
+		// Silent: the rendered diff is the output.
 		return &exitCodeError{code: 1}
 	}
 
@@ -78,21 +75,18 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// computeDiffChangeSet loads the manifest, resolves the target environment,
-// fetches live state, and returns the computed change set.
+// computeDiffChangeSet loads the manifest, fetches live state, and computes
+// the change set.
 func computeDiffChangeSet() (*diff.ChangeSet, error) {
-	// 1. Load config.
 	cfg, err := loadConfig(diffFile)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Expand env refs.
 	if err := config.ExpandConfigEnvRefs(cfg); err != nil {
 		return nil, fmt.Errorf("expanding environment references: %w", err)
 	}
 
-	// 3. Resolve project/environment.
 	tkn, err := getToken()
 	if err != nil {
 		return nil, err
@@ -120,16 +114,14 @@ func computeDiffChangeSet() (*diff.ChangeSet, error) {
 	projectID := ctx.Project.ID
 	envID := ctx.Environment.ID
 
-	// 4. Fetch live state.
 	liveServices, err := fetchLiveState(client, projectID, envID, cfg.Services)
 	if err != nil {
 		return nil, fmt.Errorf("fetching live state: %w", err)
 	}
 
-	// 5. Compute diff.
 	cs := diff.Compute(cfg.Services, liveServices, diffPrune)
 
-	// 5b. Environment-level deleteProtection. Only read the live state when the
+	// Environment-level deleteProtection: only read live state when the
 	// manifest declares the field — an omitted field is left alone (nil).
 	if cfg.DeleteProtection != nil {
 		liveProtected, err := cmdutil.EnvironmentIsProtected(client, projectID, envID)

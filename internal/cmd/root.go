@@ -97,8 +97,7 @@ func Execute() {
 		if errors.As(err, &ec) {
 			code = ec.code
 		}
-		// A silent exitCodeError only sets the exit code (e.g. diff --exit-code
-		// reporting "changes found" — the diff itself is the output, not an error).
+		// A silent exitCodeError (nil err) exits without printing.
 		if ec == nil || ec.err != nil {
 			fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
 		}
@@ -106,12 +105,9 @@ func Execute() {
 	}
 }
 
-// exitCodeError carries a specific process exit code alongside an optional
-// error, so command handlers can return it instead of calling os.Exit. With a
-// wrapped error, Execute() prints it normally but exits with the given code
-// instead of the default 1 (e.g. diff --exit-code reserves 1 for "changes
-// found" and reports real failures as 2). With a nil error, Execute() exits
-// with the code without printing anything.
+// exitCodeError lets command handlers request a specific process exit code
+// instead of calling os.Exit. Execute() prints the wrapped error as usual;
+// a nil err exits silently (e.g. diff --exit-code reporting changes).
 type exitCodeError struct {
 	code int
 	err  error
