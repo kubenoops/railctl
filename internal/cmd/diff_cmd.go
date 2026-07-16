@@ -26,7 +26,8 @@ var diffCmd = &cobra.Command{
 
 Exits 0 whether or not there are changes (a diff with changes is a report,
 not a failure). With --exit-code, exits 1 when there are changes, 0 when the
-live state matches the manifest, and 2 on a real error (bad file, auth, API).`,
+live state matches the manifest, and 2 on a real error (bad file, auth, API).
+Combined with --prune, unmanaged live resources count as changes too.`,
 	Example: `  # Show diff for a config file
   railctl diff -f service.yaml -p my-project -e production
 

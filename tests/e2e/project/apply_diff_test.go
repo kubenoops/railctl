@@ -272,6 +272,61 @@ func TestApplyDelete_Roundtrip(t *testing.T) {
 	harness.AssertContains(t, r.Stdout, svcB)
 }
 
+// TestApplyDiff_ExitCode tests diff --exit-code: exit 1 while changes are
+// pending, 0 once live state matches the manifest, 2 on a real error.
+//
+//	go test -tags e2e -v -run TestApplyDiff_ExitCode ./tests/e2e/project/...
+func TestApplyDiff_ExitCode(t *testing.T) {
+	e := fixtureEnv(t)
+	svcName := harness.UniqueName()
+	t.Cleanup(func() {
+		e.Run("delete", "service", svcName, "--yes")
+	})
+
+	cfgDir := t.TempDir()
+	cfgFile := filepath.Join(cfgDir, "svc.yaml")
+	cfgData := fmt.Sprintf(`services:
+  - name: %s
+    image: nginx:1.25-alpine
+    variables:
+      PORT: "80"
+`, svcName)
+	if err := os.WriteFile(cfgFile, []byte(cfgData), 0644); err != nil {
+		t.Fatalf("writing config file: %v", err)
+	}
+
+	// 1. Pending create → exit 1, diff still rendered, no error line.
+	r := e.Run("diff", "-f", cfgFile, "--exit-code")
+	if r.ExitCode != 1 {
+		t.Fatalf("diff --exit-code with pending changes: exit %d, want 1\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	harness.AssertContains(t, r.Stdout, svcName)
+	harness.AssertNotContains(t, r.Stderr, "Error")
+
+	// Without the flag the same drift exits 0.
+	e.RunOK(t, "diff", "-f", cfgFile)
+
+	// 2. Apply, then in sync → exit 0.
+	e.RunOK(t, "apply", "-f", cfgFile)
+	time.Sleep(3 * time.Second)
+
+	r = e.Run("diff", "-f", cfgFile, "--exit-code")
+	if r.ExitCode != 0 {
+		t.Fatalf("diff --exit-code when in sync: exit %d, want 0\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	harness.AssertContains(t, r.Stdout, "No changes")
+
+	// 3. Real error (nonexistent config file) → exit 2.
+	r = e.Run("diff", "-f", filepath.Join(cfgDir, "missing.yaml"), "--exit-code")
+	if r.ExitCode != 2 {
+		t.Fatalf("diff --exit-code with bad file: exit %d, want 2\nstdout: %s\nstderr: %s",
+			r.ExitCode, r.Stdout, r.Stderr)
+	}
+	harness.AssertContains(t, r.Stderr, "Error")
+}
+
 // TestApplyDiff_Directory tests applying from a directory of configs.
 //
 //	go test -tags e2e -v -run TestApplyDiff_Directory ./tests/e2e/project/...

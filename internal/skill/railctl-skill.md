@@ -278,8 +278,9 @@ railctl diff  -f stack.yaml            # clean: live state matches manifest
 of "0 to create, 0 to update, 0 to delete" means in sync; any non-zero count
 is drift. A non-zero _exit_ means a real error (bad file, auth, API). To gate
 scripts/CI on drift instead, add `--exit-code`: exit 1 = changes, 0 = in
-sync, 2 = error. Keep this loop closed: after ANY imperative change,
-reconcile (see _Drift discipline_, §5).
+sync, 2 = error (with `--prune`, unmanaged live resources count as changes
+too). Keep this loop closed: after ANY imperative change, reconcile (see
+_Drift discipline_, §5).
 
 **Step 6 — publish.**
 

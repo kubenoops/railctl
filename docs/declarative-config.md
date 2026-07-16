@@ -41,7 +41,8 @@ railctl diff -f <file-or-directory> [flags]
 Compare config file against current Railway state. Exits 0 whether or not
 there are changes (the diff is a report, not a failure); a non-zero exit means
 a real error. With `--exit-code`, exits 1 if differences exist, 0 if none, and
-2 on error (useful for CI/CD gating).
+2 on error (useful for CI/CD gating). Combined with `--prune`, unmanaged live
+resources count as differences too.
 
 **Flags:**
 
