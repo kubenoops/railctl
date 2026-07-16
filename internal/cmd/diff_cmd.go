@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	diffFile    string
-	diffPrune   bool
-	diffNoColor bool
-	diffColor   bool
+	diffFile     string
+	diffPrune    bool
+	diffNoColor  bool
+	diffColor    bool
+	diffExitCode bool
 )
 
 var diffCmd = &cobra.Command{
@@ -23,7 +24,9 @@ var diffCmd = &cobra.Command{
 	Short: "Show what would change without applying",
 	Long: `Compare a YAML config file against the current Railway state and show the differences.
 
-Always exits 0 (a diff with changes is a report, not a failure).`,
+Exits 0 whether or not there are changes (a diff with changes is a report,
+not a failure). With --exit-code, exits 1 when there are changes, 0 when the
+live state matches the manifest, and 2 on a real error (bad file, auth, API).`,
 	Example: `  # Show diff for a config file
   railctl diff -f service.yaml -p my-project -e production
 
@@ -31,7 +34,10 @@ Always exits 0 (a diff with changes is a report, not a failure).`,
   railctl diff -f configs/ -p my-project -e production
 
   # Include unmanaged resources in diff
-  railctl diff -f stack.yaml --prune`,
+  railctl diff -f stack.yaml --prune
+
+  # Gate CI on drift: exit 1 on changes, 0 when in sync, 2 on error
+  railctl diff -f stack.yaml --exit-code`,
 	RunE: runDiff,
 }
 
@@ -40,26 +46,56 @@ func init() {
 	diffCmd.Flags().BoolVar(&diffPrune, "prune", false, "Include unmanaged resources in diff")
 	diffCmd.Flags().BoolVar(&diffNoColor, "no-color", false, "Disable colored output")
 	diffCmd.Flags().BoolVar(&diffColor, "color", false, "Force colored output even when not a terminal (e.g. CI)")
+	diffCmd.Flags().BoolVar(&diffExitCode, "exit-code", false, "Exit 1 if there are changes, 0 if none, 2 on error")
 	_ = diffCmd.MarkFlagRequired("file")
 	rootCmd.AddCommand(diffCmd)
 }
 
 func runDiff(cmd *cobra.Command, args []string) error {
+	cs, err := computeDiffChangeSet()
+	if err != nil {
+		if diffExitCode {
+			// With --exit-code, exit 1 is reserved for "changes found" — real
+			// failures must stay distinguishable.
+			return &exitCodeError{code: 2, err: err}
+		}
+		return err
+	}
+
+	// Render diff with colors.
+	useColor := !diffNoColor && (diffColor || diff.IsColorSupported(os.Stdout))
+	diff.Render(cs, os.Stdout, useColor)
+
+	// Print summary.
+	fmt.Fprintf(os.Stdout, "\n%s\n", cs.Summary())
+
+	if diffExitCode && cs.HasChanges() {
+		// Silent: the rendered diff is the output — only the exit code changes.
+		return &exitCodeError{code: 1}
+	}
+
+	// Without --exit-code a diff with changes is a report, not a failure.
+	return nil
+}
+
+// computeDiffChangeSet loads the manifest, resolves the target environment,
+// fetches live state, and returns the computed change set.
+func computeDiffChangeSet() (*diff.ChangeSet, error) {
 	// 1. Load config.
 	cfg, err := loadConfig(diffFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 2. Expand env refs.
 	if err := config.ExpandConfigEnvRefs(cfg); err != nil {
-		return fmt.Errorf("expanding environment references: %w", err)
+		return nil, fmt.Errorf("expanding environment references: %w", err)
 	}
 
 	// 3. Resolve project/environment.
 	tkn, err := getToken()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := newAPIClient(tkn)
 
@@ -78,7 +114,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		NeedEnvironment: true,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	projectID := ctx.Project.ID
@@ -87,7 +123,7 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	// 4. Fetch live state.
 	liveServices, err := fetchLiveState(client, projectID, envID, cfg.Services)
 	if err != nil {
-		return fmt.Errorf("fetching live state: %w", err)
+		return nil, fmt.Errorf("fetching live state: %w", err)
 	}
 
 	// 5. Compute diff.
@@ -98,18 +134,10 @@ func runDiff(cmd *cobra.Command, args []string) error {
 	if cfg.DeleteProtection != nil {
 		liveProtected, err := cmdutil.EnvironmentIsProtected(client, projectID, envID)
 		if err != nil {
-			return fmt.Errorf("reading delete protection: %w", err)
+			return nil, fmt.Errorf("reading delete protection: %w", err)
 		}
 		cs.Environment = diff.ComputeEnvironment(cfg.DeleteProtection, liveProtected)
 	}
 
-	// 6. Render diff with colors.
-	useColor := !diffNoColor && (diffColor || diff.IsColorSupported(os.Stdout))
-	diff.Render(cs, os.Stdout, useColor)
-
-	// 7. Print summary.
-	fmt.Fprintf(os.Stdout, "\n%s\n", cs.Summary())
-
-	// A diff with changes is a report, not a failure — always exit 0.
-	return nil
+	return cs, nil
 }

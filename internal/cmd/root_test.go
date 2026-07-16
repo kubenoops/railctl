@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1018,4 +1019,40 @@ func TestRunCreateEnvironment_APIError(t *testing.T) {
 			t.Errorf("expected 'environment limit' error, got %q", err.Error())
 		}
 	})
+}
+
+func TestExitCodeError(t *testing.T) {
+	underlying := errors.New("fetching live state: boom")
+	err := error(&exitCodeError{code: 2, err: underlying})
+
+	if err.Error() != underlying.Error() {
+		t.Errorf("Error() = %q, expected %q", err.Error(), underlying.Error())
+	}
+	if !errors.Is(err, underlying) {
+		t.Error("expected errors.Is to match the wrapped error")
+	}
+
+	wrapped := fmt.Errorf("context: %w", err)
+	var ec *exitCodeError
+	if !errors.As(wrapped, &ec) {
+		t.Fatal("expected errors.As to find exitCodeError through wrapping")
+	}
+	if ec.code != 2 {
+		t.Errorf("code = %d, expected 2", ec.code)
+	}
+}
+
+func TestExitCodeError_Silent(t *testing.T) {
+	err := error(&exitCodeError{code: 1})
+
+	if err.Error() != "" {
+		t.Errorf("Error() = %q, expected empty for a silent exit", err.Error())
+	}
+	var ec *exitCodeError
+	if !errors.As(err, &ec) {
+		t.Fatal("expected errors.As to find exitCodeError")
+	}
+	if ec.err != nil {
+		t.Errorf("err = %v, expected nil (silent)", ec.err)
+	}
 }

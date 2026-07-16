@@ -274,10 +274,12 @@ railctl apply -f stack.yaml --await    # create/update + wait for SUCCESS
 railctl diff  -f stack.yaml            # clean: live state matches manifest
 ```
 
-`diff` always exits 0 — read its **output**, not its exit code: a summary of
-"0 to create, 0 to update, 0 to delete" means in sync; any non-zero count is
-drift. A non-zero _exit_ now means a real error (bad file, auth, API). Keep
-this loop closed: after ANY imperative change, reconcile (see _Drift discipline_, §5).
+`diff` exits 0 whether or not there is drift — read its **output**: a summary
+of "0 to create, 0 to update, 0 to delete" means in sync; any non-zero count
+is drift. A non-zero _exit_ means a real error (bad file, auth, API). To gate
+scripts/CI on drift instead, add `--exit-code`: exit 1 = changes, 0 = in
+sync, 2 = error. Keep this loop closed: after ANY imperative change,
+reconcile (see _Drift discipline_, §5).
 
 **Step 6 — publish.**
 
@@ -755,7 +757,7 @@ removed with `delete domain`, never silently on apply.)
 
 | Command                                                                                    | Does                                                                                           | Exit                                      |
 | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `railctl diff -f <file-or-dir> [--prune]`                                                  | show create/update/delete deltas, secrets masked                                               | always 0; read the summary line for drift |
+| `railctl diff -f <file-or-dir> [--prune] [--exit-code]`                                    | show create/update/delete deltas, secrets masked                                               | 0 even on drift (read the summary line); with `--exit-code`: 1 = changes, 0 = in sync, 2 = error |
 | `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest                                                           | 0 = applied                               |
 | `railctl delete -f <file-or-dir> [--yes]`                                                  | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled                      |
 
@@ -1087,7 +1089,7 @@ delete old id.
 | `… not found — available: a, b, c`                         | Typo — the listed candidates are what exists.                                                                                                                                                                                                 |
 | `environment '…' is delete-protected`                      | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion.                                                                                                      |
 | Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace.                                                                  |
-| `diff` "fails" in CI                                       | `diff` always exits 0 on drift — a non-zero exit now means a real error (bad file, auth, API); read the message. To gate CI on drift, parse the summary line (`0 to create, 0 to update, 0 to delete`), not the exit code.                    |
+| `diff` "fails" in CI                                       | Without `--exit-code`, `diff` exits 0 on drift — a non-zero exit means a real error (bad file, auth, API); read the message. To gate CI on drift, run `diff --exit-code` (1 = changes, 0 = in sync, 2 = error) or parse the summary line (`0 to create, 0 to update, 0 to delete`).                    |
 | Container exits instantly / `startCommand` seems ignored   | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
 | `logs` prints nothing, no error                            | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs.                                               |
 | Volume/backup op right after creation says not found       | Propagation lag; railctl retries with backoff — re-run if it still misses.                                                                                                                                                                    |
