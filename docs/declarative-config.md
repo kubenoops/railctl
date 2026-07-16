@@ -38,17 +38,21 @@ to match the desired state.
 railctl diff -f <file-or-directory> [flags]
 ```
 
-Compare config file against current Railway state. Exits with code 0 if
-no changes, 1 if differences exist (useful for CI/CD).
+Compare config file against current Railway state. Exits 0 whether or not
+there are changes (the diff is a report, not a failure); a non-zero exit means
+a real error. With `--exit-code`, exits 1 if differences exist, 0 if none, and
+2 on error (useful for CI/CD gating). Combined with `--prune`, unmanaged live
+resources count as differences too.
 
 **Flags:**
 
-| Flag         | Short | Description                                      |
-| ------------ | ----- | ------------------------------------------------ |
-| `--file`     | `-f`  | Path to YAML config file or directory (required) |
-| `--prune`    |       | Include unmanaged resources in diff              |
-| `--no-color` |       | Disable colored output                           |
-| `--color`    |       | Force colored output even when not a terminal (CI) |
+| Flag          | Short | Description                                        |
+| ------------- | ----- | -------------------------------------------------- |
+| `--file`      | `-f`  | Path to YAML config file or directory (required)   |
+| `--prune`     |       | Include unmanaged resources in diff                |
+| `--no-color`  |       | Disable colored output                             |
+| `--color`     |       | Force colored output even when not a terminal (CI) |
+| `--exit-code` |       | Exit 1 if there are changes, 0 if none, 2 on error |
 
 ### `railctl delete -f`
 

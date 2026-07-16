@@ -2,6 +2,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -91,11 +92,35 @@ func Execute() {
 	})
 
 	if err := rootCmd.Execute(); err != nil {
-		// Display the error to stderr
-		fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
-		os.Exit(1)
+		code := 1
+		var ec *exitCodeError
+		if errors.As(err, &ec) {
+			code = ec.code
+		}
+		// A silent exitCodeError (nil err) exits without printing.
+		if ec == nil || ec.err != nil {
+			fmt.Fprintf(os.Stderr, "\n❌ Error: %v\n", err)
+		}
+		os.Exit(code)
 	}
 }
+
+// exitCodeError lets command handlers request a specific process exit code
+// instead of calling os.Exit. Execute() prints the wrapped error as usual;
+// a nil err exits silently (e.g. diff --exit-code reporting changes).
+type exitCodeError struct {
+	code int
+	err  error
+}
+
+func (e *exitCodeError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *exitCodeError) Unwrap() error { return e.err }
 
 func init() {
 	// Global persistent flags (available to all subcommands)

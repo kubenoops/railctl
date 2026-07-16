@@ -12,7 +12,7 @@ The four imperative configs collapse into a single declarative manifest,
 
 ```bash
 source .envrc                      # token + secrets (see above)
-railctl diff  -f stack.yaml        # exit != 0 while anything would change
+railctl diff  -f stack.yaml        # read what would change (--exit-code: 1 while drift exists)
 railctl apply -f stack.yaml --await
 railctl diff  -f stack.yaml        # now empty — state matches the manifest
 railctl delete -f stack.yaml --yes # teardown — deletes the declared services + postgres volume
