@@ -43,6 +43,7 @@ type MockClient struct {
 
 	// SSH exec / port-forward
 	GetServiceInstanceIDFunc func(environmentID, serviceID string) (string, error)
+	ListReplicasFunc         func(environmentID, serviceID string) (ReplicaList, error)
 
 	// Domains
 	ListDomainsFunc             func(projectID, environmentID, serviceID string) (DomainList, error)
@@ -329,6 +330,13 @@ func (m *MockClient) GetServiceInstanceID(environmentID, serviceID string) (stri
 		return m.GetServiceInstanceIDFunc(environmentID, serviceID)
 	}
 	return "", nil
+}
+
+func (m *MockClient) ListReplicas(environmentID, serviceID string) (ReplicaList, error) {
+	if m.ListReplicasFunc != nil {
+		return m.ListReplicasFunc(environmentID, serviceID)
+	}
+	return ReplicaList{}, nil
 }
 
 func (m *MockClient) ListVolumes(projectID, environmentID string) ([]VolumeInstance, error) {

@@ -123,6 +123,7 @@ func runDescribeService(cmd *cobra.Command, args []string) error {
 type svcDetailOutput struct {
 	Name            string                `json:"name" yaml:"name"`
 	ID              string                `json:"id" yaml:"id"`
+	InstanceID      string                `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
 	Project         string                `json:"project" yaml:"project"`
 	Environment     string                `json:"environment" yaml:"environment"`
 	Source          string                `json:"source,omitempty" yaml:"source,omitempty"`
@@ -141,6 +142,7 @@ func serviceDetailToOutput(svc types.ServiceDetail, projectName, envName string,
 	out := svcDetailOutput{
 		Name:            svc.Name,
 		ID:              svc.ID,
+		InstanceID:      svc.InstanceID,
 		Project:         projectName,
 		Environment:     envName,
 		Source:          svc.Source,
@@ -212,6 +214,9 @@ func mapTCPProxies(apiProxies []api.TCPProxy) []types.TCPProxy {
 func printServiceDetail(svc types.ServiceDetail, projectName, envName string, variables map[string]string, sealedMap map[string]bool, showValues bool) error {
 	fmt.Printf("Name:         %s\n", svc.Name)
 	fmt.Printf("ID:           %s\n", svc.ID)
+	if svc.InstanceID != "" {
+		fmt.Printf("Instance ID:  %s\n", svc.InstanceID)
+	}
 	fmt.Printf("Project:      %s\n", projectName)
 	fmt.Printf("Environment:  %s\n", envName)
 

@@ -468,9 +468,9 @@ port, or URL. This is a standing directive, not a style preference:
 >
 > ```yaml
 > variables:
->   PGHOST: "${{postgres.RAILWAY_PRIVATE_DOMAIN}}"   # resolved here …
+>   PGHOST: "${{postgres.RAILWAY_PRIVATE_DOMAIN}}" # resolved here …
 > deploy:
->   startCommand: "myapp --db-host $PGHOST"          # … and used here
+>   startCommand: "myapp --db-host $PGHOST" # … and used here
 > ```
 
 So prefer:
@@ -723,7 +723,7 @@ Getting this wrong is the most dangerous default in the whole tool.
   > failure. Stock images and Railway's own database templates already handle
   > this; a **custom `startCommand` or a hand-rolled binary usually needs an
   > explicit flag** (`--host ::`, `--bind [::]:$PORT`, `app.listen(port, "::")`).
-  > Bind **dual-stack** (`::` *without* `IPV6_V6ONLY`), never IPv6-only — see
+  > Bind **dual-stack** (`::` _without_ `IPV6_V6ONLY`), never IPv6-only — see
   > the port-forward note in §6 for why the IPv4 side still matters.
 - **`networking.domain.port`** publishes an HTTPS `*.up.railway.app` URL —
   use it for the one or two services that are genuinely a public web surface
@@ -765,12 +765,12 @@ removed with `delete domain`, never silently on apply.)
 ### Semantics that matter
 
 - **Every service `apply` creates gets a deployment.** apply rolls the new
-  service out explicitly, *after* staging its config, so the deployment
+  service out explicitly, _after_ staging its config, so the deployment
   reflects the final start command/variables/volume — it never leans on
   Railway's implicit (and unreliable) rollout-on-create. A service that exists
   with **zero** deployments is a systemic failure, not an unhealthy one, so
   `--await` **fails** if any created/updated service has no deployment rather
-  than reporting success. (The imperative `create service` still does *not*
+  than reporting success. (The imperative `create service` still does _not_
   reliably deploy on its own — see §6.)
 - **Declared state is authoritative for managed fields.** A service with a
   declared `volume.mountPath` is a _managed volume_: omitting
@@ -912,6 +912,7 @@ managing schedules declaratively (`volume.backupSchedules`).
 
 ```bash
 railctl get deployments -s api [--limit N]    # -o json: [] when empty (script-safe)
+railctl get replicas -s api                   # running replicas (INSTANCE ID + STATUS) for --deployment-instance
 railctl create deployment -s api [--await-completion]    # explicit redeploy
 railctl delete deployment <id> -s api --yes   # rollback if latest; status → REMOVED
 railctl update deployment <id> --set-active   # reactivation — workspace token required
@@ -943,7 +944,7 @@ never manages keys); after that, exec/port-forward work with **any** token.
 railctl exec api -p my-project -e production                  # interactive shell (kubectl-exec style)
 railctl exec api -p my-project -e production -- ls -la /data  # one-off command; exit code propagated
 railctl exec api ... -i ~/.ssh/id_ed25519 -- env             # use a specific private key
-railctl exec api ... -d <id> -- <cmd>                        # target a specific instance id (-d = --deployment-instance)
+railctl exec api ... -d <id> -- <cmd>                        # target a replica (-d = --deployment-instance; list ids: railctl get replicas -s api)
 ```
 
 The service is a **positional argument** (like `logs <service>`, not `-s`);
@@ -1005,7 +1006,7 @@ address). A three-field `LOCAL:HOST:REMOTE` spec is rejected.
 > listener (`[::]` with `IPV6_V6ONLY` set) is not reachable this way — the `-L`
 > hits an empty reply. But do **not** "fix" that by binding IPv4-only: §5 shows
 > that a `0.0.0.0`-only listener is unreachable over `.railway.internal`. The
-> one setting that satisfies both is **`::` in dual-stack mode** (IPv6 *and*
+> one setting that satisfies both is **`::` in dual-stack mode** (IPv6 _and_
 > IPv4-mapped, i.e. `IPV6_V6ONLY` off — the default for Go, Node, and most
 > runtimes): the private mesh gets IPv6, and this forward still reaches
 > `127.0.0.1`. Bind `::` dual-stack; reach for an explicit IPv4 bind only if

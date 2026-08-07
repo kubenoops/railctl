@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/sshx"
 	"github.com/spf13/cobra"
@@ -24,6 +25,32 @@ var (
 // exits non-zero — most commonly a publickey/permission failure because the
 // user has not registered their SSH key. railctl does not manage keys.
 const sshKeyHint = "If this failed with a publickey/permission error, register your SSH key at https://railway.com/account/ssh-keys, then retry."
+
+// warnIfUnknownReplica checks a user-supplied --deployment-instance id against
+// the service's current replicas and prints a stderr hint if it's not found.
+//
+// It deliberately fails OPEN — it warns and returns, never blocking the
+// connection. Two reasons: (1) the relay also accepts the service-instance id
+// (which ListReplicas does not return, since that's the parent, not a replica),
+// so a "not found" id can still be a valid target; (2) if replica discovery
+// itself fails, a hint must never stop a real connection. The value is catching
+// the common case — a stale or mistyped replica id — before ssh drops the user
+// into Railway's relay picker with a cryptic "No target found".
+func warnIfUnknownReplica(client api.APIClient, envID, serviceID, instanceID string) {
+	list, err := client.ListReplicas(envID, serviceID)
+	if err != nil {
+		return // discovery failed — don't block the connect over a hint
+	}
+	for _, r := range list.Replicas {
+		if r.ID == instanceID {
+			return // known replica — connect silently
+		}
+	}
+	fmt.Fprintf(os.Stderr,
+		"⚠️  Warning: instance %s is not among this service's current replicas.\n"+
+			"   Run 'railctl get replicas' to list valid instance IDs. Attempting to connect anyway...\n",
+		instanceID)
+}
 
 // execCmd represents the `railctl exec` command.
 var execCmd = &cobra.Command{
@@ -114,10 +141,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 	// --- Resolve the connectable instance id (the SSH username) ---
 	instanceID := execInstanceID
 	if instanceID == "" {
+		// Default path: let the relay pick a replica. No extra API call.
 		instanceID, err = client.GetServiceInstanceID(rctx.Environment.ID, rctx.Service.ID)
 		if err != nil {
 			return fmt.Errorf("failed to resolve the service instance: %w", err)
 		}
+	} else {
+		// User targeted a specific replica — validate softly (warn, don't block).
+		warnIfUnknownReplica(client, rctx.Environment.ID, rctx.Service.ID, instanceID)
 	}
 
 	// --- Build the ssh argv and run it, propagating the exit code ---
