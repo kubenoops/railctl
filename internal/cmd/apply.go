@@ -236,16 +236,27 @@ func runApply(cmd *cobra.Command, args []string) error {
 			awaitNames[name] = true
 		}
 
+		var undeployed []string
 		for _, svc := range services {
 			if !awaitNames[svc.Name] {
 				continue
 			}
 			if svc.DeploymentID == "" {
+				// A created/updated service with no deployment at all is a
+				// systemic failure, not an unhealthy one — there is nothing to
+				// await and nothing running. Never let --await report success
+				// for it: silently skipping here is how an apply that left
+				// services undeployed still exited 0.
+				undeployed = append(undeployed, svc.Name)
 				continue
 			}
 			if err := awaitDeployment(client, projectID, envID, svc.ID, svc.DeploymentID, svc.Name, applyAwaitTimeout); err != nil {
 				return err
 			}
+		}
+		if len(undeployed) > 0 {
+			return fmt.Errorf("no deployment was created for %d service(s): %s — the service exists but has nothing running; re-run apply, or trigger one with 'railctl create deployment -s <service>'",
+				len(undeployed), strings.Join(undeployed, ", "))
 		}
 	}
 

@@ -145,3 +145,30 @@ func TestRunExec_BuildsCommandArgv(t *testing.T) {
 		t.Errorf("target must precede the command: %v", runner.gotArgv)
 	}
 }
+
+// TestRunExec_ShortFlagTargetsInstance verifies the `-d` shorthand parses into
+// the deployment-instance var, is used verbatim as the ssh target, and skips
+// the GetServiceInstanceID lookup (mirrors the long --deployment-instance).
+func TestRunExec_ShortFlagTargetsInstance(t *testing.T) {
+	runner := &fakeRunner{}
+	client := execTestClient("resolved-should-not-be-used")
+	client.GetServiceInstanceIDFunc = func(environmentID, serviceID string) (string, error) {
+		t.Error("GetServiceInstanceID must not be called when -d is set")
+		return "", nil
+	}
+	restore := setExecEnv(t, client, runner)
+	defer restore()
+
+	if err := execCmd.ParseFlags([]string{"-d", "inst-from-short-flag"}); err != nil {
+		t.Fatalf("ParseFlags(-d) error: %v", err)
+	}
+	defer func() { execInstanceID = "" }()
+
+	if err := runExec(execCmd, []string{"api"}); err != nil {
+		t.Fatalf("runExec error: %v", err)
+	}
+	joined := strings.Join(runner.gotArgv, " ")
+	if !strings.Contains(joined, "inst-from-short-flag@ssh.railway.com") {
+		t.Errorf("-d value must be the ssh target: %v", runner.gotArgv)
+	}
+}

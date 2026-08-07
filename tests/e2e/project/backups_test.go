@@ -97,12 +97,12 @@ func TestBackupSchedules(t *testing.T) {
 		t.Fatalf("writing cleared config file: %v", err)
 	}
 
-	// diff should report the schedules being removed (exit non-zero).
-	r = e.Run("diff", "-f", cfgFile)
-	if r.ExitCode == 0 {
-		t.Fatalf("expected diff to exit non-zero when clearing schedules, got 0\nstdout: %s", r.Stdout)
-	}
+	// diff should REPORT the schedules being removed. Note the contract: diff
+	// always exits 0 — drift is a report, not a failure — so gate on the
+	// rendered delta + summary line, never on the exit code.
+	r = e.RunOK(t, "diff", "-f", cfgFile)
 	harness.AssertContains(t, r.Stdout, "backupSchedules")
+	harness.AssertContains(t, r.Stdout, "1 to update")
 
 	// apply should clear them and warn about it.
 	r = e.RunOK(t, "apply", "-f", cfgFile)

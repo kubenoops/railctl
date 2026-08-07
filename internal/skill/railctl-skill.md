@@ -194,9 +194,10 @@ project and environment; use an account or workspace token`).
   but cannot see or switch workspaces — a mismatching `-w` **errors**, a
   matching one is accepted silently. `create project` infers the workspace
   from the token; no `-w` needed.
-- **Any token can mint project tokens** within its reach: account/workspace
-  tokens target any project they can see (`-p`/`-e` required); a project token
-  self-mints for its own scope only (no flags needed).
+- **Minting project tokens needs an account/workspace token** — they can target
+  any project they can see (`-p`/`-e` required). A **project token cannot mint,
+  list, or delete tokens at all**, not even for its own scope: Railway denies
+  it (verified live). Keep a workspace/account token for rotation.
 
 ### The least-privilege workflow (always)
 
@@ -454,6 +455,21 @@ port, or URL. This is a standing directive, not a style preference:
   visible edge between the two services; a hardcoded string shows _no edge_, so
   the topology silently lies and nobody can see what talks to what.
 
+> ⚠️ **A reference only resolves inside `variables:` — never in a raw
+> `startCommand`.** Railway substitutes `${{svc.VAR}}` when it materializes a
+> service's variables; it does **not** template the start command. Inlining one
+> there ships the **literal** `${{…}}` text to your process, which then fails
+> somewhere confusing and far away (e.g. `invalid character "{" in host name`)
+> rather than at apply time. Declare it as a variable, then consume it as a
+> normal shell env var:
+>
+> ```yaml
+> variables:
+>   PGHOST: "${{postgres.RAILWAY_PRIVATE_DOMAIN}}" # resolved here …
+> deploy:
+>   startCommand: "myapp --db-host $PGHOST" # … and used here
+> ```
+
 So prefer:
 
 ```yaml
@@ -695,6 +711,17 @@ Getting this wrong is the most dangerous default in the whole tool.
   private mesh — free, and never internet-visible. A database, cache, or
   internal API talks to its consumers over `.railway.internal` with **no
   networking block at all**.
+  > ⚠️ **The listener must bind `::`, not just `0.0.0.0`.** Railway's private
+  > network is IPv6 (dual-stack on newer environments, **IPv6-only on legacy
+  > ones**), so Railway's own guidance is to listen on `::` — it works in both
+  > and is future-proof. A process bound only to `0.0.0.0`/`127.0.0.1` can look
+  > perfectly healthy on its public domain yet be **unreachable at
+  > `.railway.internal`** — the classic "works publicly, refuses internally"
+  > failure. Stock images and Railway's own database templates already handle
+  > this; a **custom `startCommand` or a hand-rolled binary usually needs an
+  > explicit flag** (`--host ::`, `--bind [::]:$PORT`, `app.listen(port, "::")`).
+  > Bind **dual-stack** (`::` _without_ `IPV6_V6ONLY`), never IPv6-only — see
+  > the port-forward note in §6 for why the IPv4 side still matters.
 - **`networking.domain.port`** publishes an HTTPS `*.up.railway.app` URL —
   use it for the one or two services that are genuinely a public web surface
   (the UI/API front door).
@@ -734,6 +761,14 @@ removed with `delete domain`, never silently on apply.)
 
 ### Semantics that matter
 
+- **Every service `apply` creates gets a deployment.** apply rolls the new
+  service out explicitly, _after_ staging its config, so the deployment
+  reflects the final start command/variables/volume — it never leans on
+  Railway's implicit (and unreliable) rollout-on-create. A service that exists
+  with **zero** deployments is a systemic failure, not an unhealthy one, so
+  `--await` **fails** if any created/updated service has no deployment rather
+  than reporting success. (The imperative `create service` still does _not_
+  reliably deploy on its own — see §6.)
 - **Declared state is authoritative for managed fields.** A service with a
   declared `volume.mountPath` is a _managed volume_: omitting
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
@@ -906,7 +941,7 @@ never manages keys); after that, exec/port-forward work with **any** token.
 railctl exec api -p my-project -e production                  # interactive shell (kubectl-exec style)
 railctl exec api -p my-project -e production -- ls -la /data  # one-off command; exit code propagated
 railctl exec api ... -i ~/.ssh/id_ed25519 -- env             # use a specific private key
-railctl exec api ... --deployment-instance <id> -- <cmd>     # target a specific replica (list ids: railctl get replicas -s api)
+railctl exec api ... -d <id> -- <cmd>                        # target a replica (-d = --deployment-instance; list ids: railctl get replicas -s api)
 ```
 
 The service is a **positional argument** (like `logs <service>`, not `-s`);
@@ -963,18 +998,22 @@ The remote side is always the service's own loopback (`127.0.0.1`); a bare
 number can never smuggle `localhost` (which resolves to an unreachable mesh
 address). A three-field `LOCAL:HOST:REMOTE` spec is rejected.
 
-> ⚠️ **The target must listen on IPv4 (verified live).** The forward lands on
-> the service's `127.0.0.1`, so the service must bind IPv4 loopback or
-> `0.0.0.0`. A service that binds **IPv6-only** (`[::]`) is not reachable this
-> way — the `-L` to `127.0.0.1` finds nothing (an "empty reply"). Most servers
-> (Postgres, Redis, kube-apiserver with `--bind-address 0.0.0.0`) bind IPv4;
-> ensure yours does if you need to forward to it.
+> ⚠️ **Bind dual-stack, or the forward finds nothing (verified live).** The
+> forward lands on the service's **`127.0.0.1`**, so a **strictly IPv6-only**
+> listener (`[::]` with `IPV6_V6ONLY` set) is not reachable this way — the `-L`
+> hits an empty reply. But do **not** "fix" that by binding IPv4-only: §5 shows
+> that a `0.0.0.0`-only listener is unreachable over `.railway.internal`. The
+> one setting that satisfies both is **`::` in dual-stack mode** (IPv6 _and_
+> IPv4-mapped, i.e. `IPV6_V6ONLY` off — the default for Go, Node, and most
+> runtimes): the private mesh gets IPv6, and this forward still reaches
+> `127.0.0.1`. Bind `::` dual-stack; reach for an explicit IPv4 bind only if
+> something genuinely cannot do IPv6.
 
 **Token scope: port-forward works with ANY token — account, workspace, OR
 project** (same model as `exec`: the token only resolves the instance;
 authentication is by your **pre-registered SSH key**, which you register once at
 [railway.com/account/ssh-keys](https://railway.com/account/ssh-keys) — railctl
-does not manage keys). Flags: `-i/--identity-file`, `--deployment-instance
+does not manage keys). Flags: `-i/--identity-file`, `-d/--deployment-instance
 <id>`, `--address` (local bind, default `127.0.0.1`; `0.0.0.0` to share on the
 LAN). See the design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
@@ -995,8 +1034,10 @@ railctl token list -p my-app [-e env] [-o wide]       # values masked
 railctl token delete <id> -p my-app --yes
 ```
 
-Works with any token type; a project token self-mints for its own scope
-(no flags). Rotate: mint new → switch consumers → delete old id.
+**All three need an account/workspace token** — Railway denies token minting,
+listing, and deletion to project-scoped tokens (railctl fails fast rather than
+surfacing a bare `Not Authorized`). Rotate: mint new → switch consumers →
+delete old id.
 
 ---
 
@@ -1101,10 +1142,13 @@ railctl create deployment -s db --await-completion   # deploy finalizes restore
 **Token rotation**:
 
 ```bash
-NEW=$(railctl token create deployer-2)         # project token self-mints its scope
+# Rotation needs a WORKSPACE/ACCOUNT token — a project token cannot mint,
+# list, or delete tokens (Railway denies it), not even its own.
+export RAILWAY_TOKEN="$WORKSPACE_TOKEN"
+NEW=$(railctl token create deployer-2 -p my-app -e production)   # capture: shown ONCE
 # switch consumers to $NEW, then:
-railctl token list -o json                     # find the old id
-railctl token delete <old-id> --yes
+railctl token list -p my-app -o json           # find the old id
+railctl token delete <old-id> -p my-app --yes
 ```
 
 ---

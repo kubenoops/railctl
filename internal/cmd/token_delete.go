@@ -39,6 +39,12 @@ func runTokenDelete(cmd *cobra.Command, args []string) error {
 	}
 	client := newAPIClient(tkn)
 
+	// Deleting resolves the token by listing first, which Railway denies to
+	// project-scoped tokens (verified live) — so delete is unusable with one.
+	if err := cmdutil.RequireWorkspaceScope(client, "delete a project token"); err != nil {
+		return err
+	}
+
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{
 		ProjectName:     getProject(),
 		EnvironmentName: getEnvironment(),

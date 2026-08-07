@@ -3,8 +3,6 @@
 package project
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/kubenoops/railctl/tests/e2e/harness"
@@ -12,8 +10,8 @@ import (
 
 // TestBoundaries proves the project-token fail-fasts and guardrails: project
 // enumeration is denied, -p/-e/-w contradictions fail fast (matching values
-// proceed silently), and the token can self-mint sibling tokens within its
-// own scope.
+// proceed silently), and token minting/listing/deletion are refused (Railway
+// denies them to project-scoped tokens — not even self-minting works).
 //
 //	go test -tags e2e -v -run TestBoundaries ./tests/e2e/project/...
 func TestBoundaries(t *testing.T) {
@@ -83,46 +81,27 @@ func TestBoundaries(t *testing.T) {
 		harness.AssertContains(t, r.Stdout+r.Stderr, "scoped to workspace")
 	})
 
-	t.Run("self_mint", func(t *testing.T) {
-		name := harness.UniqueName()
-
-		// Mint with NO flags: the project token scopes the new token to its
-		// own project + environment.
-		r := env.RunOK(t, "token", "create", name)
-		minted := strings.TrimSpace(r.Stdout)
-		if len(minted) != 36 {
-			t.Errorf("expected stdout to be exactly a 36-char token value, got %d chars:\nstdout: %q",
-				len(minted), r.Stdout)
+	// Railway denies token minting, listing, and deletion to project-scoped
+	// tokens — a project token cannot mint even for its OWN scope. Verified at
+	// the API: the raw projectTokenCreate mutation sent with the correct
+	// Project-Access-Token header returns "Not Authorized", while the identical
+	// input succeeds with a workspace token, so this is Railway's boundary and
+	// not a railctl defect. railctl fails fast with an actionable message
+	// rather than surfacing the bare API error.
+	//
+	// This subtest previously asserted the opposite (self-minting worked when
+	// it was written). It is now the tripwire: if Railway ever re-allows it,
+	// this flips red and the capability matrix + skill get updated.
+	t.Run("token_ops_denied", func(t *testing.T) {
+		cases := map[string][]string{
+			"create": {"token", "create", harness.UniqueName()},
+			"list":   {"token", "list"},
+			"delete": {"token", "delete", "00000000-0000-0000-0000-000000000000", "--yes"},
 		}
-
-		// The minted sibling shows up in the (flag-free) listing.
-		r = env.RunOK(t, "token", "list")
-		harness.AssertContains(t, r.Stdout, name)
-
-		// Resolve the minted token's id from the JSON listing and revoke it.
-		r = env.RunOK(t, "token", "list", "-o", "json")
-		harness.AssertValidJSON(t, r.Stdout)
-		var listed []struct {
-			Name string `json:"name"`
-			ID   string `json:"id"`
+		for op, args := range cases {
+			r := env.RunFail(t, args...)
+			harness.AssertContains(t, r.Stdout+r.Stderr, "project token")
+			t.Logf("token %s correctly refused for a project token", op)
 		}
-		if err := json.Unmarshal([]byte(r.Stdout), &listed); err != nil {
-			t.Fatalf("failed to unmarshal token list JSON: %v\nstdout: %s", err, r.Stdout)
-		}
-		var id string
-		for _, tk := range listed {
-			if tk.Name == name {
-				id = tk.ID
-				break
-			}
-		}
-		if id == "" {
-			t.Fatalf("minted token %q not found in token list JSON:\n%s", name, r.Stdout)
-		}
-
-		env.RunOK(t, "token", "delete", id, "--yes")
-
-		r = env.RunOK(t, "token", "list")
-		harness.AssertNotContains(t, r.Stdout, name)
 	})
 }

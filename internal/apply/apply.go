@@ -198,6 +198,19 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		return err
 	}
 
+	// Roll out the staged config explicitly — the same thing applyUpdate does.
+	//
+	// Do NOT rely on serviceCreate deploying implicitly: that is unreliable (a
+	// multi-service apply routinely left most services with NO deployment at
+	// all), and even when it does fire it races the config we stage above
+	// (start command, variables, volume, networking), so the implicit rollout
+	// can reflect the pre-config service. A service that exists with zero
+	// deployments is a systemic failure, not an unhealthy deploy — the
+	// deployment must exist even if it later crashes.
+	if _, err := client.DeployServiceInstance(svc.ID, envID); err != nil {
+		return fmt.Errorf("triggering initial deployment: %w", err)
+	}
+
 	fmt.Fprintf(w, "✓ Service '%s' created\n", name)
 	return nil
 }
@@ -446,7 +459,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Roll out the staged changes (create rolls out via serviceCreate).
+	// Roll out the staged changes (applyCreate rolls out its own explicitly).
 	if needsDeploy {
 		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
 			return fmt.Errorf("triggering deployment: %w", err)

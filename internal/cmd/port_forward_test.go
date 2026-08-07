@@ -123,6 +123,33 @@ func TestRunPortForward_MultipleSpecsOneInvocation(t *testing.T) {
 	}
 }
 
+// TestRunPortForward_ShortFlagTargetsInstance verifies the `-d` shorthand
+// parses into the deployment-instance var, is used verbatim as the ssh target,
+// and skips the GetServiceInstanceID lookup (mirrors --deployment-instance).
+func TestRunPortForward_ShortFlagTargetsInstance(t *testing.T) {
+	runner := &fakeRunner{}
+	client := execTestClient("resolved-should-not-be-used")
+	client.GetServiceInstanceIDFunc = func(environmentID, serviceID string) (string, error) {
+		t.Error("GetServiceInstanceID must not be called when -d is set")
+		return "", nil
+	}
+	restore := setPFEnv(t, client, runner)
+	defer restore()
+
+	if err := portForwardCmd.ParseFlags([]string{"-d", "inst-from-short-flag"}); err != nil {
+		t.Fatalf("ParseFlags(-d) error: %v", err)
+	}
+	defer func() { pfInstanceID = "" }()
+
+	if err := runPortForward(portForwardCmd, []string{"api", "5432"}); err != nil {
+		t.Fatalf("runPortForward error: %v", err)
+	}
+	joined := strings.Join(runner.gotArgv, " ")
+	if !strings.Contains(joined, "inst-from-short-flag@ssh.railway.com") {
+		t.Errorf("-d value must be the ssh target: %v", runner.gotArgv)
+	}
+}
+
 func TestRunPortForward_ThreeFieldRejected(t *testing.T) {
 	runner := &fakeRunner{}
 	client := execTestClient("api-inst")

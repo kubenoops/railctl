@@ -50,6 +50,25 @@ func WaitForEnvironment(e *Env, envName string) error {
 	return fmt.Errorf("environment %s not queryable after 10 attempts", envName)
 }
 
+// WaitForVolume polls `get volumes` until the named volume appears. Railway
+// provisions volumes asynchronously, so a list issued immediately after create
+// can legitimately miss one that exists (the same propagation lag railctl's own
+// troubleshooting documents). extraArgs carries the scope flags. Retries up to
+// 10 times with 2-second delays.
+func WaitForVolume(e *Env, volName string, extraArgs ...string) error {
+	for i := 0; i < 10; i++ {
+		args := append([]string{"get", "volumes"}, extraArgs...)
+		r := e.Run(args...)
+		if r.ExitCode == 0 && strings.Contains(r.Stdout, volName) {
+			e.T.Logf("Volume %s confirmed queryable after %d poll(s)", volName, i+1)
+			return nil
+		}
+		e.T.Logf("Waiting for volume %s to propagate (attempt %d/10)...", volName, i+1)
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("volume %s not queryable after 10 attempts", volName)
+}
+
 // SetupProject creates a fresh project (or reuses E2E_PROJECT) using the given
 // token. The token must be able to create projects (account or workspace scope).
 func SetupProject(t *testing.T, token string) *Env {
