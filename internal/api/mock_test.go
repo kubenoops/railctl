@@ -282,8 +282,8 @@ func TestMockClient_RedeployDeployment(t *testing.T) {
 }
 
 func TestMockClient_DeleteService(t *testing.T) {
-	mock := &MockClient{DeleteServiceFunc: func(id string) error { return nil }}
-	if err := mock.DeleteService("svc-1"); err != nil {
+	mock := &MockClient{DeleteServiceFunc: func(environmentID, id string) error { return nil }}
+	if err := mock.DeleteService("env-1", "svc-1"); err != nil {
 		t.Errorf("DeleteService() error = %v", err)
 	}
 }

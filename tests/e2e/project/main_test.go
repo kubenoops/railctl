@@ -52,9 +52,24 @@ var (
 // with a multi-env fixture service creation would fail for reasons unrelated
 // to the behaviour under test. The project token is therefore minted for
 // `production`.
-const fixtureEnvName = "production"
+//
+// A var (not const) so bring-your-own-project-token mode can set it to the
+// supplied token's actual environment; the workspace-bootstrap path leaves it
+// at the `production` default.
+var fixtureEnvName = "production"
 
 func TestMain(m *testing.M) {
+	// Bring-your-own-project-token mode: when RAILWAY_PROJECT_TOKEN is set, run
+	// the group's fixture tests directly in a project the caller already owns,
+	// using that supplied PROJECT token — no workspace power, and no fixture
+	// project is created or deleted. Per-test cleanup still removes the throwaway
+	// services/volumes each test creates. Tests that need account/workspace power
+	// (exec/port-forward SSH-key registration) are unsupported here — select with
+	// -run (e.g. -run 'TestRegions|TestApplyDiff_Region').
+	if byo := os.Getenv("RAILWAY_PROJECT_TOKEN"); byo != "" && !compileCheckOnly() {
+		os.Exit(runByoProject(m, byo))
+	}
+
 	wsToken := harness.RequireToken("RAILWAY_WORKSPACE_TOKEN", harness.TokenWorkspace)
 	bootstrapToken = wsToken
 
@@ -123,6 +138,91 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+// runByoProject runs the group under a caller-supplied project token against the
+// project that token is already scoped to. It classifies the token (must be a
+// project token), resolves its project/environment for the fixture Env, then runs
+// the suite with NO fixture creation and NO project teardown — the caller owns the
+// project. Each test still cleans up the throwaway services/volumes it creates.
+// Returns the process exit code.
+func runByoProject(m *testing.M, token string) int {
+	got, err := harness.ClassifyToken(token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e project (BYO): RAILWAY_PROJECT_TOKEN failed type detection: %v\n", err)
+		return 1
+	}
+	if got != harness.TokenProject {
+		fmt.Fprintf(os.Stderr,
+			"e2e project (BYO): RAILWAY_PROJECT_TOKEN is a %s token — this mode needs a project token.\n", got)
+		return 1
+	}
+	if harness.Railctl == "" {
+		fmt.Fprintln(os.Stderr, "e2e project (BYO): railctl binary not found — set RAILCTL or run: make build")
+		return 1
+	}
+
+	projName, envName, err := harness.ProjectTokenScope(token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "e2e project (BYO): could not resolve the token's project/environment: %v\n", err)
+		return 1
+	}
+
+	projectToken = token
+	fixtureProject = projName
+	fixtureEnvName = envName
+	// bootstrapToken stays empty: SSH-key registration (exec/port-forward) needs
+	// workspace/account power a project token lacks. Those tests must be excluded
+	// via -run in BYO mode.
+
+	fmt.Fprintf(os.Stderr,
+		"e2e project (BYO): running in existing project %q (env %q) under the supplied project token; "+
+			"no fixture project is created or deleted.\n", projName, envName)
+
+	// No fixture teardown — the caller owns the project. Per-test t.Cleanup still
+	// deletes the services/volumes each test creates.
+	code := m.Run()
+
+	// Leak check: cleanup calls are best-effort (t.Cleanup ignores errors), so a
+	// silently failing delete would leave debris invisible forever. Fail the run
+	// if any e2e-prefixed resource survived — only e2e names, because in BYO
+	// mode the project legitimately contains the caller's own resources.
+	if code == 0 {
+		if leaks := byoLeaks(token); len(leaks) > 0 {
+			fmt.Fprintf(os.Stderr, "e2e project (BYO): LEAK CHECK FAILED — resources left behind:\n")
+			for _, l := range leaks {
+				fmt.Fprintf(os.Stderr, "  - %s\n", l)
+			}
+			return 1
+		}
+		fmt.Fprintln(os.Stderr, "e2e project (BYO): leak check clean — no e2e-prefixed resources remain.")
+	}
+	return code
+}
+
+// byoLeaks lists e2e-prefixed services and volumes still present in the
+// token's environment.
+func byoLeaks(token string) []string {
+	var leaks []string
+	for _, kind := range []string{"services", "volumes"} {
+		stdout, _, code := runCLI(token, "get", kind, "-o", "json")
+		if code != 0 {
+			leaks = append(leaks, fmt.Sprintf("(could not list %s for the leak check)", kind))
+			continue
+		}
+		var items []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &items); err != nil {
+			continue
+		}
+		for _, it := range items {
+			if strings.HasPrefix(it.Name, "e2e-") {
+				leaks = append(leaks, strings.TrimSuffix(kind, "s")+" "+it.Name)
+			}
+		}
+	}
+	return leaks
 }
 
 // compileCheckOnly mirrors the harness's unexported check: `-run '^$'` is

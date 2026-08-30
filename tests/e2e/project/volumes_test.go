@@ -5,7 +5,6 @@ package project
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/kubenoops/railctl/tests/e2e/harness"
 )
@@ -28,7 +27,10 @@ func TestVolumes(t *testing.T) {
 
 	t.Run("create", func(t *testing.T) {
 		env.RunOK(t, "create", "volume", "--mount-path", "/app/data", "-s", svc)
-		time.Sleep(2 * time.Second)
+		// Attachment propagation is not immediate — a fixed sleep flakes.
+		if err := harness.WaitForVolume(env, svc+"-volume"); err != nil {
+			t.Fatalf("volume did not propagate: %v", err)
+		}
 	})
 
 	t.Run("get_table", func(t *testing.T) {
@@ -81,11 +83,9 @@ func TestVolumes(t *testing.T) {
 		if volName == "" {
 			t.Skip("no volume name captured")
 		}
-		// Unique rename target: the fixture project is shared across the
-		// whole group, so no hardcoded names.
-		renamed := harness.UniqueName()
-		env.RunOK(t, "update", "volume", volName, "--name", renamed)
-		volName = renamed
+		// Suite-1 rename attempt (no region anywhere): verified when the token
+		// is authorized, logged when Railway denies volumeUpdate to it.
+		volName = tryRenameVolume(t, env, volName)
 	})
 
 	// Error cases

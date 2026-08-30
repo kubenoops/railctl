@@ -134,7 +134,7 @@ func TestApplyUpdateDeployConfig(t *testing.T) {
 			},
 		}
 
-		err := applyUpdateDeployConfig(cmd, mock, "svc-1", "env-1")
+		err := applyUpdateDeployConfig(cmd, mock, "svc-1", "env-1", false)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -161,7 +161,7 @@ func TestApplyUpdateDeployConfig(t *testing.T) {
 			},
 		}
 
-		err := applyUpdateDeployConfig(cmd, mock, "svc-1", "env-1")
+		err := applyUpdateDeployConfig(cmd, mock, "svc-1", "env-1", false)
 		if err == nil {
 			t.Error("expected error")
 		}

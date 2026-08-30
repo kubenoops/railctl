@@ -81,7 +81,7 @@ func runDeleteVolume(cmd *cobra.Command, args []string) error {
 	}
 
 	// Delete the volume
-	if err := client.DeleteVolume(volumeID); err != nil {
+	if err := client.DeleteVolume(ctx.Environment.ID, volumeID); err != nil {
 		return fmt.Errorf("failed to delete volume: %w", err)
 	}
 

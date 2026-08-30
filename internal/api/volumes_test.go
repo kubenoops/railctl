@@ -60,7 +60,10 @@ func TestCreateVolume(t *testing.T) {
 
 func TestDeleteVolume(t *testing.T) {
 	client := &MockClient{
-		DeleteVolumeFunc: func(volumeID string) error {
+		DeleteVolumeFunc: func(environmentID, volumeID string) error {
+			if environmentID != "env-1" {
+				t.Errorf("unexpected environmentID: %s", environmentID)
+			}
 			if volumeID != "vol-1" {
 				t.Errorf("unexpected volumeID: %s", volumeID)
 			}
@@ -68,7 +71,7 @@ func TestDeleteVolume(t *testing.T) {
 		},
 	}
 
-	err := client.DeleteVolume("vol-1")
+	err := client.DeleteVolume("env-1", "vol-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

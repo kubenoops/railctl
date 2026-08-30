@@ -124,6 +124,13 @@ type LiveDeployConfig struct {
 	Replicas           int
 	HealthcheckPath    string
 	HealthcheckTimeout int
+	// Region is the sole live region when the service is placed in exactly one
+	// region, else empty (derived from MultiRegion).
+	Region string
+	// MultiRegion is the full live placement (region → replica count). Empty
+	// means default placement. Used to derive the effective per-region replica
+	// count for comparison and to detect multi-region collapse.
+	MultiRegion map[string]int
 }
 
 // LiveVolume represents a volume attached to a live service.
@@ -256,6 +263,9 @@ func deployCreateFields(dc config.DeployConfig) []FieldDiff {
 	if dc.MaxRetries != 0 {
 		fields = append(fields, FieldDiff{Path: "deploy.maxRetries", Desired: fmt.Sprintf("%d", dc.MaxRetries)})
 	}
+	if dc.Region != "" {
+		fields = append(fields, FieldDiff{Path: "deploy.region", Desired: dc.Region})
+	}
 	if dc.Replicas != 0 {
 		fields = append(fields, FieldDiff{Path: "deploy.replicas", Desired: fmt.Sprintf("%d", dc.Replicas)})
 	}
@@ -323,6 +333,12 @@ func buildDeleteChange(ls LiveService) ResourceChange {
 	}
 	if ls.Deploy.Replicas != 0 {
 		fields = append(fields, FieldDiff{Path: "deploy.replicas", Current: fmt.Sprintf("%d", ls.Deploy.Replicas)})
+	}
+	// Single-region placement (REQ-APL-009); a >1-region service has Region=""
+	// and shows no region line, which is acceptable since delete removes the
+	// whole service.
+	if ls.Deploy.Region != "" {
+		fields = append(fields, FieldDiff{Path: "deploy.region", Current: api.ShortRegionName(ls.Deploy.Region)})
 	}
 	if ls.Deploy.HealthcheckPath != "" {
 		fields = append(fields, FieldDiff{Path: "deploy.healthcheckPath", Current: ls.Deploy.HealthcheckPath})
@@ -505,6 +521,36 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 // compareDeployConfig compares desired and live deploy configurations.
 // compareDeployConfig treats a zero-value field as unmanaged (like the create
 // path), so an undeclared field never diffs against or overwrites Railway's defaults.
+// effectiveLiveReplicas returns the live replica count to compare a desired
+// deploy.replicas against, and whether a comparison is meaningful. For a
+// default-placed service it is the flat count; for a single-region service it is
+// that region's count; for a multi-region service it is the desired (collapse)
+// region's count when one is given, else not comparable — a single-region
+// manifest must not emit a replicas drift for a multi-region service (RES-1).
+func effectiveLiveReplicas(l LiveDeployConfig, desiredRegion string) (int, bool) {
+	switch {
+	case len(l.MultiRegion) == 0:
+		return l.Replicas, true
+	case len(l.MultiRegion) == 1:
+		for _, n := range l.MultiRegion {
+			return n, true
+		}
+		return 0, true
+	default: // multi-region
+		// Only comparable when collapsing to a region that is actually among the
+		// live set; otherwise there is no meaningful "current" per-region count, so
+		// don't render a misleading deploy.replicas 0→N (the region line conveys the
+		// move, and the write uses effectiveApplyReplicas).
+		want := api.ShortRegionName(desiredRegion)
+		for rgn, n := range l.MultiRegion {
+			if api.ShortRegionName(rgn) == want {
+				return n, true
+			}
+		}
+		return 0, false
+	}
+}
+
 func compareDeployConfig(d config.DeployConfig, l LiveDeployConfig) []FieldDiff {
 	var fields []FieldDiff
 
@@ -521,12 +567,28 @@ func compareDeployConfig(d config.DeployConfig, l LiveDeployConfig) []FieldDiff 
 			Desired: fmt.Sprintf("%d", d.MaxRetries),
 		})
 	}
-	if d.Replicas != 0 && d.Replicas != l.Replicas {
+	// Region placement: a desired region that differs from the live single
+	// region (empty when the service is default- or multi-region-placed) drifts.
+	// Both sides normalize to the short name — the manifest may say either form,
+	// and the live key is the full region ID.
+	if d.Region != "" && api.ShortRegionName(d.Region) != api.ShortRegionName(l.Region) {
 		fields = append(fields, FieldDiff{
-			Path:    "deploy.replicas",
-			Current: fmt.Sprintf("%d", l.Replicas),
-			Desired: fmt.Sprintf("%d", d.Replicas),
+			Path:    "deploy.region",
+			Current: api.ShortRegionName(l.Region),
+			Desired: api.ShortRegionName(d.Region),
 		})
+	}
+	// Replicas: for a region-placed service the effective count lives in
+	// multiRegionConfig, not the flat numReplicas — compare against the
+	// per-region count so a matching manifest is idempotent (REQ-APL-010).
+	if d.Replicas != 0 {
+		if live, ok := effectiveLiveReplicas(l, d.Region); ok && d.Replicas != live {
+			fields = append(fields, FieldDiff{
+				Path:    "deploy.replicas",
+				Current: fmt.Sprintf("%d", live),
+				Desired: fmt.Sprintf("%d", d.Replicas),
+			})
+		}
 	}
 	if d.HealthcheckPath != "" && d.HealthcheckPath != l.HealthcheckPath {
 		fields = append(fields, FieldDiff{Path: "deploy.healthcheckPath", Current: l.HealthcheckPath, Desired: d.HealthcheckPath})

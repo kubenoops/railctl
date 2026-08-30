@@ -397,7 +397,7 @@ func TestApply_DeleteService(t *testing.T) {
 		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
 			return []types.ServiceDetail{{ID: "svc-1", Name: "old-service"}}, nil
 		},
-		DeleteServiceFunc: func(id string) error {
+		DeleteServiceFunc: func(environmentID, id string) error {
 			deleteCalled = true
 			capturedServiceID = id
 			return nil
@@ -443,7 +443,7 @@ func TestApply_DryRun(t *testing.T) {
 		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
 			panic("UpdateServiceInstance should not be called in dry run")
 		},
-		DeleteServiceFunc: func(id string) error {
+		DeleteServiceFunc: func(environmentID, id string) error {
 			panic("DeleteService should not be called in dry run")
 		},
 		ListServicesFunc: func(projectID, envID string) ([]types.ServiceDetail, error) {
@@ -546,7 +546,7 @@ func TestApply_Mixed(t *testing.T) {
 		UpdateServiceInstanceFunc: func(serviceID, envID, image string, creds *api.RegistryCredentials) error {
 			return nil
 		},
-		DeleteServiceFunc: func(id string) error {
+		DeleteServiceFunc: func(environmentID, id string) error {
 			return nil
 		},
 	}

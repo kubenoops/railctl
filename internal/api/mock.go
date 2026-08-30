@@ -23,7 +23,7 @@ type MockClient struct {
 	UpdateServiceInstanceConfigFunc func(serviceID, environmentID string, startCommand, restartPolicy *string, maxRetries, replicas *int, healthcheckPath *string, healthcheckTimeout *int) error
 	DeployServiceInstanceFunc       func(serviceID, environmentID string) (string, error)
 	RedeployDeploymentFunc          func(deploymentID string) error
-	DeleteServiceFunc               func(id string) error
+	DeleteServiceFunc               func(environmentID, id string) error
 	DeleteServiceInstanceFunc       func(serviceID, environmentID string) error
 	GetBuildLogsFunc                func(deploymentID string, limit int) ([]string, error)
 
@@ -42,8 +42,10 @@ type MockClient struct {
 	GetDeploymentLogsFunc func(deploymentID string, limit int) ([]LogEntry, error)
 
 	// SSH exec / port-forward
-	GetServiceInstanceIDFunc func(environmentID, serviceID string) (string, error)
-	ListReplicasFunc         func(environmentID, serviceID string) (ReplicaList, error)
+	GetServiceInstanceIDFunc    func(environmentID, serviceID string) (string, error)
+	ListReplicasFunc            func(environmentID, serviceID string) (ReplicaList, error)
+	ListRegionsFunc             func() ([]types.Region, error)
+	CommitMultiRegionConfigFunc func(environmentID, serviceID string, mrc map[string]any, commitMessage string) error
 
 	// Domains
 	ListDomainsFunc             func(projectID, environmentID, serviceID string) (DomainList, error)
@@ -61,7 +63,7 @@ type MockClient struct {
 	// Volumes
 	ListVolumesFunc           func(projectID, environmentID string) ([]VolumeInstance, error)
 	CreateVolumeFunc          func(projectID, environmentID, serviceID, mountPath string) (Volume, error)
-	DeleteVolumeFunc          func(volumeID string) error
+	DeleteVolumeFunc          func(environmentID, volumeID string) error
 	UpdateVolumeNameFunc      func(volumeID, name string) error
 	UpdateVolumeMountPathFunc func(volumeID, serviceID, environmentID, mountPath string) error
 	AttachVolumeFunc          func(volumeID, serviceID, environmentID string) error
@@ -199,9 +201,9 @@ func (m *MockClient) RedeployDeployment(deploymentID string) error {
 	return nil
 }
 
-func (m *MockClient) DeleteService(id string) error {
+func (m *MockClient) DeleteService(environmentID, id string) error {
 	if m.DeleteServiceFunc != nil {
-		return m.DeleteServiceFunc(id)
+		return m.DeleteServiceFunc(environmentID, id)
 	}
 	return nil
 }
@@ -339,6 +341,20 @@ func (m *MockClient) ListReplicas(environmentID, serviceID string) (ReplicaList,
 	return ReplicaList{}, nil
 }
 
+func (m *MockClient) ListRegions() ([]types.Region, error) {
+	if m.ListRegionsFunc != nil {
+		return m.ListRegionsFunc()
+	}
+	return nil, nil
+}
+
+func (m *MockClient) CommitMultiRegionConfig(environmentID, serviceID string, mrc map[string]any, commitMessage string) error {
+	if m.CommitMultiRegionConfigFunc != nil {
+		return m.CommitMultiRegionConfigFunc(environmentID, serviceID, mrc, commitMessage)
+	}
+	return nil
+}
+
 func (m *MockClient) ListVolumes(projectID, environmentID string) ([]VolumeInstance, error) {
 	if m.ListVolumesFunc != nil {
 		return m.ListVolumesFunc(projectID, environmentID)
@@ -353,9 +369,9 @@ func (m *MockClient) CreateVolume(projectID, environmentID, serviceID, mountPath
 	return Volume{}, nil
 }
 
-func (m *MockClient) DeleteVolume(volumeID string) error {
+func (m *MockClient) DeleteVolume(environmentID, volumeID string) error {
 	if m.DeleteVolumeFunc != nil {
-		return m.DeleteVolumeFunc(volumeID)
+		return m.DeleteVolumeFunc(environmentID, volumeID)
 	}
 	return nil
 }

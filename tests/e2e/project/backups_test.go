@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,22 +70,39 @@ func TestBackupSchedules(t *testing.T) {
 		t.Fatal("could not capture volume name from get volumes output")
 	}
 
-	// 3. Schedules should be present (declarative reconcile is synchronous).
-	r = e.RunOK(t, "get", "backups", volName, "--schedules")
-	harness.AssertContains(t, r.Stdout, "DAILY")
-	harness.AssertContains(t, r.Stdout, "WEEKLY")
+	// 3. Schedules should be present. The reconcile is synchronous but the
+	// read-back can lag during Railway degradation windows (observed
+	// 2026-08-30) — poll briefly instead of asserting the first read.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		r = e.RunOK(t, "get", "backups", volName, "--schedules")
+		if strings.Contains(r.Stdout, "DAILY") && strings.Contains(r.Stdout, "WEEKLY") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("backup schedules not visible after 60s, last output: %q", r.Stdout)
+		}
+		time.Sleep(5 * time.Second)
+	}
 
 	// 4. describe volume surfaces the schedules too.
 	r = e.RunOK(t, "describe", "volume", volName)
 	harness.AssertContains(t, r.Stdout, "Backup Schedules")
 
-	// 5. Manual backup command is wired. Railway runs it asynchronously and
-	// may refuse a backup on a volume that has never been deployed, so we
-	// exercise the command path without asserting success.
-	_ = e.Run("create", "backup", volName)
-
-	// Listing backups is a read and must always succeed (possibly empty).
-	e.RunOK(t, "get", "backups", volName)
+	// 5. Manual backup: the command must be accepted, and the backup must
+	// become visible (Railway materializes it asynchronously — poll).
+	e.RunOK(t, "create", "backup", volName)
+	bdl := time.Now().Add(90 * time.Second)
+	for {
+		r = e.RunOK(t, "get", "backups", volName)
+		if strings.Contains(r.Stdout, "Manual") || strings.Contains(r.Stdout, "manual") {
+			break
+		}
+		if time.Now().After(bdl) {
+			t.Fatalf("manual backup not visible after 90s, last output: %q", r.Stdout)
+		}
+		time.Sleep(5 * time.Second)
+	}
 
 	// 6. Clear the schedules by omitting backupSchedules on the managed volume.
 	noSchedules := fmt.Sprintf(`services:

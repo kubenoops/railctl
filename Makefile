@@ -1,4 +1,4 @@
-.PHONY: build clean test test-e2e test-e2e-account test-e2e-workspace test-e2e-project test-smoke install build-all gen gen-check
+.PHONY: build clean test test-e2e test-e2e-account test-e2e-workspace test-e2e-project test-e2e-byo test-smoke install build-all gen gen-check
 
 # Binary name
 BINARY=railctl
@@ -56,6 +56,15 @@ test-e2e-workspace: build
 test-e2e-project: build
 	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 25m ./tests/e2e/project/...
 
+# Run the L3 project group against a project the caller already owns, under a
+# raw PROJECT token (needs RAILWAY_PROJECT_TOKEN; no fixture project is created).
+# Excludes exec/port-forward (SSH-key registration needs workspace power).
+# Serial by design: the suites share the token's single environment and assert
+# a clean room before/after.
+test-e2e-byo: build
+	RAILWAY_PROJECT_TOKEN=$(RAILWAY_PROJECT_TOKEN) RAILCTL=$(CURDIR)/$(BINARY) \
+	go test -tags e2e -v -count=1 -timeout 40m -skip 'TestExec|TestPortForward' ./tests/e2e/project/...
+
 # Run all E2E groups top-down: account → workspace → project
 # (needs both RAILWAY_ACCOUNT_TOKEN and RAILWAY_WORKSPACE_TOKEN)
 test-e2e: test-e2e-account test-e2e-workspace test-e2e-project
@@ -95,6 +104,7 @@ help:
 	@echo "  test-e2e-account   - Run L1 account-scope E2E group (needs RAILWAY_ACCOUNT_TOKEN)"
 	@echo "  test-e2e-workspace - Run L2 workspace-scope E2E group (needs RAILWAY_WORKSPACE_TOKEN)"
 	@echo "  test-e2e-project   - Run L3 project-scope E2E group (needs RAILWAY_WORKSPACE_TOKEN; mints its own project token)"
+	@echo "  test-e2e-byo       - Run L3 group in YOUR project under a raw project token (needs RAILWAY_PROJECT_TOKEN)"
 	@echo "  test-smoke      - Build and run smoke E2E test (needs RAILWAY_WORKSPACE_TOKEN, ~1min)"
 	@echo "  fmt             - Format Go code"
 	@echo "  lint            - Run golangci-lint"

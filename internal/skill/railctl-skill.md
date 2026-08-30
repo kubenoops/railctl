@@ -416,6 +416,7 @@ services:
       restartPolicy: ON_FAILURE # ON_FAILURE | ALWAYS | NEVER
       maxRetries: 3 # requires restartPolicy
       replicas: 2 # >= 1 if set
+      region: us-west2 # optional; pin to one region. omitted = leave live placement alone
       healthcheckPath: /health
       healthcheckTimeout: 300
 
@@ -860,12 +861,18 @@ railctl get services
 railctl describe service api [--show-values]
 railctl create service api --image ghcr.io/o/app:tag \
     [--start-command CMD] [--restart-policy ON_FAILURE|ALWAYS|NEVER] [--max-retries N] \
-    [--replicas N] [--healthcheck-path /health] [--healthcheck-timeout N] \
+    [--replicas N] [--region us-west2] [--healthcheck-path /health] [--healthcheck-timeout N] \
     [--generate-domain PORT] [--generate-tcp PORT] \
     [--registry-username U --registry-password P]
 railctl update service api [--image TAG] [--await-completion] [...same config flags] \
-    [--remove-domain] [--remove-tcp]          # update triggers a deployment
+    [--region us-west2] [--force] [--remove-domain] [--remove-tcp]  # update triggers a deployment
+railctl get regions                           # list valid --region names (table/wide/json/yaml)
 railctl delete service api --yes              # orphans its volume — see volumes
+
+# Region placement: --region pins a service to one region (env default: RAILCTL_REGION,
+# create only). Moving preserves the replica count; a no-op if already there. If a volume
+# is attached Railway migrates it (service down meanwhile) — needs --force. Collapsing a
+# multi-region service also needs --force.
 ```
 
 The service is created **in the target environment only**.

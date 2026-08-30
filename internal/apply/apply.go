@@ -123,7 +123,7 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 
 	// --- Process deletes ---
 	for _, rc := range deletes {
-		if err := applyDelete(client, rc, services, opts.Output); err != nil {
+		if err := applyDelete(client, rc, envID, services, opts.Output); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("delete %s: %w", rc.ServiceName, err))
 			continue
 		}
@@ -146,11 +146,26 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		return fmt.Errorf("creating service: %w", err)
 	}
 
-	// Apply deploy config if any fields are non-zero.
+	// Apply deploy config if any fields are non-zero (region is handled separately
+	// via environmentPatchCommit below).
 	startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout := buildDeployConfigFromConfig(cfg.Deploy)
 	if startCmd != nil || restartPolicy != nil || maxRetries != nil || replicas != nil || hcPath != nil || hcTimeout != nil {
 		if err := client.UpdateServiceInstanceConfig(svc.ID, envID, startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout); err != nil {
 			return fmt.Errorf("applying deploy config: %w", err)
+		}
+	}
+
+	// Region placement (new service: no prior placement to preserve). The
+	// manifest value resolves to the full region ID — committing a short name
+	// verbatim would place the service on the legacy non-metal region, which
+	// breaks volume migrations.
+	if cfg.Deploy.Region != "" {
+		rgn, err := api.ResolveRegionID(cfg.Deploy.Region)
+		if err != nil {
+			return fmt.Errorf("applying region: %w", err)
+		}
+		if err := commitRegion(client, envID, svc.ID, rgn, cfg.Deploy.Replicas, nil); err != nil {
+			return fmt.Errorf("applying region: %w", err)
 		}
 	}
 
@@ -207,8 +222,20 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	// can reflect the pre-config service. A service that exists with zero
 	// deployments is a systemic failure, not an unhealthy deploy — the
 	// deployment must exist even if it later crashes.
-	if _, err := client.DeployServiceInstance(svc.ID, envID); err != nil {
-		return fmt.Errorf("triggering initial deployment: %w", err)
+	// The service was created moments ago and Railway materializes its
+	// instance asynchronously — an immediate deploy trigger can race it
+	// ("Service Instance not found", and during degradation windows even a
+	// transient "Not Authorized", both observed live 2026-08-30). Retry with
+	// patience; the horizon covers observed degradation, not just the race.
+	var deployErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		if _, deployErr = client.DeployServiceInstance(svc.ID, envID); deployErr == nil {
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+	if deployErr != nil {
+		return fmt.Errorf("triggering initial deployment: %w", deployErr)
 	}
 
 	fmt.Fprintf(w, "✓ Service '%s' created\n", name)
@@ -304,11 +331,38 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		}
 	}
 
-	// Update deploy config.
+	// Region placement (resolved from desired config + live state): a managed
+	// region forces the environmentPatchCommit path with the effective per-region
+	// count, even when only replicas drifted; a bare replica change on a
+	// region-placed service routes through its region. When a region write owns the
+	// replica count, keep the flat numReplicas out of the deploy-config write.
+	live := findServiceDetail(services, name)
+	region, replicasOverride, err := resolveApplyRegion(cfg, live, deployFields)
+	if err != nil {
+		return fmt.Errorf("resolving region: %w", err)
+	}
+
 	if len(deployFields) > 0 {
 		startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout := buildDeployConfigUpdate(deployFields)
+		if region != nil {
+			replicas = nil // region write owns per-region replicas
+		}
 		if err := client.UpdateServiceInstanceConfig(serviceID, envID, startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout); err != nil {
 			return fmt.Errorf("updating deploy config: %w", err)
+		}
+	}
+
+	if region != nil {
+		n := 1
+		if replicasOverride != nil {
+			n = *replicasOverride
+		}
+		var current map[string]int
+		if live != nil {
+			current = live.MultiRegion
+		}
+		if err := commitRegion(client, envID, serviceID, *region, n, current); err != nil {
+			return fmt.Errorf("updating region: %w", err)
 		}
 	}
 
@@ -471,7 +525,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 }
 
 // applyDelete handles a single ChangeDelete operation.
-func applyDelete(client api.APIClient, rc diff.ResourceChange, services []types.ServiceDetail, w io.Writer) error {
+func applyDelete(client api.APIClient, rc diff.ResourceChange, envID string, services []types.ServiceDetail, w io.Writer) error {
 	name := rc.ServiceName
 
 	serviceID, err := findServiceID(services, name)
@@ -481,7 +535,7 @@ func applyDelete(client api.APIClient, rc diff.ResourceChange, services []types.
 
 	fmt.Fprintf(w, "Deleting service '%s'...\n", name)
 
-	if err := client.DeleteService(serviceID); err != nil {
+	if err := client.DeleteService(envID, serviceID); err != nil {
 		return fmt.Errorf("deleting service: %w", err)
 	}
 
@@ -564,6 +618,7 @@ func registryCreds(r config.RegistryConfig) *api.RegistryCredentials {
 
 // buildDeployConfigFromConfig extracts pointer args from a DeployConfig for
 // UpdateServiceInstanceConfig. Returns nil pointers for zero-value fields.
+// Region is NOT handled here (it goes via commitRegion/environmentPatchCommit).
 func buildDeployConfigFromConfig(dc config.DeployConfig) (startCmd, restartPolicy *string, maxRetries, replicas *int, healthcheckPath *string, healthcheckTimeout *int) {
 	if dc.StartCommand != "" {
 		startCmd = &dc.StartCommand
@@ -584,6 +639,23 @@ func buildDeployConfigFromConfig(dc config.DeployConfig) (startCmd, restartPolic
 		healthcheckTimeout = &dc.HealthcheckTimeout
 	}
 	return
+}
+
+// commitRegion pins a service to a single region via environmentPatchCommit: sets
+// the target region (with numReplicas) and removes every other currently-present
+// region (the patch merges, so others must be explicitly nulled).
+func commitRegion(client api.APIClient, environmentID, serviceID, region string, numReplicas int, current map[string]int) error {
+	if numReplicas < 1 {
+		numReplicas = 1
+	}
+	mrc := map[string]any{
+		region: map[string]any{"numReplicas": numReplicas},
+	}
+	// Null every other known region so the result is exactly one region.
+	for _, r := range api.RegionsToClear(region, current) {
+		mrc[r] = nil
+	}
+	return client.CommitMultiRegionConfig(environmentID, serviceID, mrc, fmt.Sprintf("railctl: set region to %s", region))
 }
 
 // buildDeployConfigUpdate extracts pointer args from FieldDiffs for
@@ -615,6 +687,83 @@ func buildDeployConfigUpdate(fields []diff.FieldDiff) (startCmd, restartPolicy *
 		}
 	}
 	return
+}
+
+// findServiceDetail returns the live ServiceDetail for a name, or nil.
+func findServiceDetail(services []types.ServiceDetail, name string) *types.ServiceDetail {
+	for i := range services {
+		if services[i].Name == name {
+			return &services[i]
+		}
+	}
+	return nil
+}
+
+// hasDeployField reports whether a deploy field with the given path drifted.
+func hasDeployField(fields []diff.FieldDiff, path string) bool {
+	for _, f := range fields {
+		if f.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveApplyReplicas resolves the per-region replica count for a declarative
+// region write (mirrors the imperative rule, DEC-016/020/025): a declared
+// replicas wins; else preserve the service's current scale (target region's live
+// count, else the single live region's count, else the flat count); else 1.
+func effectiveApplyReplicas(live *types.ServiceDetail, declared int, target string) int {
+	if declared > 0 {
+		return declared
+	}
+	if live != nil {
+		if n, ok := live.MultiRegion[target]; ok && n > 0 {
+			return n
+		}
+		if len(live.MultiRegion) == 1 {
+			for _, n := range live.MultiRegion {
+				if n > 0 {
+					return n
+				}
+			}
+		}
+		if len(live.MultiRegion) == 0 && live.Replicas > 0 {
+			return live.Replicas
+		}
+	}
+	return 1
+}
+
+// resolveApplyRegion resolves the region (and replica override) to write for a
+// service update. A declared deploy.region forces the multiRegionConfig path with
+// the effective count; otherwise a bare replica change on a single-region service
+// is routed through its existing region. Returns (nil, nil) for the flat path.
+func resolveApplyRegion(cfg config.ServiceConfig, live *types.ServiceDetail, deployFields []diff.FieldDiff) (*string, *int, error) {
+	if cfg.Deploy.Region != "" {
+		// Resolve to the full region ID (short names commit the legacy
+		// non-metal region and break volume migrations).
+		r, err := api.ResolveRegionID(cfg.Deploy.Region)
+		if err != nil {
+			return nil, nil, err
+		}
+		n := effectiveApplyReplicas(live, cfg.Deploy.Replicas, r)
+		return &r, &n, nil
+	}
+	if live != nil && len(live.MultiRegion) == 1 && hasDeployField(deployFields, "deploy.replicas") {
+		var existing string
+		for rgn := range live.MultiRegion {
+			existing = rgn
+		}
+		// Route the new replica count through the existing region (the live
+		// key verbatim — it may be a legacy key that must be addressed as-is).
+		n := cfg.Deploy.Replicas
+		if n < 1 {
+			n = 1
+		}
+		return &existing, &n, nil
+	}
+	return nil, nil, nil
 }
 
 // fieldCurrent returns the Current value of the FieldDiff with the given path,

@@ -49,28 +49,44 @@ type TCPProxy struct {
 	ApplicationPort int    `json:"applicationPort" yaml:"applicationPort"`
 }
 
+// Region represents an available Railway region. Name is the short, user-facing
+// form (datacenter suffix stripped, e.g. "asia-southeast1"); ID is the full
+// Railway region ID used on the wire (e.g. "asia-southeast1-eqsg3a").
+type Region struct {
+	Name     string `json:"name" yaml:"name"`
+	ID       string `json:"id" yaml:"id"`
+	Country  string `json:"country,omitempty" yaml:"country,omitempty"`
+	Location string `json:"location,omitempty" yaml:"location,omitempty"`
+}
+
 // ServiceDetail represents detailed service information.
 type ServiceDetail struct {
-	ID                 string          `json:"id" yaml:"id"`
-	Name               string          `json:"name" yaml:"name"`
-	Icon               string          `json:"icon,omitempty" yaml:"icon,omitempty"`
-	Source             string          `json:"source,omitempty" yaml:"source,omitempty"`
-	SourceType         string          `json:"sourceType,omitempty" yaml:"sourceType,omitempty"`
-	InstanceID         string          `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
-	StartCommand       string          `json:"startCommand,omitempty" yaml:"startCommand,omitempty"`
-	RestartPolicy      string          `json:"restartPolicy,omitempty" yaml:"restartPolicy,omitempty"`
-	MaxRetries         int             `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
-	Replicas           int             `json:"replicas,omitempty" yaml:"replicas,omitempty"`
-	HealthcheckPath    string          `json:"healthcheckPath,omitempty" yaml:"healthcheckPath,omitempty"`
-	HealthcheckTimeout int             `json:"healthcheckTimeout,omitempty" yaml:"healthcheckTimeout,omitempty"`
-	UpdatedAt          time.Time       `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
-	Status             string          `json:"status,omitempty" yaml:"status,omitempty"`
-	DeploymentID       string          `json:"deploymentId,omitempty" yaml:"deploymentId,omitempty"`
-	DeployedAt         time.Time       `json:"deployedAt,omitempty" yaml:"deployedAt,omitempty"`
-	DeploymentError    string          `json:"deploymentError,omitempty" yaml:"deploymentError,omitempty"`
-	ServiceDomains     []ServiceDomain `json:"serviceDomains,omitempty" yaml:"serviceDomains,omitempty"`
-	CustomDomains      []CustomDomain  `json:"customDomains,omitempty" yaml:"customDomains,omitempty"`
-	TCPProxies         []TCPProxy      `json:"tcpProxies,omitempty" yaml:"tcpProxies,omitempty"`
+	ID                 string `json:"id" yaml:"id"`
+	Name               string `json:"name" yaml:"name"`
+	Icon               string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Source             string `json:"source,omitempty" yaml:"source,omitempty"`
+	SourceType         string `json:"sourceType,omitempty" yaml:"sourceType,omitempty"`
+	InstanceID         string `json:"instanceId,omitempty" yaml:"instanceId,omitempty"`
+	StartCommand       string `json:"startCommand,omitempty" yaml:"startCommand,omitempty"`
+	RestartPolicy      string `json:"restartPolicy,omitempty" yaml:"restartPolicy,omitempty"`
+	MaxRetries         int    `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	Replicas           int    `json:"replicas,omitempty" yaml:"replicas,omitempty"`
+	HealthcheckPath    string `json:"healthcheckPath,omitempty" yaml:"healthcheckPath,omitempty"`
+	HealthcheckTimeout int    `json:"healthcheckTimeout,omitempty" yaml:"healthcheckTimeout,omitempty"`
+	// MultiRegion is the full live placement (region name → replica count). Empty
+	// means the service runs in Railway's default placement.
+	MultiRegion map[string]int `json:"multiRegion,omitempty" yaml:"multiRegion,omitempty"`
+	// Region is the sole region name when MultiRegion has exactly one entry, else
+	// empty. It is a derived convenience for single-region diff/display.
+	Region          string          `json:"region,omitempty" yaml:"region,omitempty"`
+	UpdatedAt       time.Time       `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
+	Status          string          `json:"status,omitempty" yaml:"status,omitempty"`
+	DeploymentID    string          `json:"deploymentId,omitempty" yaml:"deploymentId,omitempty"`
+	DeployedAt      time.Time       `json:"deployedAt,omitempty" yaml:"deployedAt,omitempty"`
+	DeploymentError string          `json:"deploymentError,omitempty" yaml:"deploymentError,omitempty"`
+	ServiceDomains  []ServiceDomain `json:"serviceDomains,omitempty" yaml:"serviceDomains,omitempty"`
+	CustomDomains   []CustomDomain  `json:"customDomains,omitempty" yaml:"customDomains,omitempty"`
+	TCPProxies      []TCPProxy      `json:"tcpProxies,omitempty" yaml:"tcpProxies,omitempty"`
 }
 
 // EnvironmentCount returns the number of environments in the project.

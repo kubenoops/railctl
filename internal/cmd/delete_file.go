@@ -178,7 +178,7 @@ func runDeleteFile(cmd *cobra.Command, args []string) error {
 	for i := len(doomed) - 1; i >= 0; i-- {
 		d := doomed[i]
 		fmt.Fprintf(out, "Deleting service '%s'...\n", d.name)
-		if err := client.DeleteService(d.serviceID); err != nil {
+		if err := client.DeleteService(envID, d.serviceID); err != nil {
 			errs = append(errs, fmt.Errorf("delete service %s: %w", d.name, err))
 			failedService[d.name] = true
 			continue
@@ -196,7 +196,7 @@ func runDeleteFile(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		fmt.Fprintf(out, "Deleting volume '%s'...\n", v.name)
-		if err := client.DeleteVolume(v.volumeID); err != nil {
+		if err := client.DeleteVolume(envID, v.volumeID); err != nil {
 			errs = append(errs, fmt.Errorf("delete volume %s: %w", v.name, err))
 			continue
 		}

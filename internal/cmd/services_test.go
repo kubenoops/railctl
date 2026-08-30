@@ -2531,7 +2531,7 @@ func TestRunDeleteService_Success(t *testing.T) {
 					{ID: "svc-1", Name: "api"},
 				}, nil
 			},
-			DeleteServiceFunc: func(id string) error {
+			DeleteServiceFunc: func(environmentID, id string) error {
 				deletedServiceID = id
 				return nil
 			},

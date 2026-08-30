@@ -36,6 +36,7 @@ query($projectId: String!) {
 								latestDeployment {
 									id
 									status
+									meta
 									deploymentStopped
 								}
 								activeDeployments {
@@ -103,10 +104,13 @@ mutation($input: ServiceCreateInput!) {
 }
 `
 
-// deleteServiceMutation is the GraphQL mutation for deleting a service.
+// deleteServiceMutation is the GraphQL mutation for deleting a service. It
+// carries environmentId — Railway authorizes project tokens only on
+// environment-scoped operations (the env-less serviceDelete(id) form returns
+// Not Authorized for them), and the official Railway CLI passes both too.
 const deleteServiceMutation = `
-mutation($id: String!) {
-	serviceDelete(id: $id)
+mutation($id: String!, $environmentId: String!) {
+	serviceDelete(id: $id, environmentId: $environmentId)
 }
 `
 
@@ -229,6 +233,42 @@ type serviceNode struct {
 	ServiceInstances serviceInstances `json:"serviceInstances"`
 }
 
+// multiRegionFromMeta extracts the region → replica-count map from a deployment's
+// meta blob at serviceManifest.deploy.multiRegionConfig. Returns nil when absent
+// (default placement). JSON numbers decode as float64.
+func multiRegionFromMeta(meta any) map[string]int {
+	m, ok := meta.(map[string]any)
+	if !ok {
+		return nil
+	}
+	sm, ok := m["serviceManifest"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	deploy, ok := sm["deploy"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	mrc, ok := deploy["multiRegionConfig"].(map[string]any)
+	if !ok || len(mrc) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(mrc))
+	for region, v := range mrc {
+		if entry, ok := v.(map[string]any); ok {
+			if nr, ok := entry["numReplicas"].(float64); ok {
+				out[region] = int(nr)
+			} else {
+				out[region] = 0
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // toServiceDetail converts a serviceNode to a types.ServiceDetail.
 func (n serviceNode) toServiceDetail(envID string) types.ServiceDetail {
 	sd := types.ServiceDetail{
@@ -260,6 +300,16 @@ func (n serviceNode) toServiceDetail(envID string) types.ServiceDetail {
 				sd.Status = edge.Node.LatestDeployment.Status
 				sd.DeploymentID = edge.Node.LatestDeployment.ID
 				sd.DeployedAt = edge.Node.LatestDeployment.CreatedAt
+
+				// Live region placement is read from the deployment meta
+				// (serviceManifest.deploy.multiRegionConfig) — there is no
+				// first-class region field on ServiceInstance.
+				sd.MultiRegion = multiRegionFromMeta(edge.Node.LatestDeployment.Meta)
+				if len(sd.MultiRegion) == 1 {
+					for region := range sd.MultiRegion {
+						sd.Region = region
+					}
+				}
 
 				// Check if service is actually running:
 				// - If deploymentStopped is true, service is STOPPED
@@ -376,8 +426,11 @@ func (c *Client) CreateService(projectID, environmentID, name, image string, cre
 }
 
 // DeleteService deletes a service.
-func (c *Client) DeleteService(id string) error {
-	_, err := c.execute(deleteServiceMutation, map[string]any{"id": id})
+func (c *Client) DeleteService(environmentID, id string) error {
+	_, err := c.execute(deleteServiceMutation, map[string]any{
+		"id":            id,
+		"environmentId": environmentID,
+	})
 	return err
 }
 
@@ -416,9 +469,14 @@ func (c *Client) UpdateServiceInstance(serviceID, environmentID, image string, c
 	return err
 }
 
-// UpdateServiceInstanceConfig updates service instance deploy configuration.
-// This includes startCommand, restartPolicy, maxRetries, numReplicas, healthcheckPath, and healthcheckTimeout.
-// All parameters are optional (use nil to skip).
+// UpdateServiceInstanceConfig updates service instance deploy configuration:
+// startCommand, restartPolicy, maxRetries, numReplicas, healthcheckPath, and
+// healthcheckTimeout. All parameters are optional (nil = skip); with no non-nil
+// fields the call is a no-op.
+//
+// Region placement is NOT set here — it is written via CommitMultiRegionConfig
+// (environmentPatchCommit), and per-region replica counts live in that map. The
+// flat numReplicas here applies to services that are not region-placed.
 func (c *Client) UpdateServiceInstanceConfig(
 	serviceID string,
 	environmentID string,

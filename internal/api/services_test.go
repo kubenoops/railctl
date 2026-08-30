@@ -322,7 +322,7 @@ func TestDeleteService(t *testing.T) {
 
 	client := NewClient("test-token")
 	client.apiURL = server.URL
-	err := client.DeleteService("service-123")
+	err := client.DeleteService("env-1", "service-123")
 
 	if err != nil {
 		t.Errorf("DeleteService() error = %v", err)

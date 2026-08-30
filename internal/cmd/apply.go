@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,6 +25,7 @@ var (
 	applyAwaitTimeout int
 	applyNoColor      bool
 	applyColor        bool
+	applyForce        bool
 )
 
 var applyCmd = &cobra.Command{
@@ -66,6 +68,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&applyPruneYes, "yes", false, "Skip confirmation prompt for --prune deletions")
 	applyCmd.Flags().BoolVar(&applyAwait, "await", false, "Wait for deployments to reach terminal status")
 	applyCmd.Flags().IntVar(&applyAwaitTimeout, "await-timeout", 600, "Timeout in seconds for --await")
+	applyCmd.Flags().BoolVar(&applyForce, "force", false, "Acknowledge deploy.region consequences: collapsing a multi-region service and/or migrating an attached volume (downtime)")
 	applyCmd.Flags().BoolVar(&applyNoColor, "no-color", false, "Disable colored output")
 	applyCmd.Flags().BoolVar(&applyColor, "color", false, "Force colored output even when not a terminal (e.g. CI)")
 	_ = applyCmd.MarkFlagRequired("file")
@@ -120,6 +123,14 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	// 5. Compute diff.
 	cs := diff.Compute(cfg.Services, liveServices, applyPrune)
+
+	// 5a. Region pre-flight (atomic). Before mutating any service, refuse the whole
+	// apply if a region change targets a volume-bound service (region-bound volume)
+	// or would collapse a multi-region service without --force. Uses the live state
+	// already fetched (volumes + multiRegionConfig) — no extra API calls.
+	if err := preflightRegionChanges(cs, liveServices, applyForce); err != nil {
+		return err
+	}
 
 	// 5b. Environment-level deleteProtection. Only read the live state when the
 	// manifest declares the field — an omitted field is left alone (nil), so we
@@ -280,6 +291,59 @@ func loadConfig(path string) (*config.Config, error) {
 // project/environment from the Railway API and returns them as LiveService structs.
 // desired is the declared config; it is used to limit backup-schedule reads to
 // volumes actually under declarative management (services declaring a volume).
+// preflightRegionChanges enforces the region safety guards across the whole apply
+// set before any mutation (REQ-APL-004/008, REQ-VOL-101): a region change on a
+// volume-bound service is refused without --force (Railway migrates the volume,
+// with downtime), and collapsing a multi-region service to one region requires
+// --force. It reads only the live state already fetched.
+func preflightRegionChanges(cs *diff.ChangeSet, live []diff.LiveService, force bool) error {
+	liveByName := make(map[string]diff.LiveService, len(live))
+	for _, ls := range live {
+		liveByName[ls.Name] = ls
+	}
+
+	for _, rc := range cs.Changes {
+		// Only an actual region change is relevant. A create has no live volume or
+		// placement; a pure replica change is not a region move.
+		hasRegion := false
+		for _, f := range rc.Fields {
+			if f.Path == "deploy.region" {
+				hasRegion = true
+				break
+			}
+		}
+		if !hasRegion {
+			continue
+		}
+		ls, ok := liveByName[rc.ServiceName]
+		if !ok {
+			continue
+		}
+
+		if len(ls.Volumes) > 0 && !force {
+			return fmt.Errorf(
+				"refusing region change of service %q: it has an attached volume (mounted at %s).\n"+
+					"Railway will migrate the volume to the new region and the service will be DOWN for\n"+
+					"the duration of the migration (longer for larger volumes).\n"+
+					"Re-run with 'apply --force' to proceed with the migration.",
+				rc.ServiceName, ls.Volumes[0].MountPath)
+		}
+
+		if len(ls.Deploy.MultiRegion) > 1 && !force {
+			regions := make([]string, 0, len(ls.Deploy.MultiRegion))
+			for r := range ls.Deploy.MultiRegion {
+				regions = append(regions, r)
+			}
+			sort.Strings(regions)
+			return fmt.Errorf(
+				"service %q is placed in %d regions (%s); this config would collapse it to a single region.\n"+
+					"Re-run with 'apply --force' to intentionally collapse it.",
+				rc.ServiceName, len(regions), strings.Join(regions, ", "))
+		}
+	}
+	return nil
+}
+
 func fetchLiveState(client api.APIClient, projectID, envID string, desired []config.ServiceConfig) ([]diff.LiveService, error) {
 	// Services that declare a volume — only these need their live backup
 	// schedules read (avoids an N+1 for volumes not under management).
@@ -315,6 +379,8 @@ func fetchLiveState(client api.APIClient, projectID, envID string, desired []con
 				Replicas:           svc.Replicas,
 				HealthcheckPath:    svc.HealthcheckPath,
 				HealthcheckTimeout: svc.HealthcheckTimeout,
+				Region:             svc.Region,
+				MultiRegion:        svc.MultiRegion,
 			},
 		}
 

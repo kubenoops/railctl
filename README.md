@@ -220,6 +220,11 @@ railctl update service api \
   --replicas 3 \
   -p my-app -e production
 
+# List regions, then create or move a service in a specific region
+railctl get regions
+railctl create service api --image node:20 --region us-west2 -p my-app
+railctl update service api --region europe-west4 -p my-app -e production
+
 # Delete a service
 railctl delete service api -p my-app -e production --yes
 ```
@@ -234,10 +239,13 @@ Control how your services run and scale:
 | `--restart-policy`      | Control restart behavior                               | `ON_FAILURE`, `ALWAYS`, `NEVER` |
 | `--max-retries`         | Maximum restart attempts (requires `--restart-policy`) | Integer >= 0                    |
 | `--replicas`            | Number of instances (horizontal scaling)               | Integer >= 1                    |
+| `--region`              | Pin the service to a single region (env: `RAILCTL_REGION`, create only) | Region ID (e.g. `us-west2`; see `railctl get regions`) |
 | `--healthcheck-path`    | HTTP endpoint for health checks                        | Path (e.g., `/health`)          |
 | `--healthcheck-timeout` | Max seconds to wait for health check                   | Integer (default: 300)          |
 
 **Note:** These flags are available for both `create service` and `update service` commands.
+
+`update service --region` moves a running service (preserving its replica count, triggering a redeploy) and takes an extra `--force` flag to collapse a multi-region service to one region. Moving a service that has an attached volume is refused (Railway volumes are region-bound). See [Region Placement](docs/region-placement.md).
 
 ### Logs
 
@@ -469,6 +477,7 @@ These flags are available on every command:
 | `RAILCTL_PROJECT`           | Default project name/ID                                          | `my-app`        |
 | `RAILCTL_ENVIRONMENT`       | Default environment name/ID                                      | `production`    |
 | `RAILCTL_SERVICE`           | Default service name/ID                                          | `api`           |
+| `RAILCTL_REGION`            | Default region for `create service` (create only)               | `us-west2`      |
 | `RAILCTL_REGISTRY_USERNAME` | Docker registry username                                         | `myuser`        |
 | `RAILCTL_REGISTRY_PASSWORD` | Docker registry password                                         | `mytoken`       |
 

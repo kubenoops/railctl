@@ -31,7 +31,7 @@ type APIClient interface {
 	UpdateServiceInstanceConfig(serviceID, environmentID string, startCommand, restartPolicy *string, maxRetries, replicas *int, healthcheckPath *string, healthcheckTimeout *int) error
 	DeployServiceInstance(serviceID, environmentID string) (string, error)
 	RedeployDeployment(deploymentID string) error
-	DeleteService(id string) error
+	DeleteService(environmentID, id string) error
 	DeleteServiceInstance(serviceID, environmentID string) error
 	GetBuildLogs(deploymentID string, limit int) ([]string, error)
 
@@ -53,6 +53,10 @@ type APIClient interface {
 	GetServiceInstanceID(environmentID, serviceID string) (string, error)
 	ListReplicas(environmentID, serviceID string) (ReplicaList, error)
 
+	// Regions
+	ListRegions() ([]types.Region, error)
+	CommitMultiRegionConfig(environmentID, serviceID string, mrc map[string]any, commitMessage string) error
+
 	// Domains
 	ListDomains(projectID, environmentID, serviceID string) (DomainList, error)
 	CreateServiceDomain(serviceID, environmentID string, targetPort int) (ServiceDomain, error)
@@ -70,7 +74,7 @@ type APIClient interface {
 	// Volumes
 	ListVolumes(projectID, environmentID string) ([]VolumeInstance, error)
 	CreateVolume(projectID, environmentID, serviceID, mountPath string) (Volume, error)
-	DeleteVolume(volumeID string) error
+	DeleteVolume(environmentID, volumeID string) error
 	UpdateVolumeName(volumeID, name string) error
 	UpdateVolumeMountPath(volumeID, serviceID, environmentID, mountPath string) error
 	AttachVolume(volumeID, serviceID, environmentID string) error

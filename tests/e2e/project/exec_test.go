@@ -36,6 +36,11 @@ func deployReadySSHService(t *testing.T, env *harness.Env) string {
 // cannot register keys) and revoked at the end.
 func TestExec(t *testing.T) {
 	env := fixtureEnv(t)
+	if bootstrapToken == "" {
+		// BYO mode: SSH-key registration is an account/workspace-level
+		// operation a bare project token cannot perform.
+		t.Skip("needs SSH-key registration (account/workspace token); not available under a bare project token")
+	}
 	key := harness.RegisterEphemeralSSHKey(t, bootstrapToken) // t.Skip if no ssh/ssh-keygen
 	defer key.Revoke(t)
 

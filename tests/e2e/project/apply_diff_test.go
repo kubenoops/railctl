@@ -373,3 +373,68 @@ func TestApplyDiff_Directory(t *testing.T) {
 	harness.AssertContains(t, r.Stdout, svcA)
 	harness.AssertContains(t, r.Stdout, svcB)
 }
+
+// TestApplyDiff_Region tests declarative region placement: apply a service with
+// deploy.region, prove the re-apply is idempotent (the region-placed replica
+// count must not show perpetual drift), and reconcile a region change.
+//
+//	go test -tags e2e -v -run TestApplyDiff_Region ./tests/e2e/project/...
+func TestApplyDiff_Region(t *testing.T) {
+	e := fixtureEnv(t)
+	regions := discoverRegions(t, e)
+	if len(regions) == 0 {
+		t.Skip("no regions discovered")
+	}
+
+	svcName := harness.UniqueName()
+	t.Cleanup(func() {
+		e.Run("delete", "service", svcName, "--yes")
+	})
+
+	cfgDir := t.TempDir()
+	cfgFile := filepath.Join(cfgDir, "svc.yaml")
+	writeRegionCfg := func(region string) {
+		data := fmt.Sprintf(`services:
+  - name: %s
+    image: nginx:1.25-alpine
+    deploy:
+      region: %s
+      replicas: 1
+`, svcName, region)
+		if err := os.WriteFile(cfgFile, []byte(data), 0644); err != nil {
+			t.Fatalf("writing config file: %v", err)
+		}
+	}
+
+	// 1. diff shows the region on create.
+	writeRegionCfg(regions[0])
+	r := e.RunOK(t, "diff", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "deploy.region")
+	harness.AssertContains(t, r.Stdout, regions[0])
+
+	// 2. apply creates the service in the region.
+	r = e.RunOK(t, "apply", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "Created")
+	time.Sleep(3 * time.Second)
+
+	// 3. Idempotency: re-diff/re-apply the same region-placed config → no changes.
+	//    (Proves the per-region replica count is compared correctly, not the flat
+	//    field — a region-placed service must not show a perpetual deploy.replicas
+	//    drift.)
+	r = e.RunOK(t, "diff", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "No changes")
+	r = e.RunOK(t, "apply", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "No changes")
+
+	// 4. Reconcile a region change when a second region is available.
+	if len(regions) < 2 {
+		t.Log("only one region available; skipping the region-change reconcile step")
+		return
+	}
+	writeRegionCfg(regions[1])
+	r = e.RunOK(t, "diff", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "deploy.region")
+	harness.AssertContains(t, r.Stdout, regions[1])
+	r = e.RunOK(t, "apply", "-f", cfgFile)
+	harness.AssertContains(t, r.Stdout, "Updated")
+}
