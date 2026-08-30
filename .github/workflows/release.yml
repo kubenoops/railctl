@@ -10,6 +10,15 @@ permissions:
   contents: write
   pull-requests: read
 
+# Back-to-back merges race the version computation: both runs list tags before
+# either has created its release, compute the same next patch, and the second
+# `gh release create` fails with "tag already exists" (seen 2026-08-30 when two
+# PRs merged a minute apart). Serialize: queued runs check out after the
+# previous run's tag exists.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Create pre-release when merging to main
   pre-release:
