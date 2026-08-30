@@ -121,6 +121,7 @@ services:
       restartPolicy: ON_FAILURE # ON_FAILURE | ALWAYS | NEVER
       maxRetries: 3
       replicas: 2
+      region: us-west2 # optional; pin to a single region (see 'railctl get regions')
       healthcheckPath: /health
       healthcheckTimeout: 300
 
@@ -208,8 +209,26 @@ Deployment configuration for the service.
 | `restartPolicy`      | string | (none)              | Restart behavior: `ON_FAILURE`, `ALWAYS`, or `NEVER` (case-insensitive, normalized to uppercase) |
 | `maxRetries`         | int    | 0                   | Maximum restart attempts. Requires `restartPolicy` to be set                                     |
 | `replicas`           | int    | 0 (Railway default) | Number of instances for horizontal scaling. Must be >= 1 if set                                  |
+| `region`             | string | (none / unmanaged)  | Pin the service to a single Railway region (e.g. `us-west2`). See notes below                     |
 | `healthcheckPath`    | string | (none)              | HTTP endpoint for health checks (e.g., `/health`)                                                |
 | `healthcheckTimeout` | int    | 0 (Railway default) | Maximum seconds to wait for health check response                                                |
+
+**`deploy.region` notes**
+
+- An omitted `region` is **unmanaged**: `apply` leaves the service's live placement
+  alone (it never migrates a service you didn't ask to move). Setting it is opt-in.
+- Region names are **not** validated offline and are **not** `$env()`-expanded; validity
+  is checked at `apply` time against the shipped region list (`railctl get regions`). The
+  short name (`us-east4`) or the full region ID (`us-east4-eqdc4a`) both work — railctl
+  always writes the full ID.
+- When `region` is set and `replicas` is omitted, the effective count is the service's
+  current scale (its live per-region count, else 1) — a move never silently scales down.
+- **Volume migration:** changing the region of a service with an attached volume makes
+  Railway migrate the volume (the service is down while it runs); `apply` refuses the whole
+  run before mutating anything unless `apply --force` acknowledges the migration.
+- **Multi-region services:** if a service is placed in more than one region (via the
+  dashboard/API), a single `region:` would collapse it — `apply` refuses unless run with
+  `--force`. A single-region manifest never changes a multi-region service's replicas.
 
 #### `services[].networking` (optional, object)
 

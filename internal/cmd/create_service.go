@@ -38,7 +38,11 @@ DOMAIN GENERATION:
   - --generate-domain: Generate a Railway domain (*.up.railway.app) for the given application port (e.g., 5678 for n8n)
 
 TCP PROXY:
-  - --generate-tcp: Generate a TCP proxy for the given application port (e.g., 5432 for Postgres)`,
+  - --generate-tcp: Generate a TCP proxy for the given application port (e.g., 5432 for Postgres)
+
+REGION:
+  - --region: Deploy the service to a specific region (e.g., us-west1). Run 'railctl get regions'
+    to list valid names. Defaults to the RAILCTL_REGION environment variable when omitted.`,
 	Args: cobra.ExactArgs(1),
 	Example: `  railctl create service api --image node:18-alpine -p my-project
   railctl create service nginx --image nginx:latest -p my-project
@@ -47,7 +51,8 @@ TCP PROXY:
   railctl create service api --image node:20 --start-command "npm start" \
     --restart-policy ON_FAILURE --max-retries 3 --replicas 2 -p my-project
   railctl create service api --image node:18-alpine --generate-domain 5678 -p my-project
-  railctl create service db --image postgres:16 --generate-tcp 5432 -p my-project`,
+  railctl create service db --image postgres:16 --generate-tcp 5432 -p my-project
+  railctl create service api --image node:20 --region us-west1 -p my-project`,
 	RunE: runCreateService,
 }
 
@@ -63,6 +68,7 @@ var (
 	createServiceHealthcheckTimeout int
 	createServiceGenerateDomain     int
 	createServiceGenerateTCP        int
+	createServiceRegion             string
 )
 
 func init() {
@@ -85,6 +91,9 @@ func init() {
 
 	// TCP proxy generation
 	createServiceCmd.Flags().IntVar(&createServiceGenerateTCP, "generate-tcp", 0, "Generate a TCP proxy for the given application port (e.g., 5432)")
+
+	// Region placement
+	createServiceCmd.Flags().StringVar(&createServiceRegion, "region", "", "Deploy to a specific region (e.g., us-west1; env: RAILCTL_REGION). See 'railctl get regions'")
 
 	createServiceCmd.MarkFlagRequired("image")
 	createCmd.AddCommand(createServiceCmd)
@@ -145,6 +154,20 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--replicas must be >= 1")
 	}
 
+	// Resolve the region from --region or RAILCTL_REGION and validate it up-front
+	// (fail fast before creating the service). (REQ-CMD-004/005)
+	var resolvedRegion string
+	regionValue := createServiceRegion
+	if regionValue == "" {
+		regionValue = os.Getenv("RAILCTL_REGION")
+	}
+	if regionValue != "" {
+		resolvedRegion, err = resolveRegion(client, regionValue)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Create the service with image in the specified environment
 	svc, err := client.CreateService(ctx.Project.ID, ctx.Environment.ID, serviceName, serviceImage, creds)
 	if err != nil {
@@ -157,12 +180,24 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Service '%s' created with image '%s' (ID: %s)\n", svc.Name, serviceImage, svc.ID)
 	}
 
-	// Apply deployment configuration if any flags were provided
+	// Apply deployment configuration if requested.
 	if hasDeployConfigFlags(cmd) {
 		err = applyDeployConfig(cmd, client, svc.ID, ctx.Environment)
 		if err != nil {
 			return err
 		}
+	}
+
+	// Apply region placement (a new service has no prior placement to preserve).
+	if resolvedRegion != "" {
+		replicas := 1
+		if cmd.Flags().Changed("replicas") {
+			replicas = createServiceReplicas
+		}
+		if err := writeServiceRegion(client, ctx.Environment.ID, svc.ID, resolvedRegion, replicas, nil); err != nil {
+			return fmt.Errorf("failed to set region: %w", err)
+		}
+		fmt.Printf("Region set to '%s'\n", api.ShortRegionName(resolvedRegion))
 	}
 
 	// Generate domain if requested

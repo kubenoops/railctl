@@ -27,7 +27,7 @@ func resourceProtectionMock(sharedVars map[string]string, deletedVolID *string) 
 				{Volume: api.Volume{ID: "vol-123", Name: "data"}},
 			}, nil
 		},
-		DeleteVolumeFunc: func(volumeID string) error {
+		DeleteVolumeFunc: func(environmentID, volumeID string) error {
 			if deletedVolID != nil {
 				*deletedVolID = volumeID
 			}

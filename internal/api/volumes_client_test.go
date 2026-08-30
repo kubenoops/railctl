@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -119,34 +121,51 @@ func TestClient_CreateVolume(t *testing.T) {
 	}
 }
 
+// DeleteVolume commits {volumes:{<id>:{isDeleted:true}}} via
+// environmentPatchCommit — the dashboard's mechanism, authorized for project
+// tokens (the standalone volumeDelete mutation is not).
 func TestClient_DeleteVolume(t *testing.T) {
+	var vars map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		json.Unmarshal(body, &req)
+		vars = req.Variables
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data": {"volumeDelete": true}}`))
+		w.Write([]byte(`{"data": {"environmentPatchCommit": "commit/ref"}}`))
 	}))
 	defer server.Close()
 
 	client := NewClient("test-token")
 	client.apiURL = server.URL
 
-	err := client.DeleteVolume("vol-1")
-	if err != nil {
+	if err := client.DeleteVolume("env-1", "vol-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if vars["environmentId"] != "env-1" {
+		t.Errorf("environmentId = %v, want env-1", vars["environmentId"])
+	}
+	patch, _ := vars["patch"].(map[string]any)
+	vols, _ := patch["volumes"].(map[string]any)
+	entry, _ := vols["vol-1"].(map[string]any)
+	if entry["isDeleted"] != true {
+		t.Errorf("patch missing volumes.vol-1.isDeleted:true, got %v", patch)
 	}
 }
 
 func TestClient_DeleteVolume_Failed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"data": {"volumeDelete": false}}`))
+		w.Write([]byte(`{"errors": [{"message": "Not Authorized"}]}`))
 	}))
 	defer server.Close()
 
 	client := NewClient("test-token")
 	client.apiURL = server.URL
 
-	err := client.DeleteVolume("vol-1")
-	if err == nil {
+	if err := client.DeleteVolume("env-1", "vol-1"); err == nil {
 		t.Fatal("expected error, got nil")
 	}
 }

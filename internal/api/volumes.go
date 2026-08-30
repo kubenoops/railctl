@@ -20,6 +20,9 @@ type VolumeInstance struct {
 	ServiceID     *string `json:"serviceId"`
 	CurrentSizeMB float64 `json:"currentSizeMB"`
 	SizeMB        int     `json:"sizeMB"`
+	// Region is the region the volume instance lives in (volumes are
+	// region-placed; Railway migrates them when their service moves).
+	Region string `json:"region"`
 }
 
 // ListVolumes retrieves all volumes for a project environment
@@ -43,6 +46,7 @@ func (c *Client) ListVolumes(projectID, environmentID string) ([]VolumeInstance,
 										serviceId
 										currentSizeMB
 										sizeMB
+										region
 									}
 								}
 							}
@@ -133,36 +137,26 @@ func (c *Client) CreateVolume(projectID, environmentID, serviceID, mountPath str
 	return result.VolumeCreate, nil
 }
 
-// DeleteVolume deletes a volume by ID
-func (c *Client) DeleteVolume(volumeID string) error {
-	mutation := `
-		mutation VolumeDelete($id: String!) {
-			volumeDelete(volumeId: $id)
-		}
-	`
-
-	variables := map[string]any{
-		"id": volumeID,
+// DeleteVolume deletes a volume by committing {volumes:{<id>:{isDeleted:true}}}
+// to the environment config — the same environmentPatchCommit mechanism the
+// Railway dashboard uses. The standalone volumeDelete(volumeId) mutation is
+// denied to project tokens (it carries no environmentId; the official Railway
+// CLI fails identically), while the patch path is authorized for every token
+// scope. Verified live 2026-08-30.
+func (c *Client) DeleteVolume(environmentID, volumeID string) error {
+	patch := map[string]any{
+		"volumes": map[string]any{
+			volumeID: map[string]any{
+				"isDeleted": true,
+			},
+		},
 	}
-
-	data, err := c.execute(mutation, variables)
-	if err != nil {
-		return err
-	}
-
-	var result struct {
-		VolumeDelete bool `json:"volumeDelete"`
-	}
-
-	if err := json.Unmarshal(data, &result); err != nil {
-		return fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if !result.VolumeDelete {
-		return fmt.Errorf("failed to delete volume")
-	}
-
-	return nil
+	_, err := c.execute(environmentPatchCommitMutation, map[string]any{
+		"environmentId": environmentID,
+		"patch":         patch,
+		"commitMessage": "railctl: delete volume",
+	})
+	return err
 }
 
 // UpdateVolumeName updates the name of a volume

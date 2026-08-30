@@ -44,6 +44,12 @@ type DeployConfig struct {
 	Replicas           int    `yaml:"replicas,omitempty"`
 	HealthcheckPath    string `yaml:"healthcheckPath,omitempty"`
 	HealthcheckTimeout int    `yaml:"healthcheckTimeout,omitempty"`
+	// Region pins the service to a single Railway region (e.g. us-west1). Empty
+	// means unmanaged: apply leaves the live placement alone. Region names are
+	// NOT validated offline (config.Validate is API-free) and are NOT subject to
+	// $env() expansion — validity is checked at apply time against the live
+	// regions list.
+	Region string `yaml:"region,omitempty"`
 }
 
 // NetworkingConfig holds networking settings for a service.

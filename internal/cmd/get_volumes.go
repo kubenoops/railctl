@@ -76,6 +76,7 @@ type volumeOutput struct {
 	ID            string  `json:"id" yaml:"id"`
 	MountPath     string  `json:"mountPath" yaml:"mountPath"`
 	AttachedTo    string  `json:"attachedTo,omitempty" yaml:"attachedTo,omitempty"`
+	Region        string  `json:"region,omitempty" yaml:"region,omitempty"`
 	CurrentSizeMB float64 `json:"currentSizeMB" yaml:"currentSizeMB"`
 	SizeMB        int     `json:"sizeMB" yaml:"sizeMB"`
 }
@@ -98,6 +99,7 @@ func volumesToOutput(volumes []api.VolumeInstance, serviceMap map[string]string)
 			ID:            vol.Volume.ID,
 			MountPath:     vol.MountPath,
 			AttachedTo:    resolveAttachedTo(vol, serviceMap),
+			Region:        api.ShortRegionName(vol.Region),
 			CurrentSizeMB: vol.CurrentSizeMB,
 			SizeMB:        vol.SizeMB,
 		}
@@ -119,15 +121,19 @@ func volumesToTable(volumes []api.VolumeInstance, serviceMap map[string]string) 
 }
 
 func volumesToWideTable(volumes []api.VolumeInstance, serviceMap map[string]string) *output.Table {
-	table := output.NewTable("NAME", "ID", "MOUNT PATH", "ATTACHED TO", "SIZE USED", "SIZE TOTAL")
+	table := output.NewTable("NAME", "ID", "MOUNT PATH", "ATTACHED TO", "REGION", "SIZE USED", "SIZE TOTAL")
 	for _, vol := range volumes {
 		attachedTo := resolveAttachedTo(vol, serviceMap)
 		if attachedTo == "" {
 			attachedTo = "-"
 		}
+		region := api.ShortRegionName(vol.Region)
+		if region == "" {
+			region = "-"
+		}
 		currentSize := fmt.Sprintf("%.1fMB", vol.CurrentSizeMB)
 		totalSize := fmt.Sprintf("%dMB", vol.SizeMB)
-		table.AddRow(vol.Volume.Name, vol.Volume.ID, vol.MountPath, attachedTo, currentSize, totalSize)
+		table.AddRow(vol.Volume.Name, vol.Volume.ID, vol.MountPath, attachedTo, region, currentSize, totalSize)
 	}
 	return table
 }

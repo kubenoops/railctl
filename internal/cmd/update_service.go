@@ -8,6 +8,7 @@ import (
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
+	"github.com/kubenoops/railctl/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,8 @@ var (
 	updateServiceGenerateTCP        int
 	updateServiceRemoveDomain       bool
 	updateServiceRemoveTCP          bool
+	updateServiceRegion             string
+	updateServiceForce              bool
 	updateServiceAwait              bool
 	updateServiceTimeout            int
 )
@@ -67,6 +70,12 @@ TCP PROXY:
   - --generate-tcp: Generate a TCP proxy for the given application port (e.g., 5432 for Postgres)
     Safe to call multiple times (idempotent - skips if a proxy for the same port already exists)
   - --remove-tcp: Remove the first existing TCP proxy from the service
+
+REGION:
+  - --region: Move the service to a specific region (e.g., us-west1). Triggers a redeploy.
+    No-op if already in that region. If the service has a volume attached, Railway
+    migrates it (downtime) — requires --force. Collapsing a multi-region service
+    also requires --force.
 
 Variable Value Syntax:
   Regular value:        "my-value"
@@ -136,6 +145,10 @@ func init() {
 	updateServiceCmd.Flags().IntVar(&updateServiceGenerateTCP, "generate-tcp", 0, "Generate a TCP proxy for the given application port (e.g., 5432)")
 	updateServiceCmd.Flags().BoolVar(&updateServiceRemoveTCP, "remove-tcp", false, "Remove the first existing TCP proxy from the service")
 
+	// Region placement
+	updateServiceCmd.Flags().StringVar(&updateServiceRegion, "region", "", "Move the service to a specific region (e.g., us-west1). See 'railctl get regions'")
+	updateServiceCmd.Flags().BoolVar(&updateServiceForce, "force", false, "Acknowledge --region consequences: collapsing a multi-region service and/or migrating an attached volume (downtime)")
+
 	// Await completion
 	updateServiceCmd.Flags().BoolVar(&updateServiceAwait, "await-completion", false, "Wait for the deployment to reach a terminal status before returning")
 	updateServiceCmd.Flags().IntVar(&updateServiceTimeout, "timeout", 600, "Timeout in seconds for --await-completion (default: 600)")
@@ -173,8 +186,8 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 	hasDeployConfig := hasDeployConfigFlags(cmd)
 
 	// Require at least one supported mutation
-	if updateServiceImage == "" && creds == nil && !hasDeployConfig && updateServiceGenerateDomain <= 0 && updateServiceGenerateTCP <= 0 && !updateServiceRemoveDomain && !updateServiceRemoveTCP {
-		return fmt.Errorf("at least one of --image, registry credentials, deploy configuration, --generate-domain, --generate-tcp, --remove-domain, or --remove-tcp is required")
+	if updateServiceImage == "" && creds == nil && !hasDeployConfig && updateServiceGenerateDomain <= 0 && updateServiceGenerateTCP <= 0 && !updateServiceRemoveDomain && !updateServiceRemoveTCP && !cmd.Flags().Changed("region") {
+		return fmt.Errorf("at least one of --image, registry credentials, deploy configuration, --generate-domain, --generate-tcp, --remove-domain, --remove-tcp, or --region is required")
 	}
 
 	// Validate restart policy and conflicting networking flags
@@ -189,6 +202,19 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve region placement from the live state + flags. Produces the region
+	// and replica-override to fold into the deploy-config write (regionPtr==nil
+	// means no region write). Runs all guards before any mutation.
+	regionPtr, replicasOverride, err := resolveUpdateRegion(cmd, client, ctx.Project.ID, ctx.Environment.ID, targetService)
+	if err != nil {
+		return err
+	}
+	// A region write (region change, or a bare --replicas routed through the map)
+	// carries the per-region replica count itself, so the deploy-config write must
+	// NOT also set the flat numReplicas in that case.
+	regionWrite := regionPtr != nil
+	wroteSomething := hasDeployConfig || regionWrite
+
 	// Update image/credentials if provided
 	if updateServiceImage != "" || creds != nil {
 		err = client.UpdateServiceInstance(targetService.ID, ctx.Environment.ID, updateServiceImage, creds)
@@ -197,20 +223,36 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Update deploy configuration if provided
+	// Update non-region deploy configuration if provided (skip flat replicas when a
+	// region write owns them).
 	if hasDeployConfig {
-		if err := applyUpdateDeployConfig(cmd, client, targetService.ID, ctx.Environment.ID); err != nil {
+		if err := applyUpdateDeployConfig(cmd, client, targetService.ID, ctx.Environment.ID, regionWrite); err != nil {
 			return err
+		}
+	}
+
+	// Region placement via environmentPatchCommit (single region: target set, all
+	// other currently-present regions removed).
+	if regionWrite {
+		n := 1
+		if replicasOverride != nil {
+			n = *replicasOverride
+		}
+		if err := writeServiceRegion(client, ctx.Environment.ID, targetService.ID, *regionPtr, n, targetService.MultiRegion); err != nil {
+			return fmt.Errorf("failed to set region: %w", err)
 		}
 	}
 
 	// Trigger a new deployment for any service mutation unless --skip-deployment
 	var deploymentID string
-	if !updateServiceSkipDeployment && (updateServiceImage != "" || creds != nil || hasDeployConfig) {
+	if !updateServiceSkipDeployment && (updateServiceImage != "" || creds != nil || wroteSomething) {
 		deploymentID, err = client.DeployServiceInstance(targetService.ID, ctx.Environment.ID)
 		if err != nil {
 			return fmt.Errorf("failed to trigger deployment: %w", err)
 		}
+	}
+	if regionPtr != nil {
+		fmt.Printf("Service '%s' region set to '%s'\n", targetService.Name, api.ShortRegionName(*regionPtr))
 	}
 
 	// Generate domain if requested
@@ -348,8 +390,10 @@ func warnPrivateRegistryUpdate(currentSource, newImage string, creds *api.Regist
 	return nil
 }
 
-// applyUpdateDeployConfig applies deploy config changes from update flags.
-func applyUpdateDeployConfig(cmd *cobra.Command, client api.APIClient, serviceID, envID string) error {
+// applyUpdateDeployConfig applies non-region deploy config changes from update
+// flags. When skipReplicas is true a region write owns the (per-region) replica
+// count, so the flat numReplicas is not set here.
+func applyUpdateDeployConfig(cmd *cobra.Command, client api.APIClient, serviceID, envID string, skipReplicas bool) error {
 	var startCmd, restartPolicy, healthcheckPath *string
 	var maxRetries, replicas, healthcheckTimeout *int
 
@@ -362,7 +406,7 @@ func applyUpdateDeployConfig(cmd *cobra.Command, client api.APIClient, serviceID
 	if cmd.Flags().Changed("max-retries") {
 		maxRetries = &updateServiceMaxRetries
 	}
-	if cmd.Flags().Changed("replicas") {
+	if cmd.Flags().Changed("replicas") && !skipReplicas {
 		replicas = &updateServiceReplicas
 	}
 	if cmd.Flags().Changed("healthcheck-path") {
@@ -377,6 +421,64 @@ func applyUpdateDeployConfig(cmd *cobra.Command, client api.APIClient, serviceID
 		return fmt.Errorf("failed to update deploy configuration: %w", err)
 	}
 	return nil
+}
+
+// resolveUpdateRegion resolves region placement for `update service` from the live
+// state and flags, running all guards (validation → no-op → volume block → collapse
+// guard) before any mutation. It returns the region to write (nil = no region write)
+// and the effective per-region replica override (nil unless a region write needs a
+// specific count).
+func resolveUpdateRegion(cmd *cobra.Command, client api.APIClient, projectID, envID string, svc *types.ServiceDetail) (*string, *int, error) {
+	live := svc.MultiRegion // nil/empty means default placement
+
+	// Case 1: explicit --region.
+	if cmd.Flags().Changed("region") {
+		resolved, err := resolveRegion(client, updateServiceRegion)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		var explicit *int
+		if cmd.Flags().Changed("replicas") {
+			explicit = &updateServiceReplicas
+		}
+		effN := effectiveRegionReplicas(live, svc.Replicas, resolved, explicit)
+
+		// No-op: already exactly in this single region with the effective count.
+		// Checked before the volume block so an already-satisfied request on a
+		// volume-bound service succeeds. (DEC-022/023)
+		if isRegionNoop(live, resolved, effN) {
+			fmt.Printf("Service '%s' already in region '%s' with %d replica(s); no change\n", svc.Name, api.ShortRegionName(resolved), effN)
+			return nil, nil, nil
+		}
+
+		// Volume guard first (--force acknowledges the migration downtime,
+		// REQ-VOL-100), then the collapse guard.
+		if err := checkVolumeRegionChange(client, projectID, envID, svc.ID, svc.Name, updateServiceForce); err != nil {
+			return nil, nil, err
+		}
+		if err := checkRegionCollapse(live, resolved, updateServiceForce); err != nil {
+			return nil, nil, err
+		}
+		return &resolved, &effN, nil
+	}
+
+	// Case 2: bare --replicas on a region-placed service → route through the map
+	// for the existing region rather than the flat numReplicas field. (REQ-CMD-008)
+	if cmd.Flags().Changed("replicas") && len(live) >= 1 {
+		if len(live) > 1 {
+			return nil, nil, fmt.Errorf("service is placed in multiple regions; use --region to choose which region's replica count to change")
+		}
+		var existing string
+		for r := range live {
+			existing = r
+		}
+		n := updateServiceReplicas
+		return &existing, &n, nil
+	}
+
+	// Otherwise: no region write; replicas (if any) take the flat path.
+	return nil, nil, nil
 }
 
 func removeServiceDomain(client api.APIClient, projectID, environmentID, serviceID string) error {

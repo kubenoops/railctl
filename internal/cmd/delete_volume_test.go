@@ -67,7 +67,7 @@ func TestRunDeleteVolume_Success(t *testing.T) {
 					},
 				}, nil
 			},
-			DeleteVolumeFunc: func(volumeID string) error {
+			DeleteVolumeFunc: func(environmentID, volumeID string) error {
 				deletedID = volumeID
 				return nil
 			},

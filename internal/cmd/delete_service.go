@@ -68,7 +68,7 @@ func runDeleteService(cmd *cobra.Command, args []string) error {
 	}
 
 	// Delete the service
-	err = client.DeleteService(ctx.Service.ID)
+	err = client.DeleteService(ctx.Environment.ID, ctx.Service.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete service: %w", err)
 	}

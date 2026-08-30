@@ -96,6 +96,40 @@ func RequireToken(envVar string, want TokenType) string {
 	return token
 }
 
+// ProjectTokenScope resolves the project and environment a project-scoped token
+// is bound to (the same context railctl derives for `whoami`). Used by the
+// project group's bring-your-own-token mode to name the fixture Env when a
+// caller supplies an existing project token instead of minting one.
+func ProjectTokenScope(token string) (projectName, environmentName string, err error) {
+	c := api.NewClient(token)
+
+	projectID, environmentID, err := c.GetProjectContext()
+	if err != nil {
+		return "", "", fmt.Errorf("resolving project context: %w", err)
+	}
+
+	proj, err := c.GetProject(projectID)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving project %s: %w", projectID, err)
+	}
+	projectName = proj.Name
+
+	envs, err := c.ListEnvironments(projectID)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving environments for %s: %w", projectID, err)
+	}
+	for _, e := range envs {
+		if e.ID == environmentID {
+			environmentName = e.Name
+			break
+		}
+	}
+	if environmentName == "" {
+		return "", "", fmt.Errorf("environment %s not found in project %s", environmentID, projectID)
+	}
+	return projectName, environmentName, nil
+}
+
 // compileCheckOnly reports whether this test binary was invoked with
 // -run '^$' — the conventional "compile everything, run nothing" check.
 // In that mode no test executes, so the token preflight (which needs live

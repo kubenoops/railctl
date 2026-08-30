@@ -60,11 +60,11 @@ func deleteFileMock(ops *[]string) *api.MockClient {
 				{ID: "vi-1", Volume: api.Volume{ID: "vol-1", Name: "db-data"}, MountPath: "/data", ServiceID: &dbID},
 			}, nil
 		},
-		DeleteServiceFunc: func(id string) error {
+		DeleteServiceFunc: func(environmentID, id string) error {
 			*ops = append(*ops, "service:"+id)
 			return nil
 		},
-		DeleteVolumeFunc: func(volumeID string) error {
+		DeleteVolumeFunc: func(environmentID, volumeID string) error {
 			*ops = append(*ops, "volume:"+volumeID)
 			return nil
 		},

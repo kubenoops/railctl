@@ -53,20 +53,23 @@ func WaitForEnvironment(e *Env, envName string) error {
 // WaitForVolume polls `get volumes` until the named volume appears. Railway
 // provisions volumes asynchronously, so a list issued immediately after create
 // can legitimately miss one that exists (the same propagation lag railctl's own
-// troubleshooting documents). extraArgs carries the scope flags. Retries up to
-// 10 times with 2-second delays.
+// troubleshooting documents). extraArgs carries the scope flags. Normal
+// propagation lands within a poll or two; the ceiling is generous (90s)
+// because Railway degradation windows have been observed to stretch it past
+// 35s (2026-08-30), and a short ceiling turns platform lag into test flakes.
 func WaitForVolume(e *Env, volName string, extraArgs ...string) error {
-	for i := 0; i < 10; i++ {
+	const attempts = 30
+	for i := 0; i < attempts; i++ {
 		args := append([]string{"get", "volumes"}, extraArgs...)
 		r := e.Run(args...)
 		if r.ExitCode == 0 && strings.Contains(r.Stdout, volName) {
 			e.T.Logf("Volume %s confirmed queryable after %d poll(s)", volName, i+1)
 			return nil
 		}
-		e.T.Logf("Waiting for volume %s to propagate (attempt %d/10)...", volName, i+1)
-		time.Sleep(2 * time.Second)
+		e.T.Logf("Waiting for volume %s to propagate (attempt %d/%d)...", volName, i+1, attempts)
+		time.Sleep(3 * time.Second)
 	}
-	return fmt.Errorf("volume %s not queryable after 10 attempts", volName)
+	return fmt.Errorf("volume %s not queryable after %d attempts", volName, attempts)
 }
 
 // SetupProject creates a fresh project (or reuses E2E_PROJECT) using the given
