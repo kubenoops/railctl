@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/apply"
 	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/types"
 	"github.com/spf13/cobra"
@@ -233,7 +235,19 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 
 	// Region placement via environmentPatchCommit (single region: target set, all
 	// other currently-present regions removed).
+	//
+	// migrating is the narrow case that needs the extra waits below: an
+	// attached volume whose CURRENT region differs from the target, i.e. a real
+	// volume migration. A region write alone is not enough — a bare --replicas
+	// change on a region-placed service also routes through the region map
+	// (REQ-CMD-008) and would otherwise pay a multi-minute quiesce for a
+	// placement that never moves.
+	migrating := false
 	if regionWrite {
+		if volRegion, _, found, vErr := serviceVolumeRegion(client, ctx.Project.ID, ctx.Environment.ID, targetService.ID); vErr == nil && found {
+			migrating = volRegion != api.ShortRegionName(*regionPtr)
+		}
+
 		n := 1
 		if replicasOverride != nil {
 			n = *replicasOverride
@@ -241,11 +255,43 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 		if err := writeServiceRegion(client, ctx.Environment.ID, targetService.ID, *regionPtr, n, targetService.MultiRegion); err != nil {
 			return fmt.Errorf("failed to set region: %w", err)
 		}
+
+		// Read-your-writes before the rollout trigger below (and before
+		// Railway's own config-triggered one): the placement commit stages
+		// asynchronously, and a rollout that starts while it is still
+		// propagating makes Railway's migration scheduler reset a volume
+		// migration ("Reset region due to volume migration failure") — the
+		// dashboard's Deploy button works because a human clicks it after
+		// everything settled (observed live 2026-09-07). Verify the placement
+		// reads back, or fall back to the fixed settle.
+		if migrating {
+			if apply.AwaitConfigCommitted(client, ctx.Project.ID, ctx.Environment.ID, apply.ConfigExpectations{
+				ServiceID: targetService.ID,
+				RegionID:  *regionPtr,
+			}) {
+				fmt.Println("Placement confirmed")
+			} else {
+				fmt.Println("Settling placement...")
+				time.Sleep(apply.SettleDelay)
+			}
+		}
 	}
 
-	// Trigger a new deployment for any service mutation unless --skip-deployment
+	// Trigger a new deployment for any service mutation unless --skip-deployment.
+	// A volume migration runs as this rollout's PRE-DEPLOY step, and Railway
+	// refuses the cutover while another deployment is parked in a non-terminal
+	// state ("…is parked in INITIALIZING — cancel it or wait for it to
+	// settle", observed live 2026-09-07). So for region changes: wait for
+	// quiet first, then trigger exactly one rollout to carry the move.
 	var deploymentID string
 	if !updateServiceSkipDeployment && (updateServiceImage != "" || creds != nil || wroteSomething) {
+		if migrating {
+			if api.AwaitDeploymentsSettled(client, ctx.Project.ID, ctx.Environment.ID, targetService.ID, apply.QuiesceTimeout, apply.QuiescePoll) {
+				fmt.Println("No deployments in flight")
+			} else {
+				fmt.Println("Warning: deployments still in flight; deploying anyway (Railway may refuse the volume migration)")
+			}
+		}
 		deploymentID, err = client.DeployServiceInstance(targetService.ID, ctx.Environment.ID)
 		if err != nil {
 			return fmt.Errorf("failed to trigger deployment: %w", err)
@@ -292,11 +338,36 @@ func runUpdateService(cmd *cobra.Command, args []string) error {
 	// Output success message
 	printUpdateServiceResult(cmd, targetService.Name, updateServiceImage, creds, hasDeployConfig, deploymentID)
 
-	// Await deployment completion if requested
-	if updateServiceAwait && deploymentID != "" {
-		return awaitDeployment(client, ctx.Project.ID, ctx.Environment.ID, targetService.ID, deploymentID, targetService.Name, updateServiceTimeout)
+	// Await completion if requested. A region change on a volume-backed service
+	// is awaited on the VOLUME, not the deployment: Railway takes the service
+	// down to copy the volume and its move-deployment routinely ends
+	// FAILED/REMOVED while the migration itself succeeds (observed live
+	// 2026-09-07 — a completed migration under a FAILED deployment), so
+	// deployment status would report a false failure. Volume-less region moves
+	// and every other mutation await the deployment as before.
+	if updateServiceAwait {
+		if migrating {
+			return awaitVolumeMigration(client, ctx.Project.ID, ctx.Environment.ID, targetService.ID,
+				targetService.Name, *regionPtr, migrationTimeoutSeconds(cmd))
+		}
+		if deploymentID != "" {
+			return awaitDeployment(client, ctx.Project.ID, ctx.Environment.ID, targetService.ID, deploymentID, targetService.Name, updateServiceTimeout)
+		}
 	}
 	return nil
+}
+
+// migrationTimeoutSeconds returns the volume-migration wait: --timeout when the
+// user set it explicitly, else the migration default (copies scale with volume
+// size, so the deployment default of 600s is too short to be meaningful).
+// Takes the command rather than reading the package-level var — a package-var
+// reference from a function the command's initializer reaches creates an
+// initialization cycle.
+func migrationTimeoutSeconds(cmd *cobra.Command) int {
+	if cmd.Flags().Changed("timeout") {
+		return updateServiceTimeout
+	}
+	return int(DefaultMigrationTimeout.Seconds())
 }
 
 // buildRegistryCredentials creates RegistryCredentials from flags/env vars.

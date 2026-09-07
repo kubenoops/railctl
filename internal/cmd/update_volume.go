@@ -9,6 +9,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// volumeRenameDenied explains the one volume mutation Railway exposes no
+// environment-scoped form for. volumeUpdate(volumeId, {name}) carries no
+// environmentId, so environment-bound project tokens are denied it with a bare
+// "Not Authorized" — and there is no patch alternative: the environment
+// config's volumes schema holds only sizeMB/region/alerts/allowOnlineResize
+// (plus isDeleted), no name key (read live from Environment.config 2026-09-04).
+// A workspace or account token renames fine, so say so instead of the raw denial.
+func volumeRenameDenied(err error) error {
+	if strings.Contains(err.Error(), "Not Authorized") {
+		return fmt.Errorf("volume rename requires a workspace or account token — Railway denies the rename mutation to project tokens and no environment-scoped alternative exists (verified live 2026-09-04): %w", err)
+	}
+	return err
+}
+
 var updateVolumeCmd = &cobra.Command{
 	Use:     "volume <name-or-id>",
 	Aliases: []string{"vol"},
@@ -96,7 +110,7 @@ func runUpdateVolume(cmd *cobra.Command, args []string) error {
 	// Update name
 	if updateVolumeName != "" {
 		if err := client.UpdateVolumeName(volume.Volume.ID, updateVolumeName); err != nil {
-			return fmt.Errorf("failed to update volume name: %w", err)
+			return fmt.Errorf("failed to update volume name: %w", volumeRenameDenied(err))
 		}
 		updates = append(updates, fmt.Sprintf("renamed to '%s'", updateVolumeName))
 	}

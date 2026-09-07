@@ -1912,6 +1912,7 @@ func TestRunCreateService_Success(t *testing.T) {
 	}()
 
 	var createdProjectID, createdName, createdImage string
+	var attachedImage string
 
 	token = "test-token"
 	newAPIClient = func(tkn string) api.APIClient {
@@ -1927,6 +1928,12 @@ func TestRunCreateService_Success(t *testing.T) {
 				createdName = name
 				createdImage = image
 				return types.Service{ID: "svc-new", Name: name}, nil
+			},
+			// The source is attached (and rolled out) after create, so the
+			// image arrives here, not on CreateService.
+			AttachSourceAndDeployFunc: func(_, _, image string, _ *api.RegistryCredentials) (string, error) {
+				attachedImage = image
+				return "dep-1", nil
 			},
 		}
 	}
@@ -1946,8 +1953,13 @@ func TestRunCreateService_Success(t *testing.T) {
 	if createdName != "my-service" {
 		t.Errorf("expected name 'my-service', got %q", createdName)
 	}
-	if createdImage != "nginx:latest" {
-		t.Errorf("expected image 'nginx:latest', got %q", createdImage)
+	// Create is source-less: serviceCreate with an image deploys immediately in
+	// the default region and races the config staged after it.
+	if createdImage != "" {
+		t.Errorf("expected source-less create, got image %q", createdImage)
+	}
+	if attachedImage != "nginx:latest" {
+		t.Errorf("expected image 'nginx:latest' attached after create, got %q", attachedImage)
 	}
 }
 
@@ -1979,8 +1991,13 @@ func TestRunCreateService_WithRegistryCredentials(t *testing.T) {
 				return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 			},
 			CreateServiceFunc: func(projectID, environmentID, name, image string, creds *api.RegistryCredentials) (types.Service, error) {
-				capturedCreds = creds
 				return types.Service{ID: "svc-new", Name: name}, nil
+			},
+			// Credentials travel with the source, which is attached after the
+			// (source-less) create — so they land here, not on CreateService.
+			AttachSourceAndDeployFunc: func(_, _, _ string, creds *api.RegistryCredentials) (string, error) {
+				capturedCreds = creds
+				return "dep-1", nil
 			},
 		}
 	}

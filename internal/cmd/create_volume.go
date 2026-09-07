@@ -62,8 +62,8 @@ func runCreateVolume(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Create the volume
-	vol, err := client.CreateVolume(ctx.Project.ID, ctx.Environment.ID, ctx.Service.ID, volumeMountPath)
+	// Create the volume (no explicit region: it lands in the service's region)
+	vol, err := client.CreateVolume(ctx.Project.ID, ctx.Environment.ID, ctx.Service.ID, volumeMountPath, "")
 	if err != nil {
 		return fmt.Errorf("failed to create volume: %w", err)
 	}
@@ -74,7 +74,7 @@ func runCreateVolume(cmd *cobra.Command, args []string) error {
 			fmt.Printf("Volume '%s' created and attached to service '%s' at '%s'\n",
 				vol.Name, ctx.Service.Name, volumeMountPath)
 			fmt.Printf("Volume ID: %s\n", vol.ID)
-			return fmt.Errorf("failed to rename volume to '%s': %w", volumeName, err)
+			return fmt.Errorf("failed to rename volume to '%s': %w", volumeName, volumeRenameDenied(err))
 		}
 		vol.Name = volumeName
 	}

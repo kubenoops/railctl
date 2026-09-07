@@ -140,6 +140,15 @@ func baseRegionMock(cap *regionCapture) *api.MockClient {
 		ListEnvironmentsFunc: func(string) ([]types.Environment, error) {
 			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 		},
+		// Read-your-writes: echo the placement writeServiceRegion just staged
+		// (cap.region is set by the CommitMultiRegionConfig mock above), so
+		// verification confirms instead of falling back to the settle sleep.
+		GetEnvironmentConfigFunc: func(string) (string, error) {
+			if cap.region != nil {
+				return `{"services":{"svc-1":{"deploy":{"multiRegionConfig":{"` + *cap.region + `":{}}}}}}`, nil
+			}
+			return `{"services":{}}`, nil
+		},
 		ListRegionsFunc: func() ([]types.Region, error) {
 			return []types.Region{
 				{Name: "us-west2", ID: "us-west2"},
@@ -171,12 +180,25 @@ func setRegionCmdGlobals(t *testing.T) {
 }
 
 // REQ-CMD-001/002/004: create --region writes the region (default 1 replica), validated first.
+// The service is created EMPTY and the image attached after placement, then
+// deployed explicitly — serviceCreate with a source deploys immediately in the
+// default region and the region patch then forces a migration.
 func TestRunCreateService_WithRegion(t *testing.T) {
 	setRegionCmdGlobals(t)
 	cap := &regionCapture{}
 	m := baseRegionMock(cap)
-	m.CreateServiceFunc = func(_, _, name, _ string, _ *api.RegistryCredentials) (types.Service, error) {
+	var createImage *string
+	var sourceImage *string
+	deployed := false
+	m.CreateServiceFunc = func(_, _, name, image string, _ *api.RegistryCredentials) (types.Service, error) {
+		createImage = &image
 		return types.Service{ID: "svc-1", Name: name}, nil
+	}
+	// Source attach + rollout arrive as ONE call on the region path.
+	m.AttachSourceAndDeployFunc = func(_, _, image string, _ *api.RegistryCredentials) (string, error) {
+		sourceImage = &image
+		deployed = true
+		return "dep-1", nil
 	}
 	token, project, environment, serviceImage = "t", "my-project", "production", "nginx:latest"
 	newAPIClient = func(string) api.APIClient { return m }
@@ -190,6 +212,19 @@ func TestRunCreateService_WithRegion(t *testing.T) {
 	}
 	if cap.replicas == nil || *cap.replicas != 1 {
 		t.Errorf("create --region with no --replicas should write 1, got %v", cap.replicas)
+	}
+	if createImage == nil {
+		t.Error("CreateService was never called")
+	} else if *createImage != "" {
+		t.Errorf("region-pinned create must be source-less, got %q", *createImage)
+	}
+	if sourceImage == nil {
+		t.Error("the source was never attached after placement")
+	} else if *sourceImage != "nginx:latest" {
+		t.Errorf("image must be attached after placement, got %q", *sourceImage)
+	}
+	if !deployed {
+		t.Error("a region-pinned empty create must trigger an explicit deployment")
 	}
 }
 
