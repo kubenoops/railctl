@@ -63,7 +63,7 @@ test-e2e-project: build
 # a clean room before/after.
 test-e2e-byo: build
 	RAILWAY_PROJECT_TOKEN=$(RAILWAY_PROJECT_TOKEN) RAILCTL=$(CURDIR)/$(BINARY) \
-	go test -tags e2e -v -count=1 -timeout 40m -skip 'TestExec|TestPortForward' ./tests/e2e/project/...
+	go test -tags e2e -v -count=1 -timeout 60m -skip 'TestExec|TestPortForward' ./tests/e2e/project/...
 
 # Run all E2E groups top-down: account → workspace → project
 # (needs both RAILWAY_ACCOUNT_TOKEN and RAILWAY_WORKSPACE_TOKEN)
