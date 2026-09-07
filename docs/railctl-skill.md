@@ -416,6 +416,8 @@ services:
       restartPolicy: ON_FAILURE # ON_FAILURE | ALWAYS | NEVER
       maxRetries: 3 # requires restartPolicy
       replicas: 2 # >= 1 if set
+      # pinned CREATES deploy straight into the region (volume born there,
+      # no migration on first apply); moving later migrates the volume (--force)
       region: us-west2 # optional; pin to one region. omitted = leave live placement alone
       healthcheckPath: /health
       healthcheckTimeout: 300
@@ -757,11 +759,11 @@ removed with `delete domain`, never silently on apply.)
 
 ### The three verbs
 
-| Command                                                                                    | Does                                                                                           | Exit                                      |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Command                                                                                    | Does                                                                                           | Exit                                                                                             |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `railctl diff -f <file-or-dir> [--prune] [--exit-code]`                                    | show create/update/delete deltas, secrets masked                                               | 0 even on drift (read the summary line); with `--exit-code`: 1 = changes, 0 = in sync, 2 = error |
-| `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest                                                           | 0 = applied                               |
-| `railctl delete -f <file-or-dir> [--yes]`                                                  | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled                      |
+| `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest                                                           | 0 = applied                                                                                      |
+| `railctl delete -f <file-or-dir> [--yes]`                                                  | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled                                                                             |
 
 ### Semantics that matter
 
@@ -870,9 +872,14 @@ railctl get regions                           # list valid --region names (table
 railctl delete service api --yes              # orphans its volume — see volumes
 
 # Region placement: --region pins a service to one region (env default: RAILCTL_REGION,
-# create only). Moving preserves the replica count; a no-op if already there. If a volume
-# is attached Railway migrates it (service down meanwhile) — needs --force. Collapsing a
-# multi-region service also needs --force.
+# create only). A pinned CREATE deploys straight into the region — the volume is born
+# there, no migration on first apply (CLI or YAML). Moving preserves the replica count;
+# a no-op if already there. If a volume is attached Railway migrates it (service down
+# meanwhile) — needs --force; --await/--await-completion then waits on the VOLUME's
+# region, not the deployment (Railway's move-deployment routinely reads FAILED/REMOVED
+# while the migration succeeds). Expect one superseded (REMOVED) auto-rollout per
+# migration — railctl tracks the surviving deployment. Collapsing a multi-region
+# service also needs --force.
 ```
 
 The service is created **in the target environment only**.
@@ -905,6 +912,17 @@ railctl create backup data [--name pre-migration]        # async — poll get ba
 railctl restore backup <backup-id> --volume data --yes
 railctl delete backup <backup-id> --volume data --yes
 ```
+
+Token/plan caveats (see docs/token-capability-matrix.md):
+
+- **`--name` requires a workspace or account token**: Railway's rename
+  mutation carries no environment, so project tokens are denied it, and no
+  environment-scoped alternative exists (verified live). railctl names the
+  requirement in the error. Deleting a volume just after a migration can
+  transiently fail until the volume view settles — re-run.
+- **Backups need a Pro plan** — on other plans Railway denies
+  `create backup` and backup-schedule writes with `Not Authorized` under any
+  token scope (billing gate, not permissions).
 
 **Backups are welded to their volume instance in its environment** (verified):
 no cross-volume restore, no following an environment name — deleting the
@@ -1090,22 +1108,22 @@ delete old id.
 
 ## 8. Troubleshooting
 
-| Symptom                                                    | Cause / fix                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `token is not authorized`                                  | Expired/revoked token, or all three detection probes failed. `railctl whoami`, re-mint.                                                                                                                                                       |
-| `token is scoped to … but -p/-e/-w '…' was given`          | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token.                                                                                                        |
-| `cannot … with a project token`                            | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token.                                                                                                                    |
-| `… not found — available: a, b, c`                         | Typo — the listed candidates are what exists.                                                                                                                                                                                                 |
-| `environment '…' is delete-protected`                      | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion.                                                                                                      |
-| Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace.                                                                  |
-| `diff` "fails" in CI                                       | Without `--exit-code`, `diff` exits 0 on drift — a non-zero exit means a real error (bad file, auth, API); read the message. To gate CI on drift, run `diff --exit-code` (1 = changes, 0 = in sync, 2 = error) or parse the summary line (`0 to create, 0 to update, 0 to delete`).                    |
-| Container exits instantly / `startCommand` seems ignored   | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image. |
-| `logs` prints nothing, no error                            | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs.                                               |
-| Volume/backup op right after creation says not found       | Propagation lag; railctl retries with backoff — re-run if it still misses.                                                                                                                                                                    |
-| Backup restore "did nothing"                               | Restore is staged — **deploy the service** to finalize.                                                                                                                                                                                       |
-| Apply cleared backup schedules unexpectedly                | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them.                                                                                                                          |
-| Custom domain stuck pending                                | DNS records not added/propagated — `get domains -s <svc>` shows verification status.                                                                                                                                                          |
-| `--debug`                                                  | Global flag: dumps GraphQL traffic to stderr.                                                                                                                                                                                                 |
+| Symptom                                                    | Cause / fix                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `token is not authorized`                                  | Expired/revoked token, or all three detection probes failed. `railctl whoami`, re-mint.                                                                                                                                                                                             |
+| `token is scoped to … but -p/-e/-w '…' was given`          | Contradiction fail-fast: flags/env vars disagree with the token's baked scope. Fix the stale `RAILCTL_*` value or use the right token.                                                                                                                                              |
+| `cannot … with a project token`                            | Workspace-scope operation (project/env lifecycle, `get projects`, deployment reactivation). Use a workspace/account token.                                                                                                                                                          |
+| `… not found — available: a, b, c`                         | Typo — the listed candidates are what exists.                                                                                                                                                                                                                                       |
+| `environment '…' is delete-protected`                      | `DELETE_PROTECTION` is set — run `railctl unprotect environment <env>` (or set `deleteProtection: false` and `apply`) to allow deletion.                                                                                                                                            |
+| Token works in the dashboard but railctl says unauthorized | Probably project-scoped and the other tool sends `Authorization: Bearer` only; railctl handles the `Project-Access-Token` header automatically — check for typos/whitespace.                                                                                                        |
+| `diff` "fails" in CI                                       | Without `--exit-code`, `diff` exits 0 on drift — a non-zero exit means a real error (bad file, auth, API); read the message. To gate CI on drift, run `diff --exit-code` (1 = changes, 0 = in sync, 2 = error) or parse the summary line (`0 to create, 0 to update, 0 to delete`). |
+| Container exits instantly / `startCommand` seems ignored   | The image likely has a fixed **ENTRYPOINT**: Railway appends `startCommand` as CMD args and does **not** override the entrypoint, which can silently swallow your command. Use an image with a shell entrypoint or build a thin custom image.                                       |
+| `logs` prints nothing, no error                            | Logs default to the **latest successful** deployment — if none succeeded yet there is nothing to show. Use `--deployment <id>` (ids from `get deployments`) to read a failed deployment's logs.                                                                                     |
+| Volume/backup op right after creation says not found       | Propagation lag; railctl retries with backoff — re-run if it still misses.                                                                                                                                                                                                          |
+| Backup restore "did nothing"                               | Restore is staged — **deploy the service** to finalize.                                                                                                                                                                                                                             |
+| Apply cleared backup schedules unexpectedly                | The volume is managed and the manifest omitted `backupSchedules` — declared state is authoritative; re-declare them.                                                                                                                                                                |
+| Custom domain stuck pending                                | DNS records not added/propagated — `get domains -s <svc>` shows verification status.                                                                                                                                                                                                |
+| `--debug`                                                  | Global flag: dumps GraphQL traffic to stderr.                                                                                                                                                                                                                                       |
 
 ---
 
