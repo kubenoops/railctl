@@ -101,27 +101,35 @@ func (c *Client) ListVolumes(projectID, environmentID string) ([]VolumeInstance,
 	return []VolumeInstance{}, nil
 }
 
-// CreateVolume creates a new volume attached to a service
-func (c *Client) CreateVolume(projectID, environmentID, serviceID, mountPath string) (Volume, error) {
-	mutation := `
-		mutation VolumeCreate($projectId: String!, $environmentId: String!, $serviceId: String!, $mountPath: String!) {
-			volumeCreate(
-				input: {projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId, mountPath: $mountPath}
-			) {
-				id
-				name
-			}
+// createVolumeMutation is the GraphQL mutation for creating a volume. The input
+// is passed as a variable (like serviceCreate) so the optional region key can
+// be included only when set — a volume created without a region lands in the
+// service's current region.
+const createVolumeMutation = `
+	mutation VolumeCreate($input: VolumeCreateInput!) {
+		volumeCreate(input: $input) {
+			id
+			name
 		}
-	`
+	}
+`
 
-	variables := map[string]any{
+// CreateVolume creates a new volume attached to a service. A non-empty region
+// provisions the volume directly in that region (VolumeCreateInput.region) so a
+// region-placed service's volume is born beside it instead of being migrated
+// after the first deployment. Empty region keeps Railway's default placement.
+func (c *Client) CreateVolume(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error) {
+	input := map[string]any{
 		"projectId":     projectID,
 		"environmentId": environmentID,
 		"serviceId":     serviceID,
 		"mountPath":     mountPath,
 	}
+	if region != "" {
+		input["region"] = region
+	}
 
-	data, err := c.execute(mutation, variables)
+	data, err := c.execute(createVolumeMutation, map[string]any{"input": input})
 	if err != nil {
 		return Volume{}, err
 	}

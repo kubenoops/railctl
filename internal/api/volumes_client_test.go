@@ -96,6 +96,7 @@ func TestClient_ListVolumes_NoMatch(t *testing.T) {
 }
 
 func TestClient_CreateVolume(t *testing.T) {
+	var vars map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{
@@ -106,18 +107,59 @@ func TestClient_CreateVolume(t *testing.T) {
 				}
 			}
 		}`))
+		_, vars = decodeRequest(t, r)
 	}))
 	defer server.Close()
 
 	client := NewClient("test-token")
 	client.apiURL = server.URL
 
-	vol, err := client.CreateVolume("proj-1", "env-1", "svc-1", "/app/data")
+	vol, err := client.CreateVolume("proj-1", "env-1", "svc-1", "/app/data", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if vol.ID != "vol-new" {
 		t.Errorf("expected ID 'vol-new', got %q", vol.ID)
+	}
+	input, ok := vars["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected input object variable, got %#v", vars["input"])
+	}
+	if input["region"] != nil {
+		t.Errorf("empty region must be omitted from the input, got %#v", input["region"])
+	}
+}
+
+// A pinned region goes on the wire so Railway provisions the volume in the
+// target region — no post-deployment migration.
+func TestClient_CreateVolumeWithRegion(t *testing.T) {
+	var vars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"data": {
+				"volumeCreate": {
+					"id": "vol-new",
+					"name": "volume_01"
+				}
+			}
+		}`))
+		_, vars = decodeRequest(t, r)
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	if _, err := client.CreateVolume("proj-1", "env-1", "svc-1", "/app/data", "europe-west4-drams3a"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	input, ok := vars["input"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected input object variable, got %#v", vars["input"])
+	}
+	if input["region"] != "europe-west4-drams3a" {
+		t.Errorf("expected region europe-west4-drams3a on the wire, got %#v", input["region"])
 	}
 }
 
