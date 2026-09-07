@@ -18,8 +18,10 @@ type MockClient struct {
 	// Services
 	ListServicesFunc                func(projectID, environmentID string) ([]types.ServiceDetail, error)
 	GetServiceFunc                  func(id string) (types.ServiceDetail, error)
+	GetEnvironmentConfigFunc        func(environmentID string) (string, error)
 	CreateServiceFunc               func(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error)
 	UpdateServiceInstanceFunc       func(serviceID, environmentID, image string, creds *RegistryCredentials) error
+	AttachSourceAndDeployFunc       func(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error)
 	UpdateServiceInstanceConfigFunc func(serviceID, environmentID string, startCommand, restartPolicy *string, maxRetries, replicas *int, healthcheckPath *string, healthcheckTimeout *int) error
 	DeployServiceInstanceFunc       func(serviceID, environmentID string) (string, error)
 	RedeployDeploymentFunc          func(deploymentID string) error
@@ -62,7 +64,7 @@ type MockClient struct {
 	DeleteTCPProxyFunc func(id string) error
 	// Volumes
 	ListVolumesFunc           func(projectID, environmentID string) ([]VolumeInstance, error)
-	CreateVolumeFunc          func(projectID, environmentID, serviceID, mountPath string) (Volume, error)
+	CreateVolumeFunc          func(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error)
 	DeleteVolumeFunc          func(environmentID, volumeID string) error
 	UpdateVolumeNameFunc      func(volumeID, name string) error
 	UpdateVolumeMountPathFunc func(volumeID, serviceID, environmentID, mountPath string) error
@@ -157,6 +159,13 @@ func (m *MockClient) GetService(id string) (types.ServiceDetail, error) {
 	return types.ServiceDetail{}, nil
 }
 
+func (m *MockClient) GetEnvironmentConfig(environmentID string) (string, error) {
+	if m.GetEnvironmentConfigFunc != nil {
+		return m.GetEnvironmentConfigFunc(environmentID)
+	}
+	return "", nil
+}
+
 func (m *MockClient) CreateService(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error) {
 	if m.CreateServiceFunc != nil {
 		return m.CreateServiceFunc(projectID, environmentID, name, image, creds)
@@ -169,6 +178,13 @@ func (m *MockClient) UpdateServiceInstance(serviceID, environmentID, image strin
 		return m.UpdateServiceInstanceFunc(serviceID, environmentID, image, creds)
 	}
 	return nil
+}
+
+func (m *MockClient) AttachSourceAndDeploy(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error) {
+	if m.AttachSourceAndDeployFunc != nil {
+		return m.AttachSourceAndDeployFunc(serviceID, environmentID, image, creds)
+	}
+	return "", nil
 }
 
 func (m *MockClient) UpdateServiceInstanceConfig(
@@ -362,9 +378,9 @@ func (m *MockClient) ListVolumes(projectID, environmentID string) ([]VolumeInsta
 	return nil, nil
 }
 
-func (m *MockClient) CreateVolume(projectID, environmentID, serviceID, mountPath string) (Volume, error) {
+func (m *MockClient) CreateVolume(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error) {
 	if m.CreateVolumeFunc != nil {
-		return m.CreateVolumeFunc(projectID, environmentID, serviceID, mountPath)
+		return m.CreateVolumeFunc(projectID, environmentID, serviceID, mountPath, region)
 	}
 	return Volume{}, nil
 }

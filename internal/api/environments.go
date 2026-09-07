@@ -168,3 +168,37 @@ func (c *Client) DeleteEnvironment(id string) error {
 
 	return nil
 }
+
+// environmentConfigQuery reads an environment's live committed config — the
+// config-as-code state the dashboard and environmentPatchCommit write into
+// (services with source/deploy.multiRegionConfig/volumeMounts, volumes,
+// shared variables). This is Railway's read-your-writes surface: after staging
+// a change, poll this until the change is visible before acting on it.
+// (Verified live 2026-09-07: a region-placed, volume-backed service read back
+// its multiRegionConfig, volumeMounts and source here.)
+const environmentConfigQuery = `
+query($id: String!) {
+	environment(id: $id) {
+		config
+	}
+}
+`
+
+// GetEnvironmentConfig returns the environment's live committed config as raw
+// JSON. Callers verify by substring/shape checks against what they staged;
+// the full schema is not modeled.
+func (c *Client) GetEnvironmentConfig(environmentID string) (string, error) {
+	data, err := c.execute(environmentConfigQuery, map[string]any{"id": environmentID})
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Environment struct {
+			Config json.RawMessage `json:"config"`
+		} `json:"environment"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", err
+	}
+	return string(resp.Environment.Config), nil
+}

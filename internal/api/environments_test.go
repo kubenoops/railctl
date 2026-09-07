@@ -154,3 +154,30 @@ func TestClient_DeleteEnvironment_Failed(t *testing.T) {
 		t.Errorf("expected 'failed to delete' error, got: %v", err)
 	}
 }
+
+// GetEnvironmentConfig is the read-your-writes surface: the wire query must
+// read the environment's live committed config (the same structure
+// environmentPatchCommit writes into).
+func TestClient_GetEnvironmentConfig(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query, _ = decodeRequest(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data": {"environment": {"config": {"services": {"svc-1": {"deploy": {"multiRegionConfig": {"us-west2": {"numReplicas": 1}}}}}}}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	raw, err := client.GetEnvironmentConfig("env-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(query, "environment(id:") || !strings.Contains(query, "config") {
+		t.Errorf("query must read the environment's config, got:\n%s", query)
+	}
+	if !strings.Contains(raw, "us-west2") {
+		t.Errorf("expected raw config to carry the placement, got %s", raw)
+	}
+}
