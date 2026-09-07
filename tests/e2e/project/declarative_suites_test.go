@@ -243,14 +243,11 @@ func TestDeclarativeMigration(t *testing.T) {
 
 	// 3. apply --force migrates; the volume lands in region B. Railway
 	//    migrations fail transiently (the platform resets the region) — retry
-	//    once, like an operator would.
-	env.RunOK(t, "apply", "-f", cfg, "--force")
-	if !waitVolumeRegion(t, env, svc+"-volume", to, 5*time.Minute) {
-		t.Logf("volume still in %q — Railway reset the migration; retrying once", volumeRegion(t, env, svc+"-volume"))
+	//    like an operator would.
+	if !migrateWithRetries(t, env, svc+"-volume", to, func() {
 		env.RunOK(t, "apply", "-f", cfg, "--force")
-		if !waitVolumeRegion(t, env, svc+"-volume", to, 5*time.Minute) {
-			t.Fatalf("volume did not migrate to %q after a retry (got %q)", to, volumeRegion(t, env, svc+"-volume"))
-		}
+	}, 3) {
+		t.Fatalf("volume did not migrate to %q after 3 attempts (got %q)", to, volumeRegion(t, env, svc+"-volume"))
 	}
 
 	// 4. diff must converge back to "No changes" — the migrated placement has

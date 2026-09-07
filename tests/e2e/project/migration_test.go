@@ -48,50 +48,78 @@ func volumeRegion(t *testing.T, env *harness.Env, volName string) string {
 	return ""
 }
 
-// serviceState returns the live single-region placement and latest deployment
-// status of the named service via `get services -o json` (region is empty when
-// default-placed or multi-region).
-func serviceState(t *testing.T, env *harness.Env, name string) (region, status string) {
+// volumeSettleDelay is how long a freshly deployed, volume-backed service is
+// left alone before its region is changed. Railway finalizes the volume
+// attachment after the deployment reports SUCCESS, and migrating inside that
+// window makes the platform abandon the copy and revert the placement ("Reset
+// region due to volume migration failure"). Live evidence (2026-09-07): the
+// same railctl migration, same region pair, run by hand against a settled
+// volume succeeded in both directions, while the suite — which migrates
+// seconds after create — reset three runs in a row.
+const volumeSettleDelay = 45 * time.Second
+
+// latestDeploymentStatus returns the status of the service's most recent
+// deployment via `get deployments -s <svc>` — the per-service read. The
+// project-level `get services` status is NOT usable here: it can serve a stale
+// STOPPED/REMOVED entry while the service is healthy (observed live
+// 2026-08-30), which is exactly the shape a superseded first deployment takes.
+func latestDeploymentStatus(t *testing.T, env *harness.Env, name string) string {
 	t.Helper()
-	r := env.RunOK(t, "get", "services", "-o", "json")
-	var services []struct {
-		Name   string `json:"name"`
-		Region string `json:"region"`
+	r := env.RunOK(t, "get", "deployments", "-s", name, "-o", "json", "--limit", "1")
+	var deps []struct {
 		Status string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(r.Stdout), &services); err != nil {
-		t.Fatalf("parse services json: %v", err)
+	if err := json.Unmarshal([]byte(r.Stdout), &deps); err != nil || len(deps) == 0 {
+		return ""
 	}
-	for _, s := range services {
-		if s.Name == name {
-			return s.Region, s.Status
-		}
-	}
-	t.Fatalf("service %q not found in get services output", name)
-	return "", ""
+	return deps[0].Status
 }
 
 // waitForDeploySuccess polls until the service's latest deployment reads
-// SUCCESS, returning false on deadline. Migrating a volume before the service
-// ever deployed makes Railway fail the migration ("Reset region due to volume
-// migration failure"), so callers settle first — but only best-effort: the
-// project-level deployment read can stick on a stale STOPPED entry (observed
-// live 2026-08-30) while the service is actually fine, and a failed migration
-// is retried by the caller anyway.
+// SUCCESS, then lets the volume attachment settle. Both halves matter:
+// migrating a volume before the service ever deployed makes Railway fail the
+// migration, and so does migrating in the seconds right after it. Returns
+// false when SUCCESS never arrived (the caller's migration retry covers a
+// genuine not-deployed failure).
 func waitForDeploySuccess(t *testing.T, env *harness.Env, name string, deadline time.Duration) bool {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	for {
-		_, status := serviceState(t, env, name)
+		status := latestDeploymentStatus(t, env, name)
 		if status == "SUCCESS" {
+			t.Logf("service %q deployed; settling %s before touching its volume", name, volumeSettleDelay)
+			time.Sleep(volumeSettleDelay)
 			return true
 		}
 		if time.Now().After(end) {
-			t.Logf("service %q deployment did not read SUCCESS within %s (status %q; possibly a stale read) — proceeding, the migration retry covers a genuine not-deployed failure", name, deadline, status)
+			t.Logf("service %q latest deployment did not read SUCCESS within %s (status %q) — proceeding, the migration retry covers a genuine not-deployed failure", name, deadline, status)
 			return false
 		}
 		time.Sleep(10 * time.Second)
 	}
+}
+
+// migrateWithRetries force-moves a volume-backed service to region `to` and
+// waits for the VOLUME to land there, retrying the whole trigger when Railway
+// resets the migration. Resets are transient platform failures (Railway staff
+// have described them as internal errors and reset migration state by hand),
+// so an operator would simply re-issue the move — with a pause, since the
+// platform needs a moment after a reset.
+func migrateWithRetries(t *testing.T, env *harness.Env, volName, to string, trigger func(), attempts int) bool {
+	t.Helper()
+	for attempt := 1; attempt <= attempts; attempt++ {
+		trigger()
+		if waitVolumeRegion(t, env, volName, to, 5*time.Minute) {
+			return true
+		}
+		got := volumeRegion(t, env, volName)
+		if attempt < attempts {
+			t.Logf("volume still in %q after attempt %d/%d — Railway reset the migration; retrying in %s",
+				got, attempt, attempts, volumeSettleDelay)
+			time.Sleep(volumeSettleDelay)
+		}
+	}
+	return false
 }
 
 // TestRegionVolumeMigration exercises REQ-VOL-100 live end to end, including
@@ -142,22 +170,16 @@ func TestRegionVolumeMigration(t *testing.T) {
 	waitForDeploySuccess(t, env, name, 3*time.Minute)
 
 	// With --force: accepted, Railway migrates the volume alongside the move.
-	ok := env.RunOK(t, "update", "service", name, "--region", to, "--force")
-	harness.AssertContains(t, ok.Stdout, to)
-
-	// Assert the actual migration outcome: the VOLUME's region. (The service
+	// Assert the actual migration outcome — the VOLUME's region (the service
 	// placement can't be polled here — the project-level latestDeployment read
-	// does not surface Railway's migration-initiated redeploy, observed live.)
-	// Railway migrations fail transiently ("Reset region due to volume
-	// migration failure", observed on a clean metal→metal move) — retry once,
-	// like an operator would from the dashboard.
-	if !waitVolumeRegion(t, env, name+"-volume", to, 5*time.Minute) {
-		t.Logf("volume still in %q — Railway reset the migration; retrying once", volumeRegion(t, env, name+"-volume"))
-		env.RunOK(t, "update", "service", name, "--region", to, "--force")
-		if !waitVolumeRegion(t, env, name+"-volume", to, 5*time.Minute) {
-			t.Fatalf("volume %q did not migrate to %q after a retry (got %q)",
-				name+"-volume", to, volumeRegion(t, env, name+"-volume"))
-		}
+	// does not surface Railway's migration-initiated redeploy, observed live).
+	// Resets are transient platform failures; retry like an operator would.
+	if !migrateWithRetries(t, env, name+"-volume", to, func() {
+		ok := env.RunOK(t, "update", "service", name, "--region", to, "--force")
+		harness.AssertContains(t, ok.Stdout, to)
+	}, 3) {
+		t.Fatalf("volume %q did not migrate to %q after %d attempts (got %q)",
+			name+"-volume", to, 3, volumeRegion(t, env, name+"-volume"))
 	}
 
 	// Suite-3 rename attempt: the volume has just been MIGRATED to another
