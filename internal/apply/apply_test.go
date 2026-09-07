@@ -58,28 +58,33 @@ func TestApply_CreateService(t *testing.T) {
 }
 
 // TestApply_CreateServiceTriggersDeployment pins the rule that a created
-// service must end up WITH a deployment. Creating a service used to rely on
-// serviceCreate rolling out implicitly, which is unreliable — a multi-service
-// apply routinely left services existing with zero deployments (nothing
-// running at all, which is a systemic failure rather than an unhealthy
-// deploy), and --await then had nothing to wait on and reported success.
-// applyCreate must therefore roll out explicitly, after staging config, so the
-// deployment reflects the final service.
+// service must end up WITH exactly one deployment, born after all config. The
+// service is created source-less (serviceCreate's implicit rollout is
+// unreliable and races staged config — a multi-service apply routinely left
+// services with zero deployments, a systemic failure --await then hid), and
+// the source attach + rollout travel as ONE request: two triggers meant two
+// Railway deployments, the loser REMOVED (observed live 2026-09-03/04).
 func TestApply_CreateServiceTriggersDeployment(t *testing.T) {
-	var deployedService, deployedEnv string
-	deployCalls := 0
+	var deployedService, deployedEnv, deployedImage string
+	rolloutCalls, bareDeploys := 0, 0
 	mock := &api.MockClient{
 		CreateServiceFunc: func(projectID, envID, name, image string, creds *api.RegistryCredentials) (types.Service, error) {
+			if image != "" {
+				t.Errorf("create must be source-less, got image %q", image)
+			}
 			return types.Service{ID: "svc-1", Name: name}, nil
 		},
 		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
 			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 		},
-		DeployServiceInstanceFunc: func(serviceID, environmentID string) (string, error) {
-			deployCalls++
-			deployedService = serviceID
-			deployedEnv = environmentID
+		AttachSourceAndDeployFunc: func(serviceID, environmentID, image string, _ *api.RegistryCredentials) (string, error) {
+			rolloutCalls++
+			deployedService, deployedEnv, deployedImage = serviceID, environmentID, image
 			return "deploy-1", nil
+		},
+		DeployServiceInstanceFunc: func(serviceID, environmentID string) (string, error) {
+			bareDeploys++
+			return "deploy-x", nil
 		},
 	}
 
@@ -101,11 +106,14 @@ func TestApply_CreateServiceTriggersDeployment(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("unexpected errors: %v", result.Errors)
 	}
-	if deployCalls != 1 {
-		t.Fatalf("expected exactly 1 explicit rollout for the created service, got %d", deployCalls)
+	if rolloutCalls != 1 {
+		t.Fatalf("expected exactly 1 attach+rollout for the created service, got %d", rolloutCalls)
 	}
-	if deployedService != "svc-1" || deployedEnv != "env-1" {
-		t.Errorf("rollout targeted %s/%s, want svc-1/env-1", deployedService, deployedEnv)
+	if bareDeploys != 0 {
+		t.Errorf("a service with an image must not take the bare deploy path, got %d calls", bareDeploys)
+	}
+	if deployedService != "svc-1" || deployedEnv != "env-1" || deployedImage != "node:20-alpine" {
+		t.Errorf("rollout targeted %s/%s image %q, want svc-1/env-1 node:20-alpine", deployedService, deployedEnv, deployedImage)
 	}
 }
 
@@ -175,7 +183,7 @@ func TestApply_CreateServiceWithVolume(t *testing.T) {
 		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
 			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 		},
-		CreateVolumeFunc: func(projectID, envID, serviceID, mountPath string) (api.Volume, error) {
+		CreateVolumeFunc: func(projectID, envID, serviceID, mountPath string, _ string) (api.Volume, error) {
 			createVolumeCalled = true
 			capturedMountPath = mountPath
 			return api.Volume{ID: "vol-1", Name: "data"}, nil
@@ -1073,7 +1081,7 @@ func TestApply_CreateServiceWithVolumeBackupSchedules(t *testing.T) {
 		ListEnvironmentsFunc: func(projectID string) ([]types.Environment, error) {
 			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 		},
-		CreateVolumeFunc: func(projectID, envID, serviceID, mountPath string) (api.Volume, error) {
+		CreateVolumeFunc: func(projectID, envID, serviceID, mountPath string, _ string) (api.Volume, error) {
 			return api.Volume{ID: "vol-1", Name: "data"}, nil
 		},
 		ListVolumesFunc: func(projectID, environmentID string) ([]api.VolumeInstance, error) {

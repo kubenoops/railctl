@@ -252,7 +252,29 @@ func runApply(cmd *cobra.Command, args []string) error {
 			if !awaitNames[svc.Name] {
 				continue
 			}
-			if svc.DeploymentID == "" {
+			// A volume migration triggered by this apply is awaited on the
+			// VOLUME, not the deployment: Railway takes the service down to
+			// copy the volume and its move-deployment routinely ends
+			// FAILED/REMOVED while the migration itself succeeds (observed
+			// live 2026-09-07 — a completed migration under a FAILED
+			// deployment). The volume landing in the target region is the
+			// terminal outcome; deployment await would report a false failure.
+			if target, migrating := result.MigratedRegions[svc.Name]; migrating {
+				if err := awaitVolumeMigration(client, projectID, envID, svc.ID, svc.Name, target, applyAwaitTimeout); err != nil {
+					return err
+				}
+				continue
+			}
+			// Prefer the deployment railctl itself triggered over the
+			// re-fetched snapshot: right after a deploy trigger Railway's
+			// service snapshot can serve a superseded or older deployment ID,
+			// which await would then report as REMOVED even though the apply
+			// is succeeding (observed live 2026-09-03).
+			deploymentID := svc.DeploymentID
+			if id, ok := result.DeploymentIDs[svc.Name]; ok && id != "" {
+				deploymentID = id
+			}
+			if deploymentID == "" {
 				// A created/updated service with no deployment at all is a
 				// systemic failure, not an unhealthy one — there is nothing to
 				// await and nothing running. Never let --await report success
@@ -261,7 +283,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 				undeployed = append(undeployed, svc.Name)
 				continue
 			}
-			if err := awaitDeployment(client, projectID, envID, svc.ID, svc.DeploymentID, svc.Name, applyAwaitTimeout); err != nil {
+			if err := awaitDeployment(client, projectID, envID, svc.ID, deploymentID, svc.Name, applyAwaitTimeout); err != nil {
 				return err
 			}
 		}
