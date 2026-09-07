@@ -1,9 +1,11 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestListDeployments(t *testing.T) {
@@ -361,5 +363,50 @@ func TestGetDeploymentLogsAPIError(t *testing.T) {
 
 	if err == nil {
 		t.Error("Expected error but got none")
+	}
+}
+
+// A volume migration's pre-deploy step refuses to run while a deployment is
+// parked in a non-terminal state — AwaitDeploymentsSettled is the wait that
+// prevents triggering into that deadlock.
+func TestAwaitDeploymentsSettled(t *testing.T) {
+	// Parked first, quiet after: the gate must wait it out.
+	calls := 0
+	settling := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		calls++
+		if calls < 2 {
+			return []Deployment{{ID: "dep-1", Status: "INITIALIZING"}}, nil
+		}
+		return []Deployment{{ID: "dep-1", Status: "SUCCESS"}}, nil
+	}}
+	if !AwaitDeploymentsSettled(settling, "p", "e", "s", 50*time.Millisecond, time.Millisecond) {
+		t.Error("expected quiet once all deployments are terminal")
+	}
+	if calls < 2 {
+		t.Errorf("expected the poll to retry while parked, got %d calls", calls)
+	}
+
+	// Already quiet: single call, immediate true.
+	quiet := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		return []Deployment{{ID: "dep-1", Status: "REMOVED"}, {ID: "dep-2", Status: "FAILED"}}, nil
+	}}
+	if !AwaitDeploymentsSettled(quiet, "p", "e", "s", 50*time.Millisecond, time.Millisecond) {
+		t.Error("terminal-only history must be quiet immediately")
+	}
+
+	// Never settles: bounded false.
+	parked := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		return []Deployment{{ID: "dep-1", Status: "DEPLOYING"}}, nil
+	}}
+	if AwaitDeploymentsSettled(parked, "p", "e", "s", 20*time.Millisecond, time.Millisecond) {
+		t.Error("permanently parked deployments must time out")
+	}
+
+	// Read errors are not quiet — the gate keeps waiting until the deadline.
+	failing := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		return nil, errors.New("boom")
+	}}
+	if AwaitDeploymentsSettled(failing, "p", "e", "s", 20*time.Millisecond, time.Millisecond) {
+		t.Error("a failing read must not report quiet")
 	}
 }
