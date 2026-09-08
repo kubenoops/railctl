@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -376,6 +377,44 @@ func TestUpdateServiceInstance(t *testing.T) {
 				t.Errorf("UpdateServiceInstance() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// AttachSourceAndDeploy sends the source attach and the deploy trigger in ONE
+// GraphQL request. Railway executes the fields sequentially server-side, so
+// the rollout cannot race the source commit's async propagation — the race
+// that superseded (REMOVED) railctl's immediately-following deploy when the
+// two were separate calls (observed live 2026-09-03).
+func TestClient_AttachSourceAndDeploy(t *testing.T) {
+	var query string
+	var vars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query, vars = decodeRequest(t, r)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data": {"serviceInstanceUpdate": true, "serviceInstanceDeployV2": "dep-9"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	depID, err := client.AttachSourceAndDeploy("svc-1", "env-1", "nginx:latest", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if depID != "dep-9" {
+		t.Errorf("expected deployment ID dep-9, got %q", depID)
+	}
+	if !strings.Contains(query, "serviceInstanceUpdate") || !strings.Contains(query, "serviceInstanceDeployV2") {
+		t.Errorf("query must carry both the source attach and the deploy trigger, got:\n%s", query)
+	}
+	input, _ := vars["input"].(map[string]any)
+	source, _ := input["source"].(map[string]any)
+	if source["image"] != "nginx:latest" {
+		t.Errorf("expected input.source.image=nginx:latest, got %#v", input["source"])
+	}
+	if vars["serviceId"] != "svc-1" || vars["environmentId"] != "env-1" {
+		t.Errorf("unexpected ids: %v", vars)
 	}
 }
 

@@ -40,21 +40,41 @@ func TestListVolumes(t *testing.T) {
 
 func TestCreateVolume(t *testing.T) {
 	client := &MockClient{
-		CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string) (Volume, error) {
+		CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error) {
 			if projectID != "project-1" || environmentID != "env-1" || serviceID != "service-1" || mountPath != "/app/data" {
 				t.Errorf("unexpected params")
+			}
+			if region != "" {
+				t.Errorf("region must be empty when unspecified, got %q", region)
 			}
 			return Volume{ID: "vol-1", Name: "volume_01JMK96"}, nil
 		},
 	}
 
-	vol, err := client.CreateVolume("project-1", "env-1", "service-1", "/app/data")
+	vol, err := client.CreateVolume("project-1", "env-1", "service-1", "/app/data", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	if vol.ID != "vol-1" {
 		t.Errorf("unexpected volume ID: %s", vol.ID)
+	}
+}
+
+// A pinned region must reach volumeCreate so the volume is born in the target
+// region instead of being migrated there after the first deployment.
+func TestCreateVolumeWithRegion(t *testing.T) {
+	client := &MockClient{
+		CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error) {
+			if region != "europe-west4-drams3a" {
+				t.Errorf("expected region europe-west4-drams3a, got %q", region)
+			}
+			return Volume{ID: "vol-1", Name: "volume_01JMK96"}, nil
+		},
+	}
+
+	if _, err := client.CreateVolume("project-1", "env-1", "service-1", "/app/data", "europe-west4-drams3a"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

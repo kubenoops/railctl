@@ -172,3 +172,46 @@ func (c *Client) GetDeploymentLogs(deploymentID string, limit int) ([]LogEntry, 
 
 	return logs, nil
 }
+
+// settledStatuses mirrors the terminal deployment statuses await treats as
+// final — a deployment in any other state (INITIALIZING, BUILDING, DEPLOYING,
+// …) is PARKED and blocks volume migrations.
+var settledStatuses = map[string]bool{
+	"SUCCESS": true,
+	"FAILED":  true,
+	"CRASHED": true,
+	"REMOVED": true,
+	"SKIPPED": true,
+}
+
+// AwaitDeploymentsSettled polls until no deployment of the service is in a
+// non-terminal (parked) state, returning true once quiet. A volume migration
+// runs as the PRE-DEPLOY step of a rollout, and Railway refuses the cutover
+// while another deployment is parked: "Cannot migrate volume instance …
+// deployment … is parked in INITIALIZING … Cancel that deployment, or wait
+// for it to settle" (observed live 2026-09-07 — the explicit rollout we
+// triggered raced Railway's own auto-rollout and deadlocked exactly like
+// this). Before triggering a migration rollout, wait for quiet; on deadline
+// return false and let the caller decide (deploy anyway with a warning).
+func AwaitDeploymentsSettled(client APIClient, projectID, environmentID, serviceID string, timeout, poll time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		deployments, err := client.ListDeployments(projectID, environmentID, serviceID, 5)
+		if err == nil {
+			quiet := true
+			for _, d := range deployments {
+				if !settledStatuses[d.Status] {
+					quiet = false
+					break
+				}
+			}
+			if quiet {
+				return true
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(poll)
+	}
+}

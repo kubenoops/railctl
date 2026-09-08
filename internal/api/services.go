@@ -144,6 +144,19 @@ mutation($serviceId: String!, $environmentId: String!) {
 }
 `
 
+// attachSourceAndDeployMutation sets the service instance's source and triggers
+// the rollout in ONE request. GraphQL executes root mutation fields in series,
+// so the deploy runs after the source is committed — as two separate calls the
+// deploy raced the source commit's async propagation and Railway superseded
+// (REMOVED) the in-flight deployment with its own reconciliation rollout
+// (observed live 2026-09-03: one trigger, two deployments).
+const attachSourceAndDeployMutation = `
+mutation($serviceId: String!, $environmentId: String!, $input: ServiceInstanceUpdateInput!) {
+	serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: $input)
+	serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId)
+}
+`
+
 // buildLogsQuery is the GraphQL query for fetching build logs.
 const buildLogsQuery = `
 query($deploymentId: String!, $limit: Int) {
@@ -467,6 +480,42 @@ func (c *Client) UpdateServiceInstance(serviceID, environmentID, image string, c
 		"input":         input,
 	})
 	return err
+}
+
+// AttachSourceAndDeploy sets the service instance's image source and triggers
+// the rollout in a single GraphQL request, returning the new deployment ID.
+// Used by the region-native create path, where the service is created
+// source-less: sending both fields together keeps Railway from superseding the
+// rollout with a reconciliation deployment of its own (see
+// attachSourceAndDeployMutation).
+func (c *Client) AttachSourceAndDeploy(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error) {
+	input := map[string]any{}
+	if image != "" {
+		input["source"] = map[string]any{"image": image}
+	}
+	if creds != nil && creds.Username != "" && creds.Password != "" {
+		input["registryCredentials"] = map[string]any{
+			"username": creds.Username,
+			"password": creds.Password,
+		}
+	}
+
+	data, err := c.execute(attachSourceAndDeployMutation, map[string]any{
+		"serviceId":     serviceID,
+		"environmentId": environmentID,
+		"input":         input,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	var resp struct {
+		ServiceInstanceDeployV2 string `json:"serviceInstanceDeployV2"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", err
+	}
+	return resp.ServiceInstanceDeployV2, nil
 }
 
 // UpdateServiceInstanceConfig updates service instance deploy configuration:

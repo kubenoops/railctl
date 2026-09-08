@@ -26,8 +26,10 @@ type APIClient interface {
 	// Services
 	ListServices(projectID, environmentID string) ([]types.ServiceDetail, error)
 	GetService(id string) (types.ServiceDetail, error)
+	GetEnvironmentConfig(environmentID string) (string, error)
 	CreateService(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error)
 	UpdateServiceInstance(serviceID, environmentID, image string, creds *RegistryCredentials) error
+	AttachSourceAndDeploy(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error)
 	UpdateServiceInstanceConfig(serviceID, environmentID string, startCommand, restartPolicy *string, maxRetries, replicas *int, healthcheckPath *string, healthcheckTimeout *int) error
 	DeployServiceInstance(serviceID, environmentID string) (string, error)
 	RedeployDeployment(deploymentID string) error
@@ -73,7 +75,7 @@ type APIClient interface {
 
 	// Volumes
 	ListVolumes(projectID, environmentID string) ([]VolumeInstance, error)
-	CreateVolume(projectID, environmentID, serviceID, mountPath string) (Volume, error)
+	CreateVolume(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error)
 	DeleteVolume(environmentID, volumeID string) error
 	UpdateVolumeName(volumeID, name string) error
 	UpdateVolumeMountPath(volumeID, serviceID, environmentID, mountPath string) error

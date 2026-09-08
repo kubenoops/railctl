@@ -17,6 +17,26 @@ import (
 	"github.com/kubenoops/railctl/internal/types"
 )
 
+// SettleDelay is how long a create waits after staging config (variables,
+// region placement, volume attach) before triggering the rollout. Railway
+// commits that config asynchronously and supersedes any deployment that starts
+// while a commit is still in flight, which shows up as a REMOVED deployment
+// next to the successful one. Live observation (2026-09-04): no wait →
+// superseded every time; ~30s wait → single clean deployment. This is a
+// pragmatic middle ground, not a value Railway documents — raise it if
+// superseded rollouts reappear. A var (not const) purely so tests can zero it;
+// shared by apply and create service.
+var SettleDelay = 15 * time.Second
+
+// Quiesce bounds for volume migrations: how long to wait for every deployment
+// of the service to reach a terminal state before triggering the single
+// rollout whose pre-deploy step migrates the volume. Vars so tests can zero
+// them.
+var (
+	QuiesceTimeout = 5 * time.Minute
+	QuiescePoll    = 10 * time.Second
+)
+
 // Opts controls apply behavior.
 type Opts struct {
 	DryRun bool      // if true, only print what would happen
@@ -30,6 +50,18 @@ type Result struct {
 	Updated []string // names of updated services
 	Deleted []string // names of deleted services
 	Errors  []error  // non-fatal errors encountered
+	// DeploymentIDs maps service name → the deployment ID railctl triggered
+	// for it. --await must follow these, not a re-fetched service snapshot:
+	// right after a deploy trigger Railway's snapshot can serve a superseded
+	// or older deployment ID (observed live 2026-09-03), which await would
+	// then report as REMOVED even though the apply succeeded.
+	DeploymentIDs map[string]string
+	// MigratedRegions maps service name → the region its volume is migrating
+	// to, for services whose region changed WITH a volume attached. --await
+	// must follow the volume for these, not the deployment: Railway's
+	// move-deployment routinely ends FAILED/REMOVED while the migration
+	// succeeds (observed live 2026-09-07).
+	MigratedRegions map[string]string
 }
 
 // Apply executes a ChangeSet to reconcile Railway state with the desired config.
@@ -44,7 +76,7 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 		opts.Output = os.Stdout
 	}
 
-	result := &Result{}
+	result := &Result{DeploymentIDs: map[string]string{}, MigratedRegions: map[string]string{}}
 
 	// Environment-level change (deleteProtection). Applied before per-service
 	// work so protection is asserted early. A nil cs.Environment means the
@@ -94,11 +126,15 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 
 	// --- Process creates ---
 	for _, rc := range creates {
-		if err := applyCreate(client, rc, projectID, envID, configMap, opts.Output); err != nil {
+		depID, err := applyCreate(client, rc, projectID, envID, configMap, opts.Output)
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("create %s: %w", rc.ServiceName, err))
 			continue
 		}
 		result.Created = append(result.Created, rc.ServiceName)
+		if depID != "" {
+			result.DeploymentIDs[rc.ServiceName] = depID
+		}
 	}
 
 	// --- Process updates ---
@@ -114,11 +150,15 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 	}
 
 	for _, rc := range updates {
-		if err := applyUpdate(client, rc, projectID, envID, configMap, services, opts.Output); err != nil {
+		migratedTo, err := applyUpdate(client, rc, projectID, envID, configMap, services, opts.Output)
+		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("update %s: %w", rc.ServiceName, err))
 			continue
 		}
 		result.Updated = append(result.Updated, rc.ServiceName)
+		if migratedTo != "" {
+			result.MigratedRegions[rc.ServiceName] = migratedTo
+		}
 	}
 
 	// --- Process deletes ---
@@ -133,17 +173,40 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 	return result
 }
 
-// applyCreate handles a single ChangeCreate operation.
-func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, w io.Writer) error {
+// applyCreate handles a single ChangeCreate operation. It returns the ID of
+// the deployment it triggered (empty never happens on success — the rollout is
+// unconditional), so --await can follow the deployment railctl actually
+// created instead of a re-fetched snapshot.
+func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, w io.Writer) (string, error) {
 	name := rc.ServiceName
 	cfg := configMap[name]
 
 	fmt.Fprintf(w, "Creating service '%s'...\n", name)
 
+	// The service is ALWAYS created source-less: serviceCreate with a source
+	// deploys immediately in the DEFAULT region (forcing a later volume
+	// migration when a region is pinned — observed live 2026-09-03), and its
+	// implicit rollout races the config staged below (it can reflect the
+	// pre-config service). Instead: create empty, stage everything (deploy
+	// config, placement, variables, volume, networking), then attach the
+	// source and roll out in ONE request at the end — exactly one deployment,
+	// fully configured. When a region is pinned the manifest value resolves to
+	// the full region ID — committing a short name verbatim would place the
+	// service on the legacy non-metal region, which breaks volume migrations.
+	// Resolution is pure (shipped list), so it runs before create to fail fast.
+	var regionID string
+	if cfg.Deploy.Region != "" {
+		rgn, err := api.ResolveRegionID(cfg.Deploy.Region)
+		if err != nil {
+			return "", fmt.Errorf("applying region: %w", err)
+		}
+		regionID = rgn
+	}
+
 	creds := registryCreds(cfg.Registry)
-	svc, err := client.CreateService(projectID, envID, name, cfg.Image, creds)
+	svc, err := client.CreateService(projectID, envID, name, "", nil)
 	if err != nil {
-		return fmt.Errorf("creating service: %w", err)
+		return "", fmt.Errorf("creating service: %w", err)
 	}
 
 	// Apply deploy config if any fields are non-zero (region is handled separately
@@ -151,45 +214,42 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout := buildDeployConfigFromConfig(cfg.Deploy)
 	if startCmd != nil || restartPolicy != nil || maxRetries != nil || replicas != nil || hcPath != nil || hcTimeout != nil {
 		if err := client.UpdateServiceInstanceConfig(svc.ID, envID, startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout); err != nil {
-			return fmt.Errorf("applying deploy config: %w", err)
+			return "", fmt.Errorf("applying deploy config: %w", err)
 		}
 	}
 
-	// Region placement (new service: no prior placement to preserve). The
-	// manifest value resolves to the full region ID — committing a short name
-	// verbatim would place the service on the legacy non-metal region, which
-	// breaks volume migrations.
-	if cfg.Deploy.Region != "" {
-		rgn, err := api.ResolveRegionID(cfg.Deploy.Region)
-		if err != nil {
-			return fmt.Errorf("applying region: %w", err)
-		}
-		if err := commitRegion(client, envID, svc.ID, rgn, cfg.Deploy.Replicas, nil); err != nil {
-			return fmt.Errorf("applying region: %w", err)
+	// Region placement (new service: no prior placement to preserve).
+	if regionID != "" {
+		if err := commitRegion(client, envID, svc.ID, regionID, cfg.Deploy.Replicas, nil); err != nil {
+			return "", fmt.Errorf("applying region: %w", err)
 		}
 	}
 
 	// Set variables.
 	if len(cfg.Variables) > 0 {
 		if err := client.SetVariables(projectID, envID, svc.ID, cfg.Variables, true); err != nil {
-			return fmt.Errorf("setting variables: %w", err)
+			return "", fmt.Errorf("setting variables: %w", err)
 		}
 	}
 
-	// Create volume.
+	// Create volume. When placement is pinned the volume is provisioned
+	// directly in the target region — born beside the service, never migrated.
+	// An empty regionID keeps Railway's default placement.
+	var volumeID string
 	if cfg.Volume.MountPath != "" {
-		vol, err := client.CreateVolume(projectID, envID, svc.ID, cfg.Volume.MountPath)
+		vol, err := client.CreateVolume(projectID, envID, svc.ID, cfg.Volume.MountPath, regionID)
 		if err != nil {
-			return fmt.Errorf("creating volume: %w", err)
+			return "", fmt.Errorf("creating volume: %w", err)
 		}
+		volumeID = vol.ID
 		// Backup schedules on the new volume instance.
 		if len(cfg.Volume.BackupSchedules) > 0 {
 			instanceID, err := findVolumeInstanceIDByVolume(client, projectID, envID, vol.ID)
 			if err != nil {
-				return fmt.Errorf("resolving volume instance for backup schedules: %w", err)
+				return "", fmt.Errorf("resolving volume instance for backup schedules: %w", err)
 			}
 			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
-				return fmt.Errorf("setting backup schedules: %w", err)
+				return "", fmt.Errorf("setting backup schedules: %w", err)
 			}
 		}
 	}
@@ -197,49 +257,100 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	// Create domain with its port in one call.
 	if cfg.Networking.Domain.Port > 0 {
 		if _, err := client.CreateServiceDomain(svc.ID, envID, cfg.Networking.Domain.Port); err != nil {
-			return fmt.Errorf("creating domain: %w", err)
+			return "", fmt.Errorf("creating domain: %w", err)
 		}
 	}
 
 	// Create TCP proxy.
 	if cfg.Networking.TCPProxy.Port > 0 {
 		if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, svc.ID); err != nil {
-			return fmt.Errorf("creating TCP proxy: %w", err)
+			return "", fmt.Errorf("creating TCP proxy: %w", err)
 		}
 	}
 
 	// Custom domains (none exist yet on a new service).
 	if err := reconcileCustomDomains(client, projectID, envID, svc.ID, cfg.Networking, nil, w); err != nil {
-		return err
+		return "", err
 	}
 
-	// Roll out the staged config explicitly — the same thing applyUpdate does.
-	//
-	// Do NOT rely on serviceCreate deploying implicitly: that is unreliable (a
-	// multi-service apply routinely left most services with NO deployment at
-	// all), and even when it does fire it races the config we stage above
-	// (start command, variables, volume, networking), so the implicit rollout
-	// can reflect the pre-config service. A service that exists with zero
-	// deployments is a systemic failure, not an unhealthy deploy — the
-	// deployment must exist even if it later crashes.
-	// The service was created moments ago and Railway materializes its
-	// instance asynchronously — an immediate deploy trigger can race it
-	// ("Service Instance not found", and during degradation windows even a
-	// transient "Not Authorized", both observed live 2026-08-30). Retry with
-	// patience; the horizon covers observed degradation, not just the race.
-	var deployErr error
-	for attempt := 0; attempt < 6; attempt++ {
-		if _, deployErr = client.DeployServiceInstance(svc.ID, envID); deployErr == nil {
-			break
-		}
-		time.Sleep(5 * time.Second)
+	// Read-your-writes before rolling out. Railway commits variables, placement
+	// and the volume attach asynchronously; a deployment triggered while a
+	// commit is still in flight gets superseded (REMOVED) the moment the
+	// reconciler applies it — one railctl trigger, two deployments (observed
+	// live 2026-09-04). Instead of sleeping a fixed guess, poll until every
+	// staged write reads back (region + volume mount from the environment
+	// config, variables from the variables read) — the typical case settles in
+	// seconds. If the deadline passes unconfirmed, fall back to the fixed
+	// settle and proceed: an unverified commit is better waited for than
+	// raced, and --await's supersede-following stays the net.
+	exp := ConfigExpectations{
+		ServiceID: svc.ID,
+		RegionID:  regionID,
+		VolumeID:  volumeID,
+		MountPath: cfg.Volume.MountPath,
+		Variables: cfg.Variables,
 	}
-	if deployErr != nil {
-		return fmt.Errorf("triggering initial deployment: %w", deployErr)
+	if AwaitConfigCommitted(client, projectID, envID, exp) {
+		fmt.Fprintf(w, "  Staged changes confirmed\n")
+	} else {
+		fmt.Fprintf(w, "  Settling staged changes...\n")
+		time.Sleep(SettleDelay)
+	}
+
+	// Attach the source and roll out in ONE request — for every create,
+	// region-pinned or not. Two separate triggers each produced a second
+	// Railway deployment: serviceCreate with a source rolled out implicitly
+	// and the explicit trigger then superseded it (REMOVED; regionless path,
+	// observed live 2026-09-04), and a deploy racing the source commit's
+	// propagation was superseded by Railway's own reconciliation (region path,
+	// observed live 2026-09-03/04). One request carrying both fields executes
+	// them in series server-side: exactly one deployment, born after all
+	// config. The source-less create deploys nothing implicitly, so this is
+	// the only rollout.
+	//
+	// A created service MUST end up with a deployment even if it later
+	// crashes: a service with zero deployments is a systemic failure, not an
+	// unhealthy deploy, and --await would have nothing to wait on.
+	var deploymentID string
+	if cfg.Image != "" {
+		deploymentID, err = deployWithRetry(w, func() (string, error) {
+			return client.AttachSourceAndDeploy(svc.ID, envID, cfg.Image, creds)
+		})
+	} else {
+		// Nothing to attach — trigger the bare rollout anyway.
+		deploymentID, err = deployWithRetry(w, func() (string, error) {
+			return client.DeployServiceInstance(svc.ID, envID)
+		})
+	}
+	if err != nil {
+		return "", fmt.Errorf("triggering initial deployment: %w", err)
 	}
 
 	fmt.Fprintf(w, "✓ Service '%s' created\n", name)
-	return nil
+	return deploymentID, nil
+}
+
+// deployWithRetry triggers a deployment with patience for Railway's async
+// service-instance materialization: an immediate trigger can race it ("Service
+// Instance not found", and during degradation windows even a transient "Not
+// Authorized", both observed live 2026-08-30). A retried trigger that was
+// accepted server-side but failed client-side supersedes its own orphaned
+// deployment, so every retry is logged — a double deployment must be visible
+// when it happens.
+func deployWithRetry(w io.Writer, trigger func() (string, error)) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 6; attempt++ {
+		deploymentID, err := trigger()
+		if err == nil {
+			return deploymentID, nil
+		}
+		lastErr = err
+		if attempt < 6 {
+			fmt.Fprintf(w, "  deploy trigger failed (attempt %d/6): %v; retrying in 5s\n", attempt, err)
+			time.Sleep(5 * time.Second)
+		}
+	}
+	return "", lastErr
 }
 
 // reconcileCustomDomains creates absent declared domains (printing DNS) and
@@ -301,13 +412,17 @@ func PrintCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
 }
 
 // applyUpdate handles a single ChangeUpdate operation.
-func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, services []types.ServiceDetail, w io.Writer) error {
+// applyUpdate handles a single ChangeUpdate operation. It returns the region
+// the service's volume is migrating to when the update changed a region on a
+// volume-backed service ("" otherwise), so --await can follow the volume
+// instead of Railway's unreliable move-deployment.
+func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, services []types.ServiceDetail, w io.Writer) (string, error) {
 	name := rc.ServiceName
 	cfg := configMap[name]
 
 	serviceID, err := findServiceID(services, name)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	fmt.Fprintf(w, "Updating service '%s'...\n", name)
@@ -327,7 +442,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			image = newImage
 		}
 		if err := client.UpdateServiceInstance(serviceID, envID, image, creds); err != nil {
-			return fmt.Errorf("updating image/registry credentials: %w", err)
+			return "", fmt.Errorf("updating image/registry credentials: %w", err)
 		}
 	}
 
@@ -339,7 +454,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	live := findServiceDetail(services, name)
 	region, replicasOverride, err := resolveApplyRegion(cfg, live, deployFields)
 	if err != nil {
-		return fmt.Errorf("resolving region: %w", err)
+		return "", fmt.Errorf("resolving region: %w", err)
 	}
 
 	if len(deployFields) > 0 {
@@ -348,10 +463,14 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			replicas = nil // region write owns per-region replicas
 		}
 		if err := client.UpdateServiceInstanceConfig(serviceID, envID, startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout); err != nil {
-			return fmt.Errorf("updating deploy config: %w", err)
+			return "", fmt.Errorf("updating deploy config: %w", err)
 		}
 	}
 
+	// A region change on a volume-backed service is a volume migration in
+	// flight (the apply-side --force guard already ran before this point) —
+	// remember it so --await follows the volume, not Railway's move-deployment.
+	migratedTo := ""
 	if region != nil {
 		n := 1
 		if replicasOverride != nil {
@@ -362,7 +481,44 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			current = live.MultiRegion
 		}
 		if err := commitRegion(client, envID, serviceID, *region, n, current); err != nil {
-			return fmt.Errorf("updating region: %w", err)
+			return "", fmt.Errorf("updating region: %w", err)
+		}
+		// Only a volume whose CURRENT region differs from the target actually
+		// migrates. A region write alone is not enough: a bare replicas change
+		// on a region-placed service also routes through the region map, and
+		// treating that as a migration would pay the multi-minute quiesce
+		// below for a placement that never moves (it timed out an e2e update
+		// at 3 minutes, observed 2026-09-07).
+		if vols, err := client.ListVolumes(projectID, envID); err == nil {
+			for _, v := range vols {
+				if v.ServiceID != nil && *v.ServiceID == serviceID {
+					if api.ShortRegionName(v.Region) != api.ShortRegionName(*region) {
+						migratedTo = *region
+					}
+					break
+				}
+			}
+		}
+
+		// A volume migration runs as the PRE-DEPLOY step of a rollout, and
+		// Railway refuses the cutover while another deployment is parked in a
+		// non-terminal state ("…deployment … is parked in INITIALIZING —
+		// cancel it or wait for it to settle", observed live 2026-09-07: an
+		// immediate explicit rollout raced Railway's own auto-rollout and
+		// deadlocked the migration). The dashboard's Deploy button works
+		// because a human clicks it when everything has already settled. This
+		// block performs the placement half of that sequence: verify the
+		// commit reads back; the deployment half (wait for quiet, then ONE
+		// rollout) happens in the shared tail below, which runs for any
+		// update that changed a region with a volume even when nothing else
+		// needs a deploy.
+		if migratedTo != "" {
+			if AwaitConfigCommitted(client, projectID, envID, ConfigExpectations{ServiceID: serviceID, RegionID: *region}) {
+				fmt.Fprintf(w, "  Placement confirmed\n")
+			} else {
+				fmt.Fprintf(w, "  Settling placement...\n")
+				time.Sleep(SettleDelay)
+			}
 		}
 	}
 
@@ -374,12 +530,12 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			realVars[k] = cfg.Variables[k]
 		}
 		if err := client.SetVariables(projectID, envID, serviceID, realVars, true); err != nil {
-			return fmt.Errorf("setting variables: %w", err)
+			return "", fmt.Errorf("setting variables: %w", err)
 		}
 	}
 	for _, varName := range varRemoved {
 		if err := client.DeleteVariable(projectID, envID, serviceID, varName); err != nil {
-			return fmt.Errorf("deleting variable %s: %w", varName, err)
+			return "", fmt.Errorf("deleting variable %s: %w", varName, err)
 		}
 	}
 
@@ -394,13 +550,13 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if backupSchedulesChanged {
 		instanceID, found, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
 		if err != nil {
-			return fmt.Errorf("resolving volume instance for backup schedules: %w", err)
+			return "", fmt.Errorf("resolving volume instance for backup schedules: %w", err)
 		}
 		if !found {
 			fmt.Fprintf(w, "  Warning: backup schedules not applied for '%s' (no volume yet): re-run 'apply' after the volume is created to set them\n", name)
 		} else {
 			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
-				return fmt.Errorf("setting backup schedules: %w", err)
+				return "", fmt.Errorf("setting backup schedules: %w", err)
 			}
 			if len(cfg.Volume.BackupSchedules) == 0 {
 				// Clearing schedules is destructive — warn and name what was removed.
@@ -419,7 +575,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if domainChanged {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
-			return fmt.Errorf("listing domains: %w", err)
+			return "", fmt.Errorf("listing domains: %w", err)
 		}
 
 		port := cfg.Networking.Domain.Port
@@ -430,7 +586,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			// removed on absence (reconcileCustomDomains only adds/updates).
 			for _, sd := range domains.ServiceDomains {
 				if err := client.DeleteServiceDomain(sd.ID); err != nil {
-					return fmt.Errorf("removing service domain %q: %w", sd.Domain, err)
+					return "", fmt.Errorf("removing service domain %q: %w", sd.Domain, err)
 				}
 				fmt.Fprintf(w, "  ✓ removed domain %s\n", sd.Domain)
 			}
@@ -438,7 +594,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			sd := domains.ServiceDomains[0]
 			if sd.TargetPort == nil || *sd.TargetPort != port {
 				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
-					return fmt.Errorf("setting domain port: %w", err)
+					return "", fmt.Errorf("setting domain port: %w", err)
 				}
 			}
 		case len(domains.CustomDomains) > 0:
@@ -446,12 +602,12 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			cd := domains.CustomDomains[0]
 			if cd.TargetPort == nil || *cd.TargetPort != port {
 				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
-					return fmt.Errorf("setting custom domain port: %w", err)
+					return "", fmt.Errorf("setting custom domain port: %w", err)
 				}
 			}
 		default:
 			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
-				return fmt.Errorf("creating domain: %w", err)
+				return "", fmt.Errorf("creating domain: %w", err)
 			}
 		}
 	}
@@ -467,10 +623,10 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if customDomainChanged && len(cfg.Networking.CustomDomains) > 0 {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
-			return fmt.Errorf("listing domains: %w", err)
+			return "", fmt.Errorf("listing domains: %w", err)
 		}
 		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, domains.CustomDomains, w); err != nil {
-			return err
+			return "", err
 		}
 	}
 
@@ -480,7 +636,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if tcpChanged {
 		existingProxies, err := client.ListTCPProxies(envID, serviceID)
 		if err != nil {
-			return fmt.Errorf("listing TCP proxies: %w", err)
+			return "", fmt.Errorf("listing TCP proxies: %w", err)
 		}
 
 		// Delete any existing proxy that doesn't match the desired port
@@ -488,7 +644,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		for _, tp := range existingProxies {
 			if tp.ApplicationPort != cfg.Networking.TCPProxy.Port {
 				if err := client.DeleteTCPProxy(tp.ID); err != nil {
-					return fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
+					return "", fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
 				}
 				if cfg.Networking.TCPProxy.Port == 0 {
 					fmt.Fprintf(w, "  ✓ removed TCP proxy (port %d)\n", tp.ApplicationPort)
@@ -507,21 +663,61 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			}
 			if !proxyExists {
 				if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
-					return fmt.Errorf("creating TCP proxy: %w", err)
+					return "", fmt.Errorf("creating TCP proxy: %w", err)
 				}
 			}
 		}
 	}
 
 	// Roll out the staged changes (applyCreate rolls out its own explicitly).
-	if needsDeploy {
+	// Read-your-writes first, same reasoning as applyCreate: Railway commits
+	// the image/source, placement and variable writes above asynchronously,
+	// and a deployment triggered while one is still in flight gets superseded
+	// (REMOVED) when the reconciler applies it. Verify what this update
+	// staged; on deadline fall back to the fixed settle rather than racing.
+	// A volume migration additionally needs QUIET before its rollout: the
+	// migration is the rollout's pre-deploy step and Railway refuses the
+	// cutover while any deployment is parked, so wait for nothing to be in
+	// flight and then trigger exactly ONE rollout to carry the move. A
+	// region-only change on a volume-backed service enters here purely for
+	// that migration rollout (needsDeploy is false without it).
+	if needsDeploy || migratedTo != "" {
+		exp := ConfigExpectations{
+			ServiceID: serviceID,
+			Variables: make(map[string]string, len(varAdded)),
+		}
+		for k := range varAdded {
+			exp.Variables[k] = cfg.Variables[k] // diff fields mask secrets; config holds the real values
+		}
+		if region != nil {
+			exp.RegionID = *region
+		}
+		if imageChanged {
+			exp.SourceImage = newImage
+		}
+		if AwaitConfigCommitted(client, projectID, envID, exp) {
+			fmt.Fprintf(w, "  Staged changes confirmed\n")
+		} else {
+			fmt.Fprintf(w, "  Settling staged changes...\n")
+			time.Sleep(SettleDelay)
+		}
+		if migratedTo != "" {
+			if api.AwaitDeploymentsSettled(client, projectID, envID, serviceID, QuiesceTimeout, QuiescePoll) {
+				fmt.Fprintf(w, "  No deployments in flight\n")
+			} else {
+				fmt.Fprintf(w, "  Warning: deployments still in flight; deploying anyway (Railway may refuse the volume migration)\n")
+			}
+		}
 		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
-			return fmt.Errorf("triggering deployment: %w", err)
+			return "", fmt.Errorf("triggering deployment: %w", err)
+		}
+		if migratedTo != "" {
+			fmt.Fprintf(w, "  Migration rollout triggered\n")
 		}
 	}
 
 	fmt.Fprintf(w, "✓ Service '%s' updated\n", name)
-	return nil
+	return migratedTo, nil
 }
 
 // applyDelete handles a single ChangeDelete operation.
@@ -575,13 +771,26 @@ func findServiceVolumeInstanceID(client api.APIClient, projectID, envID, service
 	return "", false, nil
 }
 
+// volumeInstanceAttempts and volumeInstancePoll bound the wait for a freshly
+// created volume's INSTANCE to become listable. Railway materializes the
+// instance asynchronously and only the instance carries backup schedules, so a
+// too-eager lookup fails the whole apply with "volume instance not found"
+// (observed live 2026-09-07, e2e TestBackupSchedules). The previous 3 attempts
+// with a 0s/1s/2s backoff gave up after ~3s; the e2e harness polls the same
+// propagation up to 30 times, so match that horizon. Vars, not consts, so
+// tests can shrink the wait.
+var (
+	volumeInstanceAttempts = 30
+	volumeInstancePoll     = 2 * time.Second
+)
+
 // findVolumeInstanceIDByVolume returns the instance ID for a volume ID,
-// retrying to absorb propagation lag right after a volume is created.
+// polling to absorb propagation lag right after a volume is created.
 func findVolumeInstanceIDByVolume(client api.APIClient, projectID, envID, volumeID string) (string, error) {
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < volumeInstanceAttempts; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * time.Second)
+			time.Sleep(volumeInstancePoll)
 		}
 		volumes, err := client.ListVolumes(projectID, envID)
 		if err != nil {

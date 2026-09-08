@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kubenoops/railctl/internal/apply"
 	"github.com/spf13/cobra"
 )
 
@@ -311,6 +312,14 @@ func TestMain(m *testing.M) {
 	// Disable Cobra's automatic error handling for tests
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
+
+	// Zero the post-staging settle wait (apply.SettleDelay): it exists to give
+	// Railway's async config commits time to land before a rollout, which is
+	// meaningless against mocks and would otherwise add it to every
+	// create-service test. Same for the migration quiesce wait.
+	apply.SettleDelay = 0
+	apply.QuiesceTimeout = 0
+	apply.QuiescePoll = 0
 
 	code := m.Run()
 	os.Exit(code)

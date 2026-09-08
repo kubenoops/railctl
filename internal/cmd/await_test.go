@@ -85,6 +85,56 @@ func TestAwaitDeployment_DeploymentNotFound(t *testing.T) {
 	}
 }
 
+// REMOVED with a strictly newer deployment present means the tracked rollout
+// was superseded — await must follow the replacement, not fail. This is the
+// live failure mode where Railway's reconciliation supersedes railctl's own
+// deploy trigger (observed 2026-09-03).
+func TestAwaitDeployment_FollowsSupersedingDeployment(t *testing.T) {
+	callCount := 0
+	base := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	client := &api.MockClient{
+		ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {
+			callCount++
+			replacementStatus := "BUILDING"
+			if callCount > 1 {
+				replacementStatus = "SUCCESS"
+			}
+			return []api.Deployment{
+				{ID: "dep-new1", Status: replacementStatus, CreatedAt: base.Add(10 * time.Second)},
+				{ID: "dep-123", Status: "REMOVED", CreatedAt: base},
+			}, nil
+		},
+	}
+
+	err := awaitDeployment(client, "proj-1", "env-1", "svc-1", "dep-123", "api", 600)
+	if err != nil {
+		t.Errorf("expected await to follow the superseding deployment, got: %v", err)
+	}
+}
+
+// REMOVED with nothing newer to follow is a genuine failure — and an OLDER
+// SUCCESS deployment must never be re-targeted (that would report success on
+// a stale roll).
+func TestAwaitDeployment_RemovedWithoutNewerDeployment(t *testing.T) {
+	base := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)
+	client := &api.MockClient{
+		ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {
+			return []api.Deployment{
+				{ID: "dep-old", Status: "SUCCESS", CreatedAt: base.Add(-10 * time.Second)},
+				{ID: "dep-123", Status: "REMOVED", CreatedAt: base},
+			}, nil
+		},
+	}
+
+	err := awaitDeployment(client, "proj-1", "env-1", "svc-1", "dep-123", "api", 600)
+	if err == nil {
+		t.Error("expected error when a removed deployment has no newer replacement")
+	}
+	if !strings.Contains(err.Error(), "REMOVED") {
+		t.Errorf("expected REMOVED in error, got: %v", err)
+	}
+}
+
 func TestAwaitDeployment_Timeout(t *testing.T) {
 	client := &api.MockClient{
 		ListDeploymentsFunc: func(projectID, environmentID, serviceID string, limit int) ([]api.Deployment, error) {

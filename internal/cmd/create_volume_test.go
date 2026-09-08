@@ -64,7 +64,7 @@ func TestRunCreateVolume_Success(t *testing.T) {
 					{ID: "svc-1", Name: "api"},
 				}, nil
 			},
-			CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string) (api.Volume, error) {
+			CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string, _ string) (api.Volume, error) {
 				capturedPath = mountPath
 				return api.Volume{
 					ID:   "vol-1",
@@ -122,7 +122,7 @@ func TestRunCreateVolume_RenamesWhenNameMismatch(t *testing.T) {
 					{ID: "svc-1", Name: "api"},
 				}, nil
 			},
-			CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string) (api.Volume, error) {
+			CreateVolumeFunc: func(projectID, environmentID, serviceID, mountPath string, _ string) (api.Volume, error) {
 				// Railway returns a random name, not the user's name.
 				return api.Volume{
 					ID:   "vol-1",

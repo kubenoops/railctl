@@ -74,16 +74,40 @@ func TestResolveApplyRegion(t *testing.T) {
 }
 
 // REQ-APL-001/007: apply create with deploy.region writes multiRegionConfig.
+// The service is created EMPTY (no source) and the image is attached after
+// placement — serviceCreate with a source deploys immediately in the default
+// region, so the region patch then forces a volume migration (observed live:
+// in-flight deployment REMOVED, "Migrating volume..."). Nothing physical may
+// be born in the wrong region.
 func TestApply_CreateWithRegion(t *testing.T) {
 	var capRegion *string
+	var createImage *string
+	var sourceImage *string
+	deployed := false
 	mock := &api.MockClient{
-		CreateServiceFunc: func(_, _, name, _ string, _ *api.RegistryCredentials) (types.Service, error) {
+		CreateServiceFunc: func(_, _, name, image string, _ *api.RegistryCredentials) (types.Service, error) {
+			createImage = &image
 			return types.Service{ID: "svc-1", Name: name}, nil
+		},
+		// Source attach + rollout arrive as ONE call on the region path.
+		AttachSourceAndDeployFunc: func(_, _, image string, _ *api.RegistryCredentials) (string, error) {
+			sourceImage = &image
+			deployed = true
+			return "dep-1", nil
+		},
+		// Read-your-writes: the environment config echoes the placement the
+		// apply staged, so verification confirms instead of falling back to
+		// the settle sleep.
+		GetEnvironmentConfigFunc: func(string) (string, error) {
+			return `{"services":{"svc-1":{"deploy":{"multiRegionConfig":{"us-west2":{"numReplicas":1}}}}}}`, nil
 		},
 		ListEnvironmentsFunc: func(string) ([]types.Environment, error) {
 			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
 		},
-		DeployServiceInstanceFunc: func(_, _ string) (string, error) { return "dep-1", nil },
+		DeployServiceInstanceFunc: func(_, _ string) (string, error) {
+			t.Error("a create with an image must roll out via AttachSourceAndDeploy, not a separate bare deploy")
+			return "dep-x", nil
+		},
 		CommitMultiRegionConfigFunc: func(_, _ string, mrc map[string]any, _ string) error {
 			capRegion = regionFromMRC(mrc)
 			return nil
@@ -101,6 +125,91 @@ func TestApply_CreateWithRegion(t *testing.T) {
 	}
 	if capRegion == nil || *capRegion != "us-west2" {
 		t.Errorf("expected region write us-west2, got %v", capRegion)
+	}
+	if createImage == nil {
+		t.Error("CreateService was never called")
+	} else if *createImage != "" {
+		t.Errorf("region-pinned create must be source-less (empty image), got %q", *createImage)
+	}
+	if sourceImage == nil {
+		t.Error("the source was never attached after placement")
+	} else if *sourceImage != "nginx" {
+		t.Errorf("image must be attached after placement, got %q", *sourceImage)
+	}
+	if !deployed {
+		t.Error("an empty-created service must be deployed explicitly")
+	}
+	// --await must be able to follow the deployment railctl triggered, not a
+	// re-fetched snapshot (which can serve a superseded ID right after the
+	// trigger).
+	if result.DeploymentIDs["web"] != "dep-1" {
+		t.Errorf("expected DeploymentIDs[web]=dep-1, got %q", result.DeploymentIDs["web"])
+	}
+}
+
+// REQ-APL-007: a region-pinned create with a declared volume provisions the
+// volume IN the target region (volumeCreate carries region) — the volume is
+// never born in the default region, so no migration ever runs. Ordering: empty
+// create → region commit → volume with region → source → deploy.
+func TestApply_CreateWithRegionAndVolumeOrder(t *testing.T) {
+	var seq []string
+	var volumeRegion *string
+	mock := &api.MockClient{
+		CreateServiceFunc: func(_, _, name, _ string, _ *api.RegistryCredentials) (types.Service, error) {
+			seq = append(seq, "create")
+			return types.Service{ID: "svc-1", Name: name}, nil
+		},
+		CommitMultiRegionConfigFunc: func(_, _ string, _ map[string]any, _ string) error {
+			seq = append(seq, "region")
+			return nil
+		},
+		CreateVolumeFunc: func(_, _, _, _ string, region string) (api.Volume, error) {
+			seq = append(seq, "volume")
+			volumeRegion = &region
+			return api.Volume{ID: "vol-1", Name: "data"}, nil
+		},
+		AttachSourceAndDeployFunc: func(_, _, _ string, _ *api.RegistryCredentials) (string, error) {
+			seq = append(seq, "source+deploy")
+			return "dep-1", nil
+		},
+		GetEnvironmentConfigFunc: func(string) (string, error) {
+			return `{"services":{"svc-1":{"deploy":{"multiRegionConfig":{"europe-west4-drams3a":{"numReplicas":1}}},"volumeMounts":{"vol-1":{"mountPath":"/var/lib/postgresql/data"}}}}}`, nil
+		},
+		ListEnvironmentsFunc: func(string) ([]types.Environment, error) {
+			return []types.Environment{{ID: "env-1", Name: "production"}}, nil
+		},
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeCreate, ServiceName: "db",
+		Fields: []diff.FieldDiff{
+			{Path: "image", Desired: "postgres:16"},
+			{Path: "deploy.region", Desired: "europe-west4"},
+			{Path: "volume.mountPath", Desired: "/var/lib/postgresql/data"},
+		},
+	}}}
+	configMap := map[string]config.ServiceConfig{"db": {
+		Name: "db", Image: "postgres:16",
+		Deploy: config.DeployConfig{Region: "europe-west4"},
+		Volume: config.VolumeConfig{MountPath: "/var/lib/postgresql/data"},
+	}}
+
+	result := Apply(mock, cs, "proj-1", "env-1", configMap, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	want := []string{"create", "region", "volume", "source+deploy"}
+	if len(seq) != len(want) {
+		t.Fatalf("call order = %v, want %v", seq, want)
+	}
+	for i := range want {
+		if seq[i] != want[i] {
+			t.Fatalf("call order = %v, want %v", seq, want)
+		}
+	}
+	if volumeRegion == nil {
+		t.Error("CreateVolume was never called")
+	} else if *volumeRegion != "europe-west4-drams3a" {
+		t.Errorf("volume must be created in the resolved full region ID, got %q", *volumeRegion)
 	}
 }
 

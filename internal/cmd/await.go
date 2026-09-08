@@ -19,6 +19,12 @@ var terminalStatuses = map[string]bool{
 // awaitDeployment polls the Railway API until the given deployment reaches
 // a terminal status (SUCCESS, FAILED, CRASHED, etc.).
 // It prints status transitions as they occur and respects the given timeout.
+//
+// A REMOVED deployment is not treated as a failure when a NEWER deployment
+// exists for the service: Railway removes in-flight deployments when a newer
+// rollout supersedes them (observed live 2026-09-03, railctl's deploy trigger
+// racing Railway's own reconciliation), so await re-targets the replacement
+// and keeps waiting. Only a removal with nothing newer to follow is an error.
 func awaitDeployment(client api.APIClient, projectID, environmentID, serviceID, deploymentID, serviceName string, timeoutSeconds int) error {
 	initialInterval := 5 * time.Second
 	maxInterval := 30 * time.Second
@@ -42,9 +48,11 @@ func awaitDeployment(client api.APIClient, projectID, environmentID, serviceID, 
 
 		// Find our deployment
 		var found bool
+		var trackedCreatedAt time.Time
 		for _, d := range deployments {
 			if d.ID == deploymentID {
 				found = true
+				trackedCreatedAt = d.CreatedAt
 				if d.Status != lastStatus {
 					if lastStatus != "" {
 						fmt.Printf("  %s → %s\n", lastStatus, d.Status)
@@ -66,6 +74,16 @@ func awaitDeployment(client api.APIClient, projectID, environmentID, serviceID, 
 							return fmt.Errorf("deployment %s %s for '%s': %s", shortID(deploymentID), d.Status, serviceName, errMsg)
 						}
 						return fmt.Errorf("deployment %s %s for '%s'", shortID(deploymentID), d.Status, serviceName)
+					case "REMOVED":
+						// Superseded? Follow the replacement instead of failing.
+						if replacement, ok := newestAfter(deployments, trackedCreatedAt); ok {
+							fmt.Printf("  %s superseded — following %s\n", shortID(deploymentID), shortID(replacement.ID))
+							deploymentID = replacement.ID
+							lastStatus = ""
+							pollInterval = initialInterval
+							break
+						}
+						return fmt.Errorf("deployment %s ended with status %s for '%s'", shortID(deploymentID), d.Status, serviceName)
 					default:
 						return fmt.Errorf("deployment %s ended with status %s for '%s'", shortID(deploymentID), d.Status, serviceName)
 					}
@@ -86,6 +104,25 @@ func awaitDeployment(client api.APIClient, projectID, environmentID, serviceID, 
 			pollInterval = maxInterval
 		}
 	}
+}
+
+// newestAfter returns the newest non-REMOVED deployment created strictly
+// after t. Only a strictly newer deployment can have superseded the tracked
+// one — an older one (e.g. a previous SUCCESS still in the recent window)
+// must never be re-targeted, or await would report success on a stale roll.
+func newestAfter(deployments []api.Deployment, t time.Time) (api.Deployment, bool) {
+	var best api.Deployment
+	var found bool
+	for _, d := range deployments {
+		if !d.CreatedAt.After(t) || d.Status == "REMOVED" {
+			continue
+		}
+		if !found || d.CreatedAt.After(best.CreatedAt) {
+			best = d
+			found = true
+		}
+	}
+	return best, found
 }
 
 // shortID returns the first 8 characters of an ID, or the full ID if shorter.

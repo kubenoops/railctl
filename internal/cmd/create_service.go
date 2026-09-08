@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kubenoops/railctl/internal/api"
+	"github.com/kubenoops/railctl/internal/apply"
 	"github.com/kubenoops/railctl/internal/cmdutil"
 	"github.com/kubenoops/railctl/internal/types"
 	"github.com/spf13/cobra"
@@ -168,8 +170,13 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create the service with image in the specified environment
-	svc, err := client.CreateService(ctx.Project.ID, ctx.Environment.ID, serviceName, serviceImage, creds)
+	// The service is ALWAYS created source-less: serviceCreate with an image
+	// deploys immediately in the default region (forcing a volume migration
+	// when a region is pinned) and its implicit rollout races the config
+	// staged below. Instead: create empty, stage everything, then attach the
+	// source and roll out in one request at the end — exactly one deployment,
+	// fully configured.
+	svc, err := client.CreateService(ctx.Project.ID, ctx.Environment.ID, serviceName, "", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create service: %w", err)
 	}
@@ -219,6 +226,52 @@ func runCreateService(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+
+	// Read-your-writes before rolling out — same reasoning as apply's: Railway
+	// commits config asynchronously and supersedes a rollout that starts while
+	// a commit is still in flight (REMOVED deployment; observed live
+	// 2026-09-04). The imperative create stages only the placement (plus
+	// optional deploy-config flags), so verification is region-only; a
+	// regionless create has nothing readable to confirm and keeps the fixed
+	// settle. Unconfirmed past the deadline also falls back to the settle.
+	if resolvedRegion != "" {
+		exp := apply.ConfigExpectations{ServiceID: svc.ID, RegionID: resolvedRegion}
+		if apply.AwaitConfigCommitted(client, ctx.Project.ID, ctx.Environment.ID, exp) {
+			fmt.Println("Staged changes confirmed")
+		} else {
+			fmt.Println("Settling staged changes...")
+			time.Sleep(apply.SettleDelay)
+		}
+	} else {
+		fmt.Println("Settling staged changes...")
+		time.Sleep(apply.SettleDelay)
+	}
+
+	// Attach the source and roll out in ONE request — for every create,
+	// region-pinned or not. serviceCreate with a source rolls out implicitly
+	// and a separate trigger then supersedes it (REMOVED; one railctl
+	// trigger, two deployments — observed live 2026-09-03/04). One request
+	// carrying both fields executes them in series server-side: exactly one
+	// deployment, born after all config. Railway materializes the service
+	// instance asynchronously and an immediate trigger can race it ("Service
+	// Instance not found", observed live 2026-08-30 in apply), so retry with
+	// patience; retries are logged because a retried trigger accepted
+	// server-side but failed client-side supersedes its own orphaned
+	// deployment.
+	var deployErr error
+	for attempt := 1; attempt <= 6; attempt++ {
+		if _, deployErr = client.AttachSourceAndDeploy(svc.ID, ctx.Environment.ID, serviceImage, creds); deployErr == nil {
+			break
+		}
+		if attempt < 6 {
+			fmt.Printf("Deploy trigger failed (attempt %d/6): %v; retrying in 5s\n", attempt, deployErr)
+			time.Sleep(5 * time.Second)
+		}
+	}
+	if deployErr != nil {
+		return fmt.Errorf("failed to attach image and deploy: %w", deployErr)
+	}
+	fmt.Println("Deployment triggered")
 
 	return nil
 }
