@@ -265,7 +265,8 @@ wiring uses Railway references `${{service.VAR}}`.
 
 Never apply blind: **always run `diff` before `apply`** — interactively at the
 console _and_ in CI. It costs one command and shows exactly what is about to
-change (creates, field-level updates, prune deletions), with secrets masked.
+change (creates, field-level updates, prune deletions), with variable values
+masked by default (only safe-listed names like PORT show in clear).
 An apply whose diff you haven't read is an unreviewed change to production.
 
 ```bash
@@ -761,7 +762,7 @@ removed with `delete domain`, never silently on apply.)
 
 | Command                                                                                    | Does                                                                                           | Exit                                                                                             |
 | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `railctl diff -f <file-or-dir> [--prune] [--exit-code]`                                    | show create/update/delete deltas, secrets masked                                               | 0 even on drift (read the summary line); with `--exit-code`: 1 = changes, 0 = in sync, 2 = error |
+| `railctl diff -f <file-or-dir> [--prune] [--exit-code]`                                    | show create/update/delete deltas, variable values masked by default                            | 0 even on drift (read the summary line); with `--exit-code`: 1 = changes, 0 = in sync, 2 = error |
 | `railctl apply -f <file-or-dir> [--await] [--await-timeout N] [--dry-run] [--prune --yes]` | reconcile live state to the manifest                                                           | 0 = applied                                                                                      |
 | `railctl delete -f <file-or-dir> [--yes]`                                                  | delete exactly the **declared** services (reverse manifest order), then their declared volumes | 0 = done / cancelled                                                                             |
 
@@ -887,7 +888,7 @@ The service is created **in the target environment only**.
 ### Variables — service-scoped
 
 ```bash
-railctl get variables -s api                  # values masked; --show-values reveals
+railctl get variables -s api                  # values masked (safe-list aside); --show-values reveals
 railctl set variable KEY=VALUE [K2=V2 ...] -s api [--skip-deployment]
 railctl delete variable KEY -s api --yes
 ```
