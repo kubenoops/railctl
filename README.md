@@ -272,6 +272,10 @@ shells out to your local `ssh` binary — the container needs no sshd of its own
 You need a local `ssh` binary and an SSH key registered **once** with Railway at
 <https://railway.com/account/ssh-keys>. railctl does not manage keys;
 authentication is by your SSH key, not the token, so any token type works.
+`-i/--identity-file` offers only that key (`IdentitiesOnly=yes`). Use it if
+your ssh-agent holds keys registered to another Railway account: otherwise the
+relay may log you in as that account and reply "agent path temporarily
+unavailable" / "TUI not currently available", which looks like an outage.
 
 ```bash
 # Open an interactive shell in a service container (no command = shell)

@@ -84,7 +84,7 @@ func init() {
 	// service is a port spec (there is no `--`-delimited remote command).
 	portForwardCmd.Flags().SetInterspersed(true)
 	portForwardCmd.Flags().StringVarP(&pfIdentityFile, "identity-file", "i", "",
-		"SSH private key to use (default: your ~/.ssh default key or ssh-agent)")
+		"SSH private key to use; only this key is offered (default: your ~/.ssh default key or ssh-agent)")
 	portForwardCmd.Flags().StringVarP(&pfInstanceID, "deployment-instance", "d", "",
 		"Service instance id to target (advanced; skips the instance lookup)")
 	portForwardCmd.Flags().StringVar(&pfAddress, "address", "127.0.0.1",
@@ -182,7 +182,7 @@ func runPortForward(cmd *cobra.Command, args []string) error {
 		var exitErr *sshx.ExitError
 		if errors.As(runErr, &exitErr) {
 			// A non-zero ssh exit that we did NOT initiate is often a
-			// publickey/permission failure. Surface the actionable key hint
+			// publickey/permission failure or a wrong-account key. Surface the actionable key hint
 			// after ssh's own error, then propagate the exit code.
 			fmt.Fprintln(os.Stderr, sshKeyHint)
 			os.Exit(exitErr.Code)

@@ -984,7 +984,14 @@ authenticates with it (agent / `~/.ssh` defaults, or the `-i` override).
 **Token scope: exec works with ANY token — account, workspace, OR project.** The
 token is used only to resolve the service instance; authentication is by your
 SSH key, not the token. If ssh fails with a publickey/permission error, register
-your key at the URL above and retry. See the design in
+your key at the URL above and retry. **`-i` offers ONLY that key** (railctl adds
+`-o IdentitiesOnly=yes`). This matters because the relay authenticates as
+whichever Railway account owns the first key it accepts: if your ssh-agent
+offers a key registered to a _different_ Railway account first, the relay
+answers `The agent path is temporarily unavailable` (with a command) or `Sorry
+Railway TUI not currently available` (interactive). That looks like an outage
+but is not: rerun with `-i <key registered to this project's account>`. See the
+design in
 `docs/designs/2026-07-09-railctl-exec-port-forward.md`.
 
 ### Port-forward — reach a service's ports over SSH (incl. private services)

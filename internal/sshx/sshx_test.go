@@ -54,6 +54,7 @@ func TestExecArgs(t *testing.T) {
 			opts: ExecOpts{InstanceID: "inst-123", IdentityFile: "/home/u/.ssh/id_ed25519", WantTTY: true},
 			want: []string{
 				"-i", "/home/u/.ssh/id_ed25519",
+				"-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-t",
 				"inst-123@ssh.railway.com",
@@ -64,6 +65,7 @@ func TestExecArgs(t *testing.T) {
 			opts: ExecOpts{InstanceID: "inst-9", IdentityFile: "/k", Command: []string{"whoami"}, WantTTY: false},
 			want: []string{
 				"-i", "/k",
+				"-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-T",
 				"inst-9@ssh.railway.com",

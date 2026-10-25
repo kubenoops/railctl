@@ -109,7 +109,8 @@ type ExecOpts struct {
 	// (the relay's routing key).
 	InstanceID string
 	// IdentityFile, when non-empty, is passed to ssh via -i (a specific
-	// private key). Empty lets ssh/agent present the default key.
+	// private key) with IdentitiesOnly=yes, so it is the only key offered.
+	// Empty lets ssh/agent present the default key.
 	IdentityFile string
 	// Command is the remote command and its args. Empty/nil means an
 	// interactive shell.
@@ -123,7 +124,8 @@ type ExecOpts struct {
 // order:
 //
 //	[-p <port>]  (only when the relay port is non-default)
-//	[-i <identityFile>]
+//	[-i <identityFile> -o IdentitiesOnly=yes]
+//	-o StrictHostKeyChecking=accept-new
 //	-t | -T
 //	<instanceID>@ssh.railway.com
 //	[-- <cmd> [args...]]   (each command token shell-quoted, see below)
@@ -194,14 +196,19 @@ func shellQuote(s string) string {
 }
 
 // baseArgs emits the relay port (only when non-default) and the identity file
-// (when set), shared by every ssh mode so the setup can't drift.
+// plus IdentitiesOnly=yes (when set), shared by every ssh mode so the setup can't drift.
 func baseArgs(identityFile string) []string {
 	var args []string
 	if RelayPort != 22 {
 		args = append(args, "-p", strconv.Itoa(RelayPort))
 	}
 	if identityFile != "" {
-		args = append(args, "-i", identityFile)
+		// IdentitiesOnly=yes: offer ONLY this key, not the agent's keys first.
+		// The relay authenticates as whichever Railway account owns the first
+		// key it accepts; an agent key registered to a different account wins
+		// and the relay then rejects the project with a misleading "agent path
+		// temporarily unavailable" / "TUI not currently available" reply.
+		args = append(args, "-i", identityFile, "-o", "IdentitiesOnly=yes")
 	}
 	// StrictHostKeyChecking=accept-new: trust the relay on first contact
 	// (TOFU) while still rejecting a changed key. Matches Railway's posture.

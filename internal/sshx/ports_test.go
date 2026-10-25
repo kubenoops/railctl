@@ -116,6 +116,7 @@ func TestForwardArgs(t *testing.T) {
 			},
 			want: []string{
 				"-i", "/home/u/.ssh/id_ed25519",
+				"-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-N",
 				"-o", "ExitOnForwardFailure=yes",

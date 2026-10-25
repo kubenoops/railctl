@@ -109,7 +109,8 @@ type ForwardOpts struct {
 	// relay's routing key) — for the jump form this is the JUMP service's
 	// instance, whose netns the *.railway.internal names resolve inside.
 	InstanceID string
-	// IdentityFile, when non-empty, is passed to ssh via -i.
+	// IdentityFile, when non-empty, is passed to ssh via -i with
+	// IdentitiesOnly=yes, so it is the only key offered.
 	IdentityFile string
 	// Forwards is the set of -L forwards to establish over the one connection.
 	Forwards []PortForward
@@ -119,10 +120,11 @@ type ForwardOpts struct {
 }
 
 // ForwardArgs builds the exact `ssh` argv for a forward-only session,
-// byte-for-byte mirroring Railway's Rust CLI (native.rs:366-398). Flag order:
+// mirroring Railway's Rust CLI (native.rs:366-398) except that -i also implies
+// IdentitiesOnly=yes (see baseArgs). Flag order:
 //
 //	[-p <port>]  (only when the relay port is non-default)
-//	[-i <identityFile>]
+//	[-i <identityFile> -o IdentitiesOnly=yes]
 //	-o StrictHostKeyChecking=accept-new
 //	-N
 //	-o ExitOnForwardFailure=yes
@@ -131,9 +133,10 @@ type ForwardOpts struct {
 //	(-L <addr>:<local>:<host>:<remote>)...
 //	<instanceID>@ssh.railway.com
 //
-// baseArgs already emits [-p], [-i] and StrictHostKeyChecking=accept-new (the
-// -N-with-closed-stdin TOFU option); the forward-specific -N plus the
-// ExitOnForwardFailure/ServerAlive* options and the -L specs are appended here.
+// baseArgs already emits [-p], [-i + IdentitiesOnly] and
+// StrictHostKeyChecking=accept-new (the -N-with-closed-stdin TOFU option); the
+// forward-specific -N plus the ExitOnForwardFailure/ServerAlive* options and
+// the -L specs are appended here.
 func ForwardArgs(opts ForwardOpts) []string {
 	args := baseArgs(opts.IdentityFile)
 

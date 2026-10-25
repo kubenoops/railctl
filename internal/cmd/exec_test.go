@@ -172,3 +172,38 @@ func TestRunExec_ShortFlagTargetsInstance(t *testing.T) {
 		t.Errorf("-d value must be the ssh target: %v", runner.gotArgv)
 	}
 }
+
+// TestRunExec_IdentityFileOffersOnlyThatKey asserts -i reaches ssh together
+// with IdentitiesOnly=yes, so agent keys (possibly registered to a different
+// Railway account) are not offered ahead of it.
+func TestRunExec_IdentityFileOffersOnlyThatKey(t *testing.T) {
+	runner := &fakeRunner{}
+	client := execTestClient("instance-xyz")
+	restore := setExecEnv(t, client, runner)
+	defer restore()
+	execIdentityFile = "/home/u/.ssh/railway"
+
+	if err := runExec(execCmd, []string{"api"}); err != nil {
+		t.Fatalf("runExec error: %v", err)
+	}
+	joined := strings.Join(runner.gotArgv, " ")
+	if !strings.Contains(joined, "-i /home/u/.ssh/railway -o IdentitiesOnly=yes") {
+		t.Errorf("argv must pass -i with IdentitiesOnly=yes: %v", runner.gotArgv)
+	}
+}
+
+// TestSSHKeyHint_CoversWrongAccountRelayReplies asserts the failure hint
+// explains the relay's misleading wrong-account replies and points at -i.
+func TestSSHKeyHint_CoversWrongAccountRelayReplies(t *testing.T) {
+	for _, want := range []string{
+		"railway.com/account/ssh-keys",
+		"agent path temporarily unavailable",
+		"TUI not currently available",
+		"different Railway account",
+		"-i <key>",
+	} {
+		if !strings.Contains(sshKeyHint, want) {
+			t.Errorf("sshKeyHint missing %q:\n%s", want, sshKeyHint)
+		}
+	}
+}
