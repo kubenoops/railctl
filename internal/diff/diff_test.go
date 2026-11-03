@@ -315,6 +315,68 @@ func TestCompute_UpdateVolume(t *testing.T) {
 	}
 }
 
+func TestCompute_UndeclaredVolumeLeftAlone(t *testing.T) {
+	// A volume the manifest doesn't declare (e.g. added in the dashboard) is not
+	// shown as a removal: apply never deletes one.
+	desired := []config.ServiceConfig{{Name: "web", Image: "node:20"}}
+	live := []LiveService{{Name: "web", Image: "node:20", Volumes: []LiveVolume{{MountPath: "/data", SizeMB: 50000}}}}
+
+	if cs := Compute(desired, live, false); cs.HasChanges() {
+		t.Errorf("expected no changes, got %+v", cs.Changes)
+	}
+}
+
+func TestCompute_VolumeSize(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared int
+		live     []LiveVolume
+		want     *FieldDiff
+	}{
+		{name: "not declared", declared: 0, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}}},
+		{name: "matches", declared: 50000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}}},
+		{name: "grow", declared: 250000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}},
+			want: &FieldDiff{Path: "volume.sizeMB", Current: "50000", Desired: "250000"}},
+		{name: "shrink", declared: 5000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}},
+			want: &FieldDiff{Path: "volume.sizeMB", Current: "50000", Desired: "5000"}},
+		{name: "no volume yet", declared: 250000,
+			want: &FieldDiff{Path: "volume.sizeMB", Desired: "250000"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := []config.ServiceConfig{{Name: "web", Image: "node:20", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: tt.declared}}}
+			live := []LiveService{{Name: "web", Image: "node:20", Volumes: tt.live}}
+
+			var got *FieldDiff
+			for _, rc := range Compute(desired, live, false).Changes {
+				for i, f := range rc.Fields {
+					if f.Path == "volume.sizeMB" {
+						got = &rc.Fields[i]
+					}
+				}
+			}
+			switch {
+			case tt.want == nil && got != nil:
+				t.Errorf("expected no volume.sizeMB diff, got %+v", *got)
+			case tt.want != nil && (got == nil || *got != *tt.want):
+				t.Errorf("volume.sizeMB diff = %+v, want %+v", got, *tt.want)
+			}
+		})
+	}
+}
+
+func TestCompute_CreateWithVolumeSize(t *testing.T) {
+	desired := []config.ServiceConfig{{Name: "web", Image: "node:20", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 250000}}}
+
+	cs := Compute(desired, nil, false)
+	for _, f := range cs.Changes[0].Fields {
+		if f.Path == "volume.sizeMB" && f.Desired == "250000" {
+			return
+		}
+	}
+	t.Errorf("create change should carry volume.sizeMB 250000, got %+v", cs.Changes[0].Fields)
+}
+
 func TestCompute_UpdateDomain(t *testing.T) {
 	desired := []config.ServiceConfig{
 		{

@@ -138,6 +138,7 @@ type LiveVolume struct {
 	MountPath        string
 	VolumeInstanceID string   // used for backup operations
 	BackupSchedules  []string // current schedule kinds (e.g. DAILY)
+	SizeMB           int
 }
 
 // sortedKinds returns a sorted copy so diffs are order-independent.
@@ -230,6 +231,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Desired: d.Volume.MountPath})
 		if len(d.Volume.BackupSchedules) > 0 {
 			fields = append(fields, FieldDiff{Path: "volume.backupSchedules", Desired: strings.Join(sortedKinds(d.Volume.BackupSchedules), ",")})
+		}
+		if d.Volume.SizeMB > 0 {
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Desired: fmt.Sprintf("%d", d.Volume.SizeMB)})
 		}
 	}
 
@@ -417,13 +421,30 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 	// Variables.
 	fields = append(fields, compareVariables(d.Variables, ls.Variables)...)
 
-	// Volume mount path.
-	liveMountPath := ""
+	// Volume mount path. A service without a volume block leaves its live
+	// volume alone (apply never deletes one), so only a declared path compares.
+	var liveVolume *LiveVolume
 	if len(ls.Volumes) > 0 {
-		liveMountPath = ls.Volumes[0].MountPath
+		liveVolume = &ls.Volumes[0]
 	}
-	if d.Volume.MountPath != liveMountPath {
+	liveMountPath := ""
+	if liveVolume != nil {
+		liveMountPath = liveVolume.MountPath
+	}
+	if d.Volume.MountPath != "" && d.Volume.MountPath != liveMountPath {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
+	}
+
+	// Volume size: only when declared. A volume that doesn't exist yet is
+	// created at the declared size.
+	if d.Volume.MountPath != "" && d.Volume.SizeMB > 0 {
+		liveSize := ""
+		if liveVolume != nil && liveVolume.SizeMB > 0 {
+			liveSize = fmt.Sprintf("%d", liveVolume.SizeMB)
+		}
+		if desired := fmt.Sprintf("%d", d.Volume.SizeMB); desired != liveSize {
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Current: liveSize, Desired: desired})
+		}
 	}
 
 	// Backup schedules: only for managed volumes (mountPath declared). The

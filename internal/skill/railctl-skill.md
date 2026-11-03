@@ -434,6 +434,7 @@ services:
     volume:
       mountPath: /app/data
       backupSchedules: [daily, weekly] # daily/weekly/monthly
+      sizeMB: 100000 # optional; only grows (Railway can't shrink a volume)
 
     variables:
       PORT: "3000"
@@ -779,7 +780,14 @@ removed with `delete domain`, never silently on apply.)
   declared `volume.mountPath` is a _managed volume_: omitting
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
   with an explicit warning naming what was removed. A service with no
-  `volume:` block is left untouched.
+  `volume:` block is left untouched (its live volume is never shown as a
+  removal). Declaring a volume on a service that has none **creates it** on
+  the next apply, with its schedules and `sizeMB`, then rolls the service out
+  once (after the resize: a resize during Railway's own attach rollout cancels
+  it and leaves nothing running).
+- **`volume.sizeMB` only grows.** Railway can't shrink a volume, so a declared
+  size below the live one **fails the apply** before anything is written. A
+  resize redeploys the service (brief downtime on a volume-backed service).
 - **`domain.port` and `tcpProxy.port` reconcile removal**: omitting the block
   and re-applying closes the port (railctl-generated public surface is fully
   declarative — this is how you un-expose a service). **`customDomains` are the
@@ -792,8 +800,9 @@ removed with `delete domain`, never silently on apply.)
   volume). It never deletes environments or projects, skips absent resources
   with a note, needs no `$env()` secrets, and prints an itemized plan before
   the `[y/N]` prompt.
-- Volumes **cannot change mountPath in place**; a deleted service **orphans**
-  its volume.
+- apply **refuses to move a live volume's mountPath** (fails, writes nothing):
+  run `railctl update volume <name> --mount-path <path>`, then apply. A deleted
+  service **orphans** its volume.
 
 ### Drift discipline — reconcile every imperative change
 

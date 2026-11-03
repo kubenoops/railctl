@@ -212,6 +212,72 @@ func TestClient_DeleteVolume_Failed(t *testing.T) {
 	}
 }
 
+// ResizeVolume commits {volumes:{<id>:{sizeMB:N}}} and returns the patch ID
+// from Railway's "commitChanges/<env>/<patch>" answer.
+func TestClient_ResizeVolume(t *testing.T) {
+	var vars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		json.Unmarshal(body, &req)
+		vars = req.Variables
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data": {"environmentPatchCommit": "commitChanges/env-1/patch-9"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	patchID, err := client.ResizeVolume("env-1", "vol-1", 250000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if patchID != "patch-9" {
+		t.Errorf("patchID = %q, want patch-9", patchID)
+	}
+	if vars["environmentId"] != "env-1" {
+		t.Errorf("environmentId = %v, want env-1", vars["environmentId"])
+	}
+	patch, _ := vars["patch"].(map[string]any)
+	vols, _ := patch["volumes"].(map[string]any)
+	entry, _ := vols["vol-1"].(map[string]any)
+	if entry["sizeMB"] != float64(250000) {
+		t.Errorf("patch missing volumes.vol-1.sizeMB:250000, got %v", patch)
+	}
+}
+
+func TestClient_GetEnvironmentPatchStatus(t *testing.T) {
+	var vars map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Variables map[string]any `json:"variables"`
+		}
+		json.Unmarshal(body, &req)
+		vars = req.Variables
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data": {"environmentPatch": {"status": "FAILED", "lastAppliedError": "The new size must be larger than the current size."}}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient("test-token")
+	client.apiURL = server.URL
+
+	st, err := client.GetEnvironmentPatchStatus("patch-9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if vars["id"] != "patch-9" {
+		t.Errorf("id = %v, want patch-9", vars["id"])
+	}
+	if st.Status != "FAILED" || st.LastAppliedError != "The new size must be larger than the current size." {
+		t.Errorf("got %+v", st)
+	}
+}
+
 func TestClient_UpdateVolumeName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

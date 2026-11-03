@@ -81,6 +81,9 @@ type VolumeConfig struct {
 	MountPath string `yaml:"mountPath,omitempty"`
 	// BackupSchedules: daily/weekly/monthly (case-insensitive), reconciled to match.
 	BackupSchedules []string `yaml:"backupSchedules,omitempty"`
+	// SizeMB is the volume's maximum size. Railway only grows volumes, so a
+	// declared size below the live one is refused at apply.
+	SizeMB int `yaml:"sizeMB,omitempty"`
 }
 
 // RegistryConfig holds private registry credentials.
@@ -411,6 +414,13 @@ func Validate(cfg *Config) error {
 			if len(invalid) == 0 {
 				cfg.Services[i].Volume.BackupSchedules = normalized
 			}
+		}
+
+		if svc.Volume.SizeMB < 0 {
+			errs = append(errs, fmt.Sprintf("%s: volume.sizeMB must be > 0, got %d", prefix, svc.Volume.SizeMB))
+		}
+		if svc.Volume.SizeMB > 0 && svc.Volume.MountPath == "" {
+			errs = append(errs, fmt.Sprintf("%s: volume.sizeMB requires volume.mountPath to be set", prefix))
 		}
 	}
 

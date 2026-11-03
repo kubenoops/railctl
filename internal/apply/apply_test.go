@@ -3,6 +3,7 @@ package apply
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -1048,24 +1049,279 @@ func TestApply_UpdateNetworkingWithRegistryDoesNotStageOrDeploy(t *testing.T) {
 	}
 }
 
-func TestApply_UpdateNoDeployForVolumeOnly(t *testing.T) {
-	// The volume branch only warns and stages nothing, so a volume-only diff must
-	// not redeploy (it would never converge and churn forever).
-	deployCalled := false
+func TestApply_UpdateRefusesMountPathMove(t *testing.T) {
+	// Moving a live volume fails the update before anything is written, even
+	// with other changes in the same diff.
+	var writes []string
 	mock := &api.MockClient{
 		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
 			return []types.ServiceDetail{{ID: "svc-1", Name: "db"}}, nil
 		},
-		DeployServiceInstanceFunc: func(s, e string) (string, error) { deployCalled = true; return "dep-1", nil },
+		UpdateServiceInstanceFunc: func(s, e, image string, creds *api.RegistryCredentials) error {
+			writes = append(writes, "image")
+			return nil
+		},
+		CreateVolumeFunc: func(p, e, s, m, r string) (api.Volume, error) {
+			writes = append(writes, "volume")
+			return api.Volume{ID: "vol-2"}, nil
+		},
+		DeployServiceInstanceFunc: func(s, e string) (string, error) {
+			writes = append(writes, "deploy")
+			return "dep-1", nil
+		},
 	}
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
 		Type: diff.ChangeUpdate, ServiceName: "db",
-		Fields: []diff.FieldDiff{{Path: "volume.mountPath", Current: "/old", Desired: "/data"}},
+		Fields: []diff.FieldDiff{
+			{Path: "image", Current: "postgres:15", Desired: "postgres:16"},
+			{Path: "volume.mountPath", Current: "/old", Desired: "/data"},
+		},
 	}}}
-	cfg := map[string]config.ServiceConfig{"db": {Name: "db", Image: "postgres:16"}}
-	Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
-	if deployCalled {
-		t.Error("volume-only change must not trigger a deploy (nothing is staged)")
+	cfg := map[string]config.ServiceConfig{"db": {Name: "db", Image: "postgres:16", Volume: config.VolumeConfig{MountPath: "/data"}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "mounted at /old") {
+		t.Fatalf("expected a mount path error, got %v", result.Errors)
+	}
+	if len(writes) != 0 {
+		t.Errorf("a refused update must write nothing, got %v", writes)
+	}
+}
+
+// updatedServiceMock serves one live service "web" in region europe-west4 and
+// the given volumes; tests add the write funcs they assert on.
+func updatedServiceMock(volumes []api.VolumeInstance) *api.MockClient {
+	return &api.MockClient{
+		ListServicesFunc: func(p, e string) ([]types.ServiceDetail, error) {
+			return []types.ServiceDetail{{ID: "svc-1", Name: "web"}}, nil
+		},
+		ListVolumesFunc: func(p, e string) ([]api.VolumeInstance, error) { return volumes, nil },
+	}
+}
+
+func TestApply_UpdateCreatesMissingVolume(t *testing.T) {
+	svcID := "svc-1"
+	var created []string
+	deploys := 0
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.CreateVolumeFunc = func(p, e, s, mountPath, region string) (api.Volume, error) {
+		created = append(created, s, mountPath, region)
+		return api.Volume{ID: "vol-1"}, nil
+	}
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) { deploys++; return "dep-1", nil }
+
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.mountPath", Desired: "/data"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data"}}}
+	var out bytes.Buffer
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: &out})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	// No region declared: Railway places the volume beside the service.
+	if strings.Join(created, "|") != "svc-1|/data|" {
+		t.Errorf("CreateVolume(service, mountPath, region) = %v", created)
+	}
+	// Railway's own attach rollout can be cancelled by a later volume patch,
+	// so apply rolls out once itself and --await follows that deployment.
+	if deploys != 1 || result.DeploymentIDs["web"] != "dep-1" {
+		t.Errorf("deploys = %d, DeploymentIDs = %v; want one rollout recorded as dep-1", deploys, result.DeploymentIDs)
+	}
+	if !strings.Contains(out.String(), "volume created at /data") {
+		t.Errorf("output should report the new volume:\n%s", out.String())
+	}
+}
+
+func TestApply_UpdateCreatesVolumeInDeclaredRegion(t *testing.T) {
+	var gotRegion string
+	mock := updatedServiceMock(nil)
+	mock.CreateVolumeFunc = func(p, e, s, m, region string) (api.Volume, error) {
+		gotRegion = region
+		return api.Volume{ID: "vol-1"}, nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.mountPath", Desired: "/data"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {
+		Name:   "web",
+		Deploy: config.DeployConfig{Region: "europe-west4"},
+		Volume: config.VolumeConfig{MountPath: "/data"},
+	}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	want, _ := api.ResolveRegionID("europe-west4")
+	if gotRegion != want {
+		t.Errorf("volume region = %q, want %q", gotRegion, want)
+	}
+}
+
+func TestApply_UpdateCreatesVolumeWithSizeAndSchedules(t *testing.T) {
+	svcID := "svc-1"
+	var resized []any
+	var scheduledOn string
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.CreateVolumeFunc = func(p, e, s, m, r string) (api.Volume, error) { return api.Volume{ID: "vol-1"}, nil }
+	mock.ResizeVolumeFunc = func(e, volumeID string, sizeMB int) (string, error) {
+		resized = append(resized, volumeID, sizeMB)
+		return "patch-1", nil
+	}
+	mock.SetVolumeBackupSchedulesFunc = func(instanceID string, kinds []string) error {
+		scheduledOn = instanceID
+		return nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{
+			{Path: "volume.mountPath", Desired: "/data"},
+			{Path: "volume.backupSchedules", Desired: "DAILY"},
+			{Path: "volume.sizeMB", Desired: "250000"},
+		},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {
+		Name:   "web",
+		Volume: config.VolumeConfig{MountPath: "/data", BackupSchedules: []string{"DAILY"}, SizeMB: 250000},
+	}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if len(resized) != 2 || resized[0] != "vol-1" || resized[1] != 250000 {
+		t.Errorf("ResizeVolume(volume, size) = %v, want [vol-1 250000]", resized)
+	}
+	if scheduledOn != "vi-1" {
+		t.Errorf("schedules set on %q, want vi-1 (the new volume's instance)", scheduledOn)
+	}
+}
+
+func TestApply_UpdateGrowsVolume(t *testing.T) {
+	svcID := "svc-1"
+	var calls []string
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.ResizeVolumeFunc = func(e, volumeID string, sizeMB int) (string, error) {
+		calls = append(calls, fmt.Sprintf("resize:%d", sizeMB))
+		return "patch-1", nil
+	}
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) {
+		calls = append(calls, "deploy")
+		return "dep-1", nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.sizeMB", Current: "50000", Desired: "250000"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 250000}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	// The rollout comes after Railway has applied the resize.
+	if got := strings.Join(calls, "|"); got != "resize:250000|deploy" {
+		t.Errorf("calls = %s, want resize:250000|deploy", got)
+	}
+}
+
+func TestApply_UpdateRefusesShrink(t *testing.T) {
+	resizeCalled := false
+	mock := updatedServiceMock(nil)
+	mock.ResizeVolumeFunc = func(e, v string, s int) (string, error) { resizeCalled = true; return "patch-1", nil }
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.sizeMB", Current: "250000", Desired: "50000"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 50000}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "only grow") {
+		t.Fatalf("expected a shrink refusal, got %v", result.Errors)
+	}
+	if resizeCalled {
+		t.Error("a shrink must not reach Railway")
+	}
+}
+
+func TestApply_UpdateResizeRefusedByRailway(t *testing.T) {
+	// The commit succeeds; only the patch reports the refusal.
+	svcID := "svc-1"
+	statuses := []string{"APPLYING", "FAILED"}
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.ResizeVolumeFunc = func(e, v string, s int) (string, error) { return "patch-1", nil }
+	mock.GetEnvironmentPatchStatusFunc = func(id string) (api.EnvironmentPatchStatus, error) {
+		st := statuses[0]
+		if len(statuses) > 1 {
+			statuses = statuses[1:]
+		}
+		return api.EnvironmentPatchStatus{Status: st, LastAppliedError: "plan limit reached"}, nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.sizeMB", Current: "50000", Desired: "2000000"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 2000000}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "plan limit reached") {
+		t.Fatalf("expected Railway's refusal to surface, got %v", result.Errors)
+	}
+}
+
+func TestApply_CreateServiceWithVolumeSize(t *testing.T) {
+	svcID := "svc-1"
+	tests := []struct {
+		name        string
+		sizeMB      int
+		wantCalls   string
+		wantWarning bool
+	}{
+		// Grown before the first rollout, so it deploys onto the full size.
+		{name: "above the default", sizeMB: 250000, wantCalls: "resize:250000|deploy"},
+		{name: "below the default", sizeMB: 5000, wantCalls: "deploy", wantWarning: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			mock := &api.MockClient{
+				CreateServiceFunc: func(p, e, name, image string, creds *api.RegistryCredentials) (types.Service, error) {
+					return types.Service{ID: svcID, Name: name}, nil
+				},
+				CreateVolumeFunc: func(p, e, s, m, r string) (api.Volume, error) { return api.Volume{ID: "vol-1"}, nil },
+				ListVolumesFunc: func(p, e string) ([]api.VolumeInstance, error) {
+					return []api.VolumeInstance{{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000}}, nil
+				},
+				ResizeVolumeFunc: func(e, v string, sizeMB int) (string, error) {
+					calls = append(calls, fmt.Sprintf("resize:%d", sizeMB))
+					return "patch-1", nil
+				},
+				AttachSourceAndDeployFunc: func(s, e, image string, creds *api.RegistryCredentials) (string, error) {
+					calls = append(calls, "deploy")
+					return "dep-1", nil
+				},
+			}
+			cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{Type: diff.ChangeCreate, ServiceName: "web"}}}
+			cfg := map[string]config.ServiceConfig{"web": {
+				Name: "web", Image: "nginx", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: tt.sizeMB},
+			}}
+			var out bytes.Buffer
+			result := Apply(mock, cs, "p", "e", cfg, Opts{Output: &out})
+			if len(result.Errors) != 0 {
+				t.Fatalf("unexpected errors: %v", result.Errors)
+			}
+			if got := strings.Join(calls, "|"); got != tt.wantCalls {
+				t.Errorf("calls = %s, want %s", got, tt.wantCalls)
+			}
+			if got := strings.Contains(out.String(), "can't shrink"); got != tt.wantWarning {
+				t.Errorf("shrink warning = %v, want %v:\n%s", got, tt.wantWarning, out.String())
+			}
+		})
 	}
 }
 

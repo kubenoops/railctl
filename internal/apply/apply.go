@@ -150,7 +150,7 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 	}
 
 	for _, rc := range updates {
-		migratedTo, err := applyUpdate(client, rc, projectID, envID, configMap, services, opts.Output)
+		migratedTo, depID, err := applyUpdate(client, rc, projectID, envID, configMap, services, opts.Output)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("update %s: %w", rc.ServiceName, err))
 			continue
@@ -158,6 +158,9 @@ func Apply(client api.APIClient, cs *diff.ChangeSet, projectID, envID string, co
 		result.Updated = append(result.Updated, rc.ServiceName)
 		if migratedTo != "" {
 			result.MigratedRegions[rc.ServiceName] = migratedTo
+		}
+		if depID != "" {
+			result.DeploymentIDs[rc.ServiceName] = depID
 		}
 	}
 
@@ -242,15 +245,8 @@ func applyCreate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			return "", fmt.Errorf("creating volume: %w", err)
 		}
 		volumeID = vol.ID
-		// Backup schedules on the new volume instance.
-		if len(cfg.Volume.BackupSchedules) > 0 {
-			instanceID, err := findVolumeInstanceIDByVolume(client, projectID, envID, vol.ID)
-			if err != nil {
-				return "", fmt.Errorf("resolving volume instance for backup schedules: %w", err)
-			}
-			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
-				return "", fmt.Errorf("setting backup schedules: %w", err)
-			}
+		if err := configureNewVolume(client, projectID, envID, vol.ID, cfg.Volume, w); err != nil {
+			return "", err
 		}
 	}
 
@@ -411,27 +407,37 @@ func PrintCustomDomainDNS(cd api.CustomDomain, w io.Writer) {
 	}
 }
 
-// applyUpdate handles a single ChangeUpdate operation.
 // applyUpdate handles a single ChangeUpdate operation. It returns the region
 // the service's volume is migrating to when the update changed a region on a
 // volume-backed service ("" otherwise), so --await can follow the volume
-// instead of Railway's unreliable move-deployment.
-func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, services []types.ServiceDetail, w io.Writer) (string, error) {
+// instead of Railway's unreliable move-deployment, and the ID of the
+// deployment it triggered ("" when none was needed).
+func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID string, configMap map[string]config.ServiceConfig, services []types.ServiceDetail, w io.Writer) (string, string, error) {
 	name := rc.ServiceName
 	cfg := configMap[name]
 
 	serviceID, err := findServiceID(services, name)
 	if err != nil {
-		return "", err
+		return "", "", err
+	}
+
+	// Checked before anything is written, so a refused change leaves the
+	// service untouched.
+	if err := checkVolumeChange(rc.Fields); err != nil {
+		return "", "", err
 	}
 
 	fmt.Fprintf(w, "Updating service '%s'...\n", name)
 
 	imageChanged, newImage, deployFields, varAdded, varRemoved, volumeChanged, backupSchedulesChanged, domainChanged, tcpChanged := extractFieldChanges(rc.Fields)
 
-	// Only staged changes need a deploy. Networking applies immediately and the
-	// volume branch stages nothing, so neither is included.
-	needsDeploy := imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0
+	// Only staged changes need a deploy; networking applies immediately. Railway
+	// redeploys on its own when a volume is attached or resized, but a resize
+	// committed during the attach rollout cancels it without a replacement
+	// (observed live 2026-11-03), so a volume change gets one rollout of ours
+	// once both have landed.
+	volumeResized := hasField(rc.Fields, "volume.sizeMB")
+	needsDeploy := imageChanged || len(deployFields) > 0 || len(varAdded) > 0 || len(varRemoved) > 0 || volumeChanged || volumeResized
 
 	// Creds are write-only, so re-assert them — but only when a deploy will roll
 	// them out (they're used at image-pull time), else they'd strand as pending.
@@ -442,7 +448,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			image = newImage
 		}
 		if err := client.UpdateServiceInstance(serviceID, envID, image, creds); err != nil {
-			return "", fmt.Errorf("updating image/registry credentials: %w", err)
+			return "", "", fmt.Errorf("updating image/registry credentials: %w", err)
 		}
 	}
 
@@ -454,7 +460,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	live := findServiceDetail(services, name)
 	region, replicasOverride, err := resolveApplyRegion(cfg, live, deployFields)
 	if err != nil {
-		return "", fmt.Errorf("resolving region: %w", err)
+		return "", "", fmt.Errorf("resolving region: %w", err)
 	}
 
 	if len(deployFields) > 0 {
@@ -463,7 +469,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			replicas = nil // region write owns per-region replicas
 		}
 		if err := client.UpdateServiceInstanceConfig(serviceID, envID, startCmd, restartPolicy, maxRetries, replicas, hcPath, hcTimeout); err != nil {
-			return "", fmt.Errorf("updating deploy config: %w", err)
+			return "", "", fmt.Errorf("updating deploy config: %w", err)
 		}
 	}
 
@@ -481,7 +487,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			current = live.MultiRegion
 		}
 		if err := commitRegion(client, envID, serviceID, *region, n, current); err != nil {
-			return "", fmt.Errorf("updating region: %w", err)
+			return "", "", fmt.Errorf("updating region: %w", err)
 		}
 		// Only a volume whose CURRENT region differs from the target actually
 		// migrates. A region write alone is not enough: a bare replicas change
@@ -530,33 +536,61 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			realVars[k] = cfg.Variables[k]
 		}
 		if err := client.SetVariables(projectID, envID, serviceID, realVars, true); err != nil {
-			return "", fmt.Errorf("setting variables: %w", err)
+			return "", "", fmt.Errorf("setting variables: %w", err)
 		}
 	}
 	for _, varName := range varRemoved {
 		if err := client.DeleteVariable(projectID, envID, serviceID, varName); err != nil {
-			return "", fmt.Errorf("deleting variable %s: %w", varName, err)
+			return "", "", fmt.Errorf("deleting variable %s: %w", varName, err)
 		}
 	}
 
-	// Volume changes.
+	// Volume: a mount path change here can only mean the service has none yet
+	// (checkVolumeChange refused moving one), so create it with its declared
+	// schedules and size. Otherwise grow the live one to the declared size.
+	createdVolumeID := ""
 	if volumeChanged {
-		fmt.Fprintf(w, "  Warning: volume changes detected for '%s' but volumes cannot be updated in place\n", name)
+		regionID := ""
+		if cfg.Deploy.Region != "" {
+			// Unset, Railway places the volume in the service's region.
+			if regionID, err = api.ResolveRegionID(cfg.Deploy.Region); err != nil {
+				return "", "", fmt.Errorf("resolving volume region: %w", err)
+			}
+		}
+		vol, err := client.CreateVolume(projectID, envID, serviceID, cfg.Volume.MountPath, regionID)
+		if err != nil {
+			return "", "", fmt.Errorf("creating volume: %w", err)
+		}
+		createdVolumeID = vol.ID
+		fmt.Fprintf(w, "  ✓ volume created at %s\n", cfg.Volume.MountPath)
+		if err := configureNewVolume(client, projectID, envID, vol.ID, cfg.Volume, w); err != nil {
+			return "", "", err
+		}
+	} else if hasField(rc.Fields, "volume.sizeMB") {
+		vi, found, err := findServiceVolume(client, projectID, envID, serviceID)
+		if err != nil {
+			return "", "", fmt.Errorf("resolving volume to resize: %w", err)
+		}
+		if !found {
+			return "", "", fmt.Errorf("resizing volume: no volume is attached to '%s'", name)
+		}
+		if err := growVolume(client, envID, vi.Volume.ID, cfg.Volume.SizeMB, w); err != nil {
+			return "", "", err
+		}
 	}
 
-	// Backup schedules apply immediately (no deploy needed). If the volume
-	// doesn't exist yet (in-place volume creation isn't supported — see above),
-	// warn instead of failing the whole update.
-	if backupSchedulesChanged {
-		instanceID, found, err := findServiceVolumeInstanceID(client, projectID, envID, serviceID)
+	// Backup schedules apply immediately (no deploy needed); a volume created
+	// above already got them.
+	if backupSchedulesChanged && createdVolumeID == "" {
+		vi, found, err := findServiceVolume(client, projectID, envID, serviceID)
 		if err != nil {
-			return "", fmt.Errorf("resolving volume instance for backup schedules: %w", err)
+			return "", "", fmt.Errorf("resolving volume instance for backup schedules: %w", err)
 		}
 		if !found {
 			fmt.Fprintf(w, "  Warning: backup schedules not applied for '%s' (no volume yet): re-run 'apply' after the volume is created to set them\n", name)
 		} else {
-			if err := client.SetVolumeBackupSchedules(instanceID, cfg.Volume.BackupSchedules); err != nil {
-				return "", fmt.Errorf("setting backup schedules: %w", err)
+			if err := client.SetVolumeBackupSchedules(vi.ID, cfg.Volume.BackupSchedules); err != nil {
+				return "", "", fmt.Errorf("setting backup schedules: %w", err)
 			}
 			if len(cfg.Volume.BackupSchedules) == 0 {
 				// Clearing schedules is destructive — warn and name what was removed.
@@ -575,7 +609,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if domainChanged {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
-			return "", fmt.Errorf("listing domains: %w", err)
+			return "", "", fmt.Errorf("listing domains: %w", err)
 		}
 
 		port := cfg.Networking.Domain.Port
@@ -586,7 +620,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			// removed on absence (reconcileCustomDomains only adds/updates).
 			for _, sd := range domains.ServiceDomains {
 				if err := client.DeleteServiceDomain(sd.ID); err != nil {
-					return "", fmt.Errorf("removing service domain %q: %w", sd.Domain, err)
+					return "", "", fmt.Errorf("removing service domain %q: %w", sd.Domain, err)
 				}
 				fmt.Fprintf(w, "  ✓ removed domain %s\n", sd.Domain)
 			}
@@ -594,7 +628,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			sd := domains.ServiceDomains[0]
 			if sd.TargetPort == nil || *sd.TargetPort != port {
 				if err := client.UpdateServiceDomainPort(sd.ID, sd.Domain, envID, serviceID, port); err != nil {
-					return "", fmt.Errorf("setting domain port: %w", err)
+					return "", "", fmt.Errorf("setting domain port: %w", err)
 				}
 			}
 		case len(domains.CustomDomains) > 0:
@@ -602,12 +636,12 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			cd := domains.CustomDomains[0]
 			if cd.TargetPort == nil || *cd.TargetPort != port {
 				if err := client.UpdateCustomDomainPort(cd.ID, envID, port); err != nil {
-					return "", fmt.Errorf("setting custom domain port: %w", err)
+					return "", "", fmt.Errorf("setting custom domain port: %w", err)
 				}
 			}
 		default:
 			if _, err := client.CreateServiceDomain(serviceID, envID, port); err != nil {
-				return "", fmt.Errorf("creating domain: %w", err)
+				return "", "", fmt.Errorf("creating domain: %w", err)
 			}
 		}
 	}
@@ -623,10 +657,10 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if customDomainChanged && len(cfg.Networking.CustomDomains) > 0 {
 		domains, err := client.ListDomains(projectID, envID, serviceID)
 		if err != nil {
-			return "", fmt.Errorf("listing domains: %w", err)
+			return "", "", fmt.Errorf("listing domains: %w", err)
 		}
 		if err := reconcileCustomDomains(client, projectID, envID, serviceID, cfg.Networking, domains.CustomDomains, w); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
@@ -636,7 +670,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	if tcpChanged {
 		existingProxies, err := client.ListTCPProxies(envID, serviceID)
 		if err != nil {
-			return "", fmt.Errorf("listing TCP proxies: %w", err)
+			return "", "", fmt.Errorf("listing TCP proxies: %w", err)
 		}
 
 		// Delete any existing proxy that doesn't match the desired port
@@ -644,7 +678,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		for _, tp := range existingProxies {
 			if tp.ApplicationPort != cfg.Networking.TCPProxy.Port {
 				if err := client.DeleteTCPProxy(tp.ID); err != nil {
-					return "", fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
+					return "", "", fmt.Errorf("deleting old TCP proxy (port %d): %w", tp.ApplicationPort, err)
 				}
 				if cfg.Networking.TCPProxy.Port == 0 {
 					fmt.Fprintf(w, "  ✓ removed TCP proxy (port %d)\n", tp.ApplicationPort)
@@ -663,7 +697,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 			}
 			if !proxyExists {
 				if _, err := client.CreateTCPProxy(cfg.Networking.TCPProxy.Port, envID, serviceID); err != nil {
-					return "", fmt.Errorf("creating TCP proxy: %w", err)
+					return "", "", fmt.Errorf("creating TCP proxy: %w", err)
 				}
 			}
 		}
@@ -681,6 +715,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	// flight and then trigger exactly ONE rollout to carry the move. A
 	// region-only change on a volume-backed service enters here purely for
 	// that migration rollout (needsDeploy is false without it).
+	deploymentID := ""
 	if needsDeploy || migratedTo != "" {
 		exp := ConfigExpectations{
 			ServiceID: serviceID,
@@ -695,6 +730,10 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 		if imageChanged {
 			exp.SourceImage = newImage
 		}
+		if createdVolumeID != "" {
+			exp.VolumeID = createdVolumeID
+			exp.MountPath = cfg.Volume.MountPath
+		}
 		if AwaitConfigCommitted(client, projectID, envID, exp) {
 			fmt.Fprintf(w, "  Staged changes confirmed\n")
 		} else {
@@ -708,8 +747,9 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 				fmt.Fprintf(w, "  Warning: deployments still in flight; deploying anyway (Railway may refuse the volume migration)\n")
 			}
 		}
-		if _, err := client.DeployServiceInstance(serviceID, envID); err != nil {
-			return "", fmt.Errorf("triggering deployment: %w", err)
+		deploymentID, err = client.DeployServiceInstance(serviceID, envID)
+		if err != nil {
+			return "", "", fmt.Errorf("triggering deployment: %w", err)
 		}
 		if migratedTo != "" {
 			fmt.Fprintf(w, "  Migration rollout triggered\n")
@@ -717,7 +757,7 @@ func applyUpdate(client api.APIClient, rc diff.ResourceChange, projectID, envID 
 	}
 
 	fmt.Fprintf(w, "✓ Service '%s' updated\n", name)
-	return migratedTo, nil
+	return migratedTo, deploymentID, nil
 }
 
 // applyDelete handles a single ChangeDelete operation.
@@ -755,20 +795,38 @@ func findServiceID(services []types.ServiceDetail, name string) (string, error) 
 	return "", fmt.Errorf("service %q not found", name)
 }
 
-// findServiceVolumeInstanceID returns the instance ID of the volume attached to
-// the given service and whether one was found. A nil error with found=false
-// means no volume is attached yet (distinct from an API failure).
-func findServiceVolumeInstanceID(client api.APIClient, projectID, envID, serviceID string) (id string, found bool, err error) {
+// findServiceVolume returns the instance of the volume attached to the given
+// service and whether one was found. A nil error with found=false means no
+// volume is attached yet (distinct from an API failure).
+func findServiceVolume(client api.APIClient, projectID, envID, serviceID string) (vi api.VolumeInstance, found bool, err error) {
 	volumes, err := client.ListVolumes(projectID, envID)
 	if err != nil {
-		return "", false, fmt.Errorf("listing volumes: %w", err)
+		return api.VolumeInstance{}, false, fmt.Errorf("listing volumes: %w", err)
 	}
 	for _, vi := range volumes {
 		if vi.ServiceID != nil && *vi.ServiceID == serviceID {
-			return vi.ID, true, nil
+			return vi, true, nil
 		}
 	}
-	return "", false, nil
+	return api.VolumeInstance{}, false, nil
+}
+
+// checkVolumeChange refuses the volume changes apply can't make: moving a
+// live volume's mount path, and shrinking a volume (Railway only grows them).
+func checkVolumeChange(fields []diff.FieldDiff) error {
+	for _, f := range fields {
+		switch {
+		case f.Path == "volume.mountPath" && f.Current != "" && f.Desired != "":
+			return fmt.Errorf("the volume is mounted at %s but the config says %s: apply doesn't move a mount path; run 'railctl update volume <name> --mount-path %s', then apply again", f.Current, f.Desired, f.Desired)
+		case f.Path == "volume.sizeMB" && f.Current != "":
+			live, _ := strconv.Atoi(f.Current)
+			desired, _ := strconv.Atoi(f.Desired)
+			if desired < live {
+				return fmt.Errorf("volume.sizeMB %d is below the live size of %d MB: Railway volumes only grow, so declare at least %d", desired, live, live)
+			}
+		}
+	}
+	return nil
 }
 
 // volumeInstanceAttempts and volumeInstancePoll bound the wait for a freshly
@@ -784,9 +842,9 @@ var (
 	volumeInstancePoll     = 2 * time.Second
 )
 
-// findVolumeInstanceIDByVolume returns the instance ID for a volume ID,
-// polling to absorb propagation lag right after a volume is created.
-func findVolumeInstanceIDByVolume(client api.APIClient, projectID, envID, volumeID string) (string, error) {
+// findVolumeInstanceByVolume returns the instance of a volume ID, polling to
+// absorb propagation lag right after a volume is created.
+func findVolumeInstanceByVolume(client api.APIClient, projectID, envID, volumeID string) (api.VolumeInstance, error) {
 	var lastErr error
 	for attempt := 0; attempt < volumeInstanceAttempts; attempt++ {
 		if attempt > 0 {
@@ -799,12 +857,90 @@ func findVolumeInstanceIDByVolume(client api.APIClient, projectID, envID, volume
 		}
 		for _, vi := range volumes {
 			if vi.Volume.ID == volumeID {
-				return vi.ID, nil
+				return vi, nil
 			}
 		}
 		lastErr = fmt.Errorf("volume instance for volume %q not found", volumeID)
 	}
-	return "", lastErr
+	return api.VolumeInstance{}, lastErr
+}
+
+// configureNewVolume sets a just-created volume's declared backup schedules
+// and size. Railway creates a volume at its plan default and only grows it, so
+// a declared size below that default is reported, not applied: the next diff
+// shows the mismatch and the next apply refuses it.
+func configureNewVolume(client api.APIClient, projectID, envID, volumeID string, cfg config.VolumeConfig, w io.Writer) error {
+	if len(cfg.BackupSchedules) == 0 && cfg.SizeMB == 0 {
+		return nil
+	}
+	vi, err := findVolumeInstanceByVolume(client, projectID, envID, volumeID)
+	if err != nil {
+		return fmt.Errorf("resolving the new volume's instance: %w", err)
+	}
+	if len(cfg.BackupSchedules) > 0 {
+		if err := client.SetVolumeBackupSchedules(vi.ID, cfg.BackupSchedules); err != nil {
+			return fmt.Errorf("setting backup schedules: %w", err)
+		}
+	}
+	switch {
+	case cfg.SizeMB > vi.SizeMB:
+		return growVolume(client, envID, volumeID, cfg.SizeMB, w)
+	case cfg.SizeMB > 0 && cfg.SizeMB < vi.SizeMB:
+		fmt.Fprintf(w, "  Warning: Railway created the volume at %d MB, above the declared sizeMB %d; volumes can't shrink, so declare %d\n", vi.SizeMB, cfg.SizeMB, vi.SizeMB)
+	}
+	return nil
+}
+
+// patchAttempts and patchPoll bound the wait for an environment patch to be
+// applied (a resize took ~6s live, 2026-11-03). Vars so tests can zero them.
+var (
+	patchAttempts = 30
+	patchPoll     = 2 * time.Second
+)
+
+// growVolume resizes a volume and waits until Railway has applied it: the
+// commit succeeds even when Railway refuses the resize afterwards.
+func growVolume(client api.APIClient, envID, volumeID string, sizeMB int, w io.Writer) error {
+	patchID, err := client.ResizeVolume(envID, volumeID, sizeMB)
+	if err != nil {
+		return fmt.Errorf("resizing volume to %d MB: %w", sizeMB, err)
+	}
+	if err := awaitEnvironmentPatch(client, patchID); err != nil {
+		return fmt.Errorf("resizing volume to %d MB: %w", sizeMB, err)
+	}
+	fmt.Fprintf(w, "  ✓ volume resized to %d MB\n", sizeMB)
+	return nil
+}
+
+// awaitEnvironmentPatch polls a committed patch until Railway applies or
+// refuses it.
+func awaitEnvironmentPatch(client api.APIClient, patchID string) error {
+	if patchID == "" {
+		return fmt.Errorf("no patch ID returned to follow")
+	}
+	var last api.EnvironmentPatchStatus
+	var lastErr error
+	for attempt := 0; attempt < patchAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(patchPoll)
+		}
+		st, err := client.GetEnvironmentPatchStatus(patchID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		switch st.Status {
+		case "COMMITTED":
+			return nil
+		case "FAILED":
+			return fmt.Errorf("refused by Railway: %s", st.LastAppliedError)
+		}
+		last, lastErr = st, nil
+	}
+	if lastErr != nil {
+		return fmt.Errorf("reading patch %s: %w", patchID, lastErr)
+	}
+	return fmt.Errorf("patch %s still %s after %d checks", patchID, last.Status, patchAttempts)
 }
 
 // setEnvironmentDeleteProtection sets or clears the DELETE_PROTECTION shared
@@ -908,8 +1044,8 @@ func findServiceDetail(services []types.ServiceDetail, name string) *types.Servi
 	return nil
 }
 
-// hasDeployField reports whether a deploy field with the given path drifted.
-func hasDeployField(fields []diff.FieldDiff, path string) bool {
+// hasField reports whether a field with the given path drifted.
+func hasField(fields []diff.FieldDiff, path string) bool {
 	for _, f := range fields {
 		if f.Path == path {
 			return true
@@ -959,7 +1095,7 @@ func resolveApplyRegion(cfg config.ServiceConfig, live *types.ServiceDetail, dep
 		n := effectiveApplyReplicas(live, cfg.Deploy.Replicas, r)
 		return &r, &n, nil
 	}
-	if live != nil && len(live.MultiRegion) == 1 && hasDeployField(deployFields, "deploy.replicas") {
+	if live != nil && len(live.MultiRegion) == 1 && hasField(deployFields, "deploy.replicas") {
 		var existing string
 		for rgn := range live.MultiRegion {
 			existing = rgn
