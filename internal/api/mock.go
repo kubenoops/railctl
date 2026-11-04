@@ -19,6 +19,7 @@ type MockClient struct {
 	ListServicesFunc                func(projectID, environmentID string) ([]types.ServiceDetail, error)
 	GetServiceFunc                  func(id string) (types.ServiceDetail, error)
 	GetEnvironmentConfigFunc        func(environmentID string) (string, error)
+	GetEnvironmentPatchStatusFunc   func(patchID string) (EnvironmentPatchStatus, error)
 	CreateServiceFunc               func(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error)
 	UpdateServiceInstanceFunc       func(serviceID, environmentID, image string, creds *RegistryCredentials) error
 	AttachSourceAndDeployFunc       func(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error)
@@ -66,6 +67,7 @@ type MockClient struct {
 	ListVolumesFunc           func(projectID, environmentID string) ([]VolumeInstance, error)
 	CreateVolumeFunc          func(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error)
 	DeleteVolumeFunc          func(environmentID, volumeID string) error
+	ResizeVolumeFunc          func(environmentID, volumeID string, sizeMB int) (string, error)
 	UpdateVolumeNameFunc      func(volumeID, name string) error
 	UpdateVolumeMountPathFunc func(volumeID, serviceID, environmentID, mountPath string) error
 	AttachVolumeFunc          func(volumeID, serviceID, environmentID string) error
@@ -164,6 +166,15 @@ func (m *MockClient) GetEnvironmentConfig(environmentID string) (string, error) 
 		return m.GetEnvironmentConfigFunc(environmentID)
 	}
 	return "", nil
+}
+
+// GetEnvironmentPatchStatus defaults to COMMITTED so callers that wait on a
+// patch don't poll until their deadline in tests that don't care.
+func (m *MockClient) GetEnvironmentPatchStatus(patchID string) (EnvironmentPatchStatus, error) {
+	if m.GetEnvironmentPatchStatusFunc != nil {
+		return m.GetEnvironmentPatchStatusFunc(patchID)
+	}
+	return EnvironmentPatchStatus{Status: "COMMITTED"}, nil
 }
 
 func (m *MockClient) CreateService(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error) {
@@ -390,6 +401,13 @@ func (m *MockClient) DeleteVolume(environmentID, volumeID string) error {
 		return m.DeleteVolumeFunc(environmentID, volumeID)
 	}
 	return nil
+}
+
+func (m *MockClient) ResizeVolume(environmentID, volumeID string, sizeMB int) (string, error) {
+	if m.ResizeVolumeFunc != nil {
+		return m.ResizeVolumeFunc(environmentID, volumeID, sizeMB)
+	}
+	return "", nil
 }
 
 func (m *MockClient) UpdateVolumeName(volumeID, name string) error {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Volume represents a Railway volume
@@ -165,6 +166,38 @@ func (c *Client) DeleteVolume(environmentID, volumeID string) error {
 		"commitMessage": "railctl: delete volume",
 	})
 	return err
+}
+
+// ResizeVolume grows a volume by committing {volumes:{<id>:{sizeMB:N}}}, the
+// same patch path as DeleteVolume (authorized for project tokens, verified live
+// 2026-11-03). Railway applies the patch asynchronously and reports a refusal
+// such as a shrink only on the patch, so the patch ID is returned for
+// GetEnvironmentPatchStatus. Railway redeploys the volume's service on resize.
+func (c *Client) ResizeVolume(environmentID, volumeID string, sizeMB int) (string, error) {
+	patch := map[string]any{
+		"volumes": map[string]any{
+			volumeID: map[string]any{
+				"sizeMB": sizeMB,
+			},
+		},
+	}
+	data, err := c.execute(environmentPatchCommitMutation, map[string]any{
+		"environmentId": environmentID,
+		"patch":         patch,
+		"commitMessage": "railctl: resize volume",
+	})
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		EnvironmentPatchCommit string `json:"environmentPatchCommit"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// The commit answers "commitChanges/<environmentId>/<patchId>".
+	ref := result.EnvironmentPatchCommit
+	return ref[strings.LastIndex(ref, "/")+1:], nil
 }
 
 // UpdateVolumeName updates the name of a volume

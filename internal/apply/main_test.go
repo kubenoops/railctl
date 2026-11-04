@@ -18,5 +18,6 @@ func TestMain(m *testing.M) {
 	QuiescePoll = 0
 	volumeInstanceAttempts = 1
 	volumeInstancePoll = 0
+	patchPoll = 0
 	os.Exit(m.Run())
 }

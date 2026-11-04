@@ -202,3 +202,36 @@ func (c *Client) GetEnvironmentConfig(environmentID string) (string, error) {
 	}
 	return string(resp.Environment.Config), nil
 }
+
+// EnvironmentPatchStatus is where a committed environment patch stands:
+// STAGED, APPLYING, COMMITTED or FAILED (with LastAppliedError).
+type EnvironmentPatchStatus struct {
+	Status           string `json:"status"`
+	LastAppliedError string `json:"lastAppliedError"`
+}
+
+const environmentPatchStatusQuery = `
+query($id: String!) {
+	environmentPatch(id: $id) {
+		status
+		lastAppliedError
+	}
+}
+`
+
+// GetEnvironmentPatchStatus returns the status of an environment patch.
+// environmentPatchCommit succeeds even when Railway later refuses the patch,
+// so this is the only place a refusal shows.
+func (c *Client) GetEnvironmentPatchStatus(patchID string) (EnvironmentPatchStatus, error) {
+	data, err := c.execute(environmentPatchStatusQuery, map[string]any{"id": patchID})
+	if err != nil {
+		return EnvironmentPatchStatus{}, err
+	}
+	var resp struct {
+		EnvironmentPatch EnvironmentPatchStatus `json:"environmentPatch"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return EnvironmentPatchStatus{}, err
+	}
+	return resp.EnvironmentPatch, nil
+}

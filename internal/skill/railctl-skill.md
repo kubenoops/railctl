@@ -434,6 +434,7 @@ services:
     volume:
       mountPath: /app/data
       backupSchedules: [daily, weekly] # daily/weekly/monthly
+      sizeMB: 100000 # optional minimum; only grows (Railway can't shrink a volume)
 
     variables:
       PORT: "3000"
@@ -779,7 +780,17 @@ removed with `delete domain`, never silently on apply.)
   declared `volume.mountPath` is a _managed volume_: omitting
   `backupSchedules` (or `[]`) **clears live schedules** on the next apply —
   with an explicit warning naming what was removed. A service with no
-  `volume:` block is left untouched.
+  `volume:` block is left untouched (its live volume is never shown as a
+  removal). Declaring a volume on a service that has none **creates it** on
+  the next apply, with its schedules and `sizeMB`. Volume changes run first in
+  an update, so a refused resize writes nothing else. Railway redeploys the
+  service itself for the attach and the resize; apply waits for the attach
+  redeploy before resizing (a resize during it cancels it, leaving nothing
+  running) and rolls out itself only when other changes are staged or
+  Railway's redeploy didn't succeed.
+- **`volume.sizeMB` is a minimum.** Railway can't shrink a volume, so a live
+  one already at or above it is left as is. Each resize redeploys the service
+  (brief downtime on a volume-backed service).
 - **`domain.port` and `tcpProxy.port` reconcile removal**: omitting the block
   and re-applying closes the port (railctl-generated public surface is fully
   declarative — this is how you un-expose a service). **`customDomains` are the
@@ -792,8 +803,9 @@ removed with `delete domain`, never silently on apply.)
   volume). It never deletes environments or projects, skips absent resources
   with a note, needs no `$env()` secrets, and prints an itemized plan before
   the `[y/N]` prompt.
-- Volumes **cannot change mountPath in place**; a deleted service **orphans**
-  its volume.
+- apply **refuses to move a live volume's mountPath** (fails, writes nothing):
+  run `railctl update volume <name> --mount-path <path>`, then apply. A deleted
+  service **orphans** its volume.
 
 ### Drift discipline — reconcile every imperative change
 

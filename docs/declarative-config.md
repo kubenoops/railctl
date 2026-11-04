@@ -259,10 +259,28 @@ User-owned domains (e.g. `app.example.com`). railctl creates each declared domai
 
 Persistent volume configuration. One volume per service.
 
-| Field             | Type       | Default | Description                                                      |
-| ----------------- | ---------- | ------- | ---------------------------------------------------------------- |
-| `mountPath`       | string     | (none)  | Filesystem path where the volume is mounted inside the container |
-| `backupSchedules` | []string   | (none)  | Automated backup schedules: `daily`, `weekly`, and/or `monthly`  |
+| Field             | Type       | Default        | Description                                                      |
+| ----------------- | ---------- | -------------- | ---------------------------------------------------------------- |
+| `mountPath`       | string     | (none)         | Filesystem path where the volume is mounted inside the container |
+| `backupSchedules` | []string   | (none)         | Automated backup schedules: `daily`, `weekly`, and/or `monthly`  |
+| `sizeMB`          | int        | (plan default) | Minimum size in MB; only grows. Railway bills only the space used |
+
+Declaring a volume on a service that has none creates it on the next `apply`,
+in the service's region (or the declared `deploy.region`), with its schedules
+and size. Volume changes are made before anything else in the update, so a
+refused resize leaves the service as it was. Railway redeploys the service on
+its own for the attach and again for the resize; apply waits for the attach
+redeploy before resizing (a resize during it cancels it and leaves nothing
+running), follows Railway's redeploy when only the volume changed, and rolls
+out itself after it when other changes are staged or Railway's redeploy didn't
+succeed. A volume the manifest doesn't declare is never shown as a removal and
+never deleted. Moving a live volume's mount path is refused: run
+`railctl update volume <name> --mount-path <path>`, then apply.
+
+`sizeMB` is a minimum: Railway can't shrink a volume, so a live volume already
+at or above the declared size is left as is. New volumes start at the plan
+default (50000 MB on Pro). Each resize redeploys the service, so expect the
+brief downtime of a volume-backed redeploy.
 
 `backupSchedules` is applied declaratively: the volume's live schedules are
 reconciled to exactly match the declared list. Values are case-insensitive.
@@ -279,13 +297,8 @@ block is left untouched.
 volume:
   mountPath: /var/lib/postgresql/data
   backupSchedules: [daily, weekly]
+  sizeMB: 100000
 ```
-
-> **Note:** When a volume is *added* to an existing service in the same `apply`,
-> Railway can't create it in place — so the schedules can't attach on that run.
-> `apply` warns and continues; run `apply` again once the volume exists (after
-> the deploy) to set the schedules. Scripted callers should account for this
-> second run.
 
 Manual backups (create/list/restore/delete) are operational actions, not
 declarative state — use the `railctl {get,create,restore,delete} backup`

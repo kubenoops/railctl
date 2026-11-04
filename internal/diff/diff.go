@@ -138,6 +138,7 @@ type LiveVolume struct {
 	MountPath        string
 	VolumeInstanceID string   // used for backup operations
 	BackupSchedules  []string // current schedule kinds (e.g. DAILY)
+	SizeMB           int
 }
 
 // sortedKinds returns a sorted copy so diffs are order-independent.
@@ -230,6 +231,9 @@ func buildCreateChange(d config.ServiceConfig) ResourceChange {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Desired: d.Volume.MountPath})
 		if len(d.Volume.BackupSchedules) > 0 {
 			fields = append(fields, FieldDiff{Path: "volume.backupSchedules", Desired: strings.Join(sortedKinds(d.Volume.BackupSchedules), ",")})
+		}
+		if d.Volume.SizeMB > 0 {
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Desired: fmt.Sprintf("%d", d.Volume.SizeMB)})
 		}
 	}
 
@@ -417,13 +421,31 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 	// Variables.
 	fields = append(fields, compareVariables(d.Variables, ls.Variables)...)
 
-	// Volume mount path.
-	liveMountPath := ""
+	// Volume mount path. A service without a volume block leaves its live
+	// volume alone (apply never deletes one), so only a declared path compares.
+	var liveVolume *LiveVolume
 	if len(ls.Volumes) > 0 {
-		liveMountPath = ls.Volumes[0].MountPath
+		liveVolume = &ls.Volumes[0]
 	}
-	if d.Volume.MountPath != liveMountPath {
+	liveMountPath := ""
+	if liveVolume != nil {
+		liveMountPath = liveVolume.MountPath
+	}
+	if d.Volume.MountPath != "" && d.Volume.MountPath != liveMountPath {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
+	}
+
+	// Volume size: a declared sizeMB is a minimum. Railway only grows volumes,
+	// so a live one already at or above it is left alone, and an unknown live
+	// size (0) never reports a change that couldn't converge.
+	if d.Volume.MountPath != "" && d.Volume.SizeMB > 0 {
+		desired := fmt.Sprintf("%d", d.Volume.SizeMB)
+		switch {
+		case liveVolume == nil:
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Desired: desired})
+		case liveVolume.SizeMB > 0 && liveVolume.SizeMB < d.Volume.SizeMB:
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Current: fmt.Sprintf("%d", liveVolume.SizeMB), Desired: desired})
+		}
 	}
 
 	// Backup schedules: only for managed volumes (mountPath declared). The

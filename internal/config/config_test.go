@@ -646,3 +646,26 @@ func TestValidate_BackupSchedules_RequireMountPath(t *testing.T) {
 		t.Errorf("error = %q, want it to contain 'require volume.mountPath'", err.Error())
 	}
 }
+
+func TestValidate_VolumeSizeMB(t *testing.T) {
+	tests := []struct {
+		name    string
+		volume  VolumeConfig
+		wantErr string
+	}{
+		{name: "with a mount path", volume: VolumeConfig{MountPath: "/data", SizeMB: 250000}},
+		{name: "without a mount path", volume: VolumeConfig{SizeMB: 250000}, wantErr: "volume.sizeMB requires volume.mountPath"},
+		{name: "negative", volume: VolumeConfig{MountPath: "/data", SizeMB: -1}, wantErr: "volume.sizeMB must be > 0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Validate(&Config{Services: []ServiceConfig{{Name: "web", Image: "nginx", Volume: tt.volume}}})
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Errorf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
