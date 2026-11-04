@@ -21,8 +21,9 @@ var getVariablesCmd = &cobra.Command{
 Variables can be scoped to a specific service within an environment. This command
 retrieves all variables for the specified service.
 
-Sensitive values (keys containing KEY, SECRET, PASSWORD, TOKEN, etc.) are masked
-by default. Use --show-values to reveal them.
+Values are masked by default: only a short safe-list of well-known non-secret
+names (PORT, NODE_ENV, HOSTNAME, ...) is shown in clear, and multi-line values
+(PEM keys) are always masked. Use --show-values to reveal them.
 
 Required flags can be provided via environment variables:
   --project, -p     or RAILCTL_PROJECT
@@ -51,7 +52,7 @@ Required flags can be provided via environment variables:
 var getVarsShowValues bool
 
 func init() {
-	getVariablesCmd.Flags().BoolVar(&getVarsShowValues, "show-values", false, "Show sensitive variable values (masked by default)")
+	getVariablesCmd.Flags().BoolVar(&getVarsShowValues, "show-values", false, "Show variable values (all but safe-listed names are masked by default)")
 	getCmd.AddCommand(getVariablesCmd)
 }
 
@@ -129,7 +130,7 @@ func buildVarsWithSealed(variables map[string]string, sealedMap map[string]bool,
 		value := v
 		if sealedMap[k] {
 			value = "[SEALED]"
-		} else if !showValues && api.IsSensitiveKey(k) {
+		} else if !showValues && api.ShouldMask(k, v) {
 			value = api.MaskValue(v)
 		}
 		result[k] = varWithSealed{Value: value, IsSealed: sealedMap[k]}
@@ -157,7 +158,7 @@ func printVariablesTable(variables map[string]string, sealedMap map[string]bool,
 		value := variables[key]
 		if sealedMap[key] {
 			value = "[SEALED]"
-		} else if !showValues && api.IsSensitiveKey(key) {
+		} else if !showValues && api.ShouldMask(key, value) {
 			value = api.MaskValue(value)
 		} else if len(value) > 50 {
 			value = value[:47] + "..."

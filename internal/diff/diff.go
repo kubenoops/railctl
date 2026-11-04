@@ -282,7 +282,8 @@ func deployCreateFields(dc config.DeployConfig) []FieldDiff {
 	return fields
 }
 
-// variableCreateFields returns FieldDiffs for all desired variables, masking sensitive keys.
+// variableCreateFields returns FieldDiffs for all desired variables, masked
+// by default (see api.ShouldMask).
 func variableCreateFields(vars map[string]string) []FieldDiff {
 	if len(vars) == 0 {
 		return nil
@@ -296,10 +297,7 @@ func variableCreateFields(vars map[string]string) []FieldDiff {
 
 	var fields []FieldDiff
 	for _, k := range keys {
-		desired := vars[k]
-		if api.IsSensitiveKey(k) {
-			desired = api.MaskValue(desired)
-		}
+		desired := api.MaskIfNeeded(k, vars[k])
 		fields = append(fields, FieldDiff{Path: "variables." + k, Desired: desired})
 	}
 	return fields
@@ -351,17 +349,14 @@ func buildDeleteChange(ls LiveService) ResourceChange {
 		fields = append(fields, FieldDiff{Path: "deploy.healthcheckTimeout", Current: fmt.Sprintf("%d", ls.Deploy.HealthcheckTimeout)})
 	}
 
-	// Variables — sorted, with masking.
+	// Variables — sorted, masked by default.
 	keys := make([]string, 0, len(ls.Variables))
 	for k := range ls.Variables {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		current := ls.Variables[k]
-		if api.IsSensitiveKey(k) {
-			current = api.MaskValue(current)
-		}
+		current := api.MaskIfNeeded(k, ls.Variables[k])
 		fields = append(fields, FieldDiff{Path: "variables." + k, Current: current})
 	}
 
@@ -628,7 +623,7 @@ func compareDeployConfig(d config.DeployConfig, l LiveDeployConfig) []FieldDiff 
 
 // compareVariables compares desired and live variable maps.
 // Variables starting with RAILWAY_ in live are skipped (Railway-injected).
-// Sensitive keys have their values masked.
+// Values are masked by default (see api.ShouldMask).
 func compareVariables(desired, live map[string]string) []FieldDiff {
 	var fields []FieldDiff
 
@@ -646,7 +641,7 @@ func compareVariables(desired, live map[string]string) []FieldDiff {
 
 		currentVal := lv
 		desiredVal := dv
-		if api.IsSensitiveKey(k) {
+		if api.ShouldMask(k, lv) || api.ShouldMask(k, dv) {
 			currentVal = api.MaskValue(lv)
 			desiredVal = api.MaskValue(dv)
 		}
@@ -673,10 +668,7 @@ func compareVariables(desired, live map[string]string) []FieldDiff {
 			continue
 		}
 		if _, exists := desired[k]; !exists {
-			currentVal := live[k]
-			if api.IsSensitiveKey(k) {
-				currentVal = api.MaskValue(currentVal)
-			}
+			currentVal := api.MaskIfNeeded(k, live[k])
 			fields = append(fields, FieldDiff{Path: "variables." + k, Current: currentVal, Desired: ""})
 		}
 	}

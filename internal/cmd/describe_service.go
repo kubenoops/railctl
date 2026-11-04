@@ -29,7 +29,7 @@ var describeServiceCmd = &cobra.Command{
 }
 
 func init() {
-	describeServiceCmd.Flags().BoolVar(&showValuesFlag, "show-values", false, "Show sensitive variable values (keys containing KEY, SECRET, PASSWORD, TOKEN, etc. are masked by default)")
+	describeServiceCmd.Flags().BoolVar(&showValuesFlag, "show-values", false, "Show variable values (all but safe-listed names are masked by default)")
 	describeCmd.AddCommand(describeServiceCmd)
 }
 
@@ -164,7 +164,7 @@ func serviceDetailToOutput(svc types.ServiceDetail, projectName, envName string,
 		for k, v := range variables {
 			if sealedMap[k] {
 				out.Variables[k] = "[SEALED]"
-			} else if !showValues && api.IsSensitiveKey(k) {
+			} else if !showValues && api.ShouldMask(k, v) {
 				out.Variables[k] = api.MaskValue(v)
 			} else {
 				out.Variables[k] = v
@@ -270,7 +270,7 @@ func printServiceDetail(svc types.ServiceDetail, projectName, envName string, va
 				value = "[SEALED]"
 			} else {
 				value = variables[key]
-				if !showValues && api.IsSensitiveKey(key) {
+				if !showValues && api.ShouldMask(key, value) {
 					value = api.MaskValue(value)
 				}
 				// Truncate long values in table display

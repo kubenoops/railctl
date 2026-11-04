@@ -181,6 +181,45 @@ func redactVariables(variables map[string]any) map[string]any {
 	return redacted
 }
 
+// redactResponseBody returns a pretty-printed copy of a GraphQL response body
+// for debug logging with every variable value replaced by [REDACTED]. Any
+// object member named "variables" (the variables query result, environment
+// patches, deployment service manifests) has all of its leaf values redacted.
+// A body that is not JSON is not echoed at all, since it cannot be redacted.
+func redactResponseBody(body []byte) string {
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return fmt.Sprintf("<%d bytes, non-JSON body not shown>", len(body))
+	}
+	out, err := json.MarshalIndent(redactResponseValue(v, false), "", "  ")
+	if err != nil {
+		return "<unprintable body>"
+	}
+	return string(out)
+}
+
+func redactResponseValue(v any, inVariables bool) any {
+	switch t := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(t))
+		for k, val := range t {
+			m[k] = redactResponseValue(val, inVariables || strings.EqualFold(k, "variables"))
+		}
+		return m
+	case []any:
+		a := make([]any, len(t))
+		for i, val := range t {
+			a[i] = redactResponseValue(val, inVariables)
+		}
+		return a
+	default:
+		if inVariables && t != nil {
+			return "[REDACTED]"
+		}
+		return t
+	}
+}
+
 // execute sends a GraphQL query to the Railway API and returns the data field.
 // It automatically retries rate-limited requests with exponential backoff.
 func (c *Client) execute(query string, variables map[string]any) (json.RawMessage, error) {
@@ -250,12 +289,7 @@ func (c *Client) execute(query string, variables map[string]any) (json.RawMessag
 		if c.Debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] GraphQL Response:\n")
 			fmt.Fprintf(os.Stderr, "Status: %d\n", resp.StatusCode)
-			var prettyJSON bytes.Buffer
-			if err := json.Indent(&prettyJSON, respBody, "", "  "); err == nil {
-				fmt.Fprintf(os.Stderr, "Body: %s\n", prettyJSON.String())
-			} else {
-				fmt.Fprintf(os.Stderr, "Body: %s\n", string(respBody))
-			}
+			fmt.Fprintf(os.Stderr, "Body: %s\n", redactResponseBody(respBody))
 			fmt.Fprintf(os.Stderr, "\n")
 		}
 

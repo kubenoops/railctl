@@ -228,19 +228,19 @@ func TestCompute_UpdateVariables(t *testing.T) {
 		t.Error("expected variables.PORT field diff not found")
 	}
 
-	// Added.
+	// Added. NEW_VAR is not on the safe-list, so its value is masked.
 	if f, ok := fieldMap["variables.NEW_VAR"]; ok {
-		if f.Current != "" || f.Desired != "hello" {
-			t.Errorf("variables.NEW_VAR: expected '' → hello, got %q → %q", f.Current, f.Desired)
+		if f.Current != "" || f.Desired != "he************" {
+			t.Errorf("variables.NEW_VAR: expected '' → masked, got %q → %q", f.Current, f.Desired)
 		}
 	} else {
 		t.Error("expected variables.NEW_VAR field diff not found")
 	}
 
-	// Removed.
+	// Removed. OLD_VAR is not on the safe-list, so its value is masked.
 	if f, ok := fieldMap["variables.OLD_VAR"]; ok {
-		if f.Current != "goodbye" || f.Desired != "" {
-			t.Errorf("variables.OLD_VAR: expected goodbye → '', got %q → %q", f.Current, f.Desired)
+		if f.Current != "go************" || f.Desired != "" {
+			t.Errorf("variables.OLD_VAR: expected masked → '', got %q → %q", f.Current, f.Desired)
 		}
 	} else {
 		t.Error("expected variables.OLD_VAR field diff not found")
