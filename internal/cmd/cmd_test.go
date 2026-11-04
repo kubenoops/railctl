@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +19,18 @@ func executeCommand(args ...string) (string, string, error) {
 	project = ""
 	environment = ""
 	service = ""
+	contextName = ""
+	activeContext = nil
+	activeConfig = nil
 	os.Unsetenv("RAILWAY_TOKEN")
+	// Pin the config path to a nonexistent sentinel so tests never load the
+	// developer's real config file (FR-004 parity for the pre-existing
+	// suite). Tests that need a real config set RAILCTL_CONFIG themselves
+	// via executeCommandWithConfig.
+	if os.Getenv("RAILCTL_CONFIG") == "" {
+		os.Setenv("RAILCTL_CONFIG", filepath.Join(os.TempDir(), "railctl-test-no-config.yaml"))
+		defer os.Unsetenv("RAILCTL_CONFIG")
+	}
 
 	// Capture stdout and stderr
 	stdout := new(bytes.Buffer)
@@ -185,6 +197,7 @@ func TestGetService_FromFlag(t *testing.T) {
 
 func TestGetService_FromEnv(t *testing.T) {
 	service = ""
+	contextName = ""
 	os.Setenv("RAILCTL_SERVICE", "env-service")
 	defer os.Unsetenv("RAILCTL_SERVICE")
 

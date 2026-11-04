@@ -12,6 +12,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,13 +95,16 @@ type Result struct {
 // Run executes railctl with the given args. Never fails the test.
 // Automatically injects --token for the suite's assigned Railway credential.
 // Each command has a 3-minute timeout to prevent a single stuck command
-// from killing the entire test suite.
+// from killing the entire test suite. The child runs under IsolatedEnv, so
+// the developer's real config file and exported RAILCTL_*/RAILWAY_TOKEN
+// values cannot leak into the run.
 func (e *Env) Run(args ...string) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	fullArgs := append([]string{"--token", e.Token}, args...)
 	cmd := exec.CommandContext(ctx, Railctl, fullArgs...)
+	cmd.Env = IsolatedEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -158,3 +162,75 @@ func (e *Env) WithPE(args ...string) []string {
 func (e *Env) WithPES(args ...string) []string {
 	return append(args, "-p", e.ProjectName, "-e", e.EnvName, "-s", e.ServiceName)
 }
+
+// ──────────────────────────────────────────────────────────────
+// Config-layer runner (contexts / credentials)
+// ──────────────────────────────────────────────────────────────
+
+// RunWithEnv executes railctl with a controlled process environment and NO
+// --token injection — for tests of the local config layer, where the test
+// must control every input source itself (FR-016 precedence testability).
+//
+// The inherited environment is scrubbed of RAILWAY_TOKEN and all RAILCTL_*
+// variables (a stray exported token from the caller's shell would otherwise
+// silently override the very layer under test); extraEnv entries are
+// appended after scrubbing, typically RAILCTL_CONFIG=<path> and — when the
+// test exercises the identity-conflict warning — RAILWAY_TOKEN=<value>.
+// stdin (nil for none) feeds the command, e.g. --token-stdin.
+func (e *Env) RunWithEnv(stdin io.Reader, extraEnv []string, args ...string) Result {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, Railctl, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Stdin = stdin
+	cmd.Env = IsolatedEnv(extraEnv...)
+	err := cmd.Run()
+
+	code := 0
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			code = -1
+			stderr.WriteString("\n[TIMEOUT] command exceeded 3-minute deadline")
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = -1
+		}
+	}
+	return Result{Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: code}
+}
+
+// IsolatedEnv returns the child-process environment for every railctl
+// invocation the harness makes: the inherited environment scrubbed of
+// RAILWAY_TOKEN and all RAILCTL_* variables, plus RAILCTL_CONFIG pointed at
+// a nonexistent path. Without the sentinel, railctl (since the contexts
+// feature) reads the developer's real ~/.railctl/config.yaml on every run —
+// an active context there would inject its project/environment into
+// supposedly flag-free commands and trip the token contradiction guards.
+// The nonexistent path means "no config" (FR-004), i.e. exact pre-context
+// behavior. extraEnv entries are appended last and therefore win, so a test
+// can still set RAILCTL_CONFIG=<real scratch file> or RAILWAY_TOKEN=<value>
+// deliberately.
+func IsolatedEnv(extraEnv ...string) []string {
+	sentinel := "RAILCTL_CONFIG=" + filepath.Join(os.TempDir(), "railctl-e2e-no-config.yaml")
+	return append(append(scrubBaseEnv(), sentinel), extraEnv...)
+}
+
+// scrubBaseEnv returns the process environment minus RAILWAY_TOKEN and every
+// RAILCTL_* variable, so config-layer tests start from a clean input state.
+func scrubBaseEnv() []string {
+	var kept []string
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "RAILWAY_TOKEN" || strings.HasPrefix(key, "RAILCTL_") {
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	return kept
+}
+
+func scrubRailctlEnv(env []string) []string { return env }

@@ -41,7 +41,7 @@ func TestEdgeCases(t *testing.T) {
 		// than the token's baked scope must FAIL — never warn-and-proceed on
 		// the token's own project.
 		cmd := exec.Command(harness.Railctl, "--token", env.Token, "get", "environments")
-		cmd.Env = []string{"RAILCTL_PROJECT=some-other-project"}
+		cmd.Env = harness.IsolatedEnv("RAILCTL_PROJECT=some-other-project")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -56,7 +56,7 @@ func TestEdgeCases(t *testing.T) {
 		// Same contradiction fail-fast for RAILCTL_ENVIRONMENT against the
 		// token's baked environment.
 		cmd := exec.Command(harness.Railctl, "--token", env.Token, "get", "services")
-		cmd.Env = []string{"RAILCTL_ENVIRONMENT=some-other-env"}
+		cmd.Env = harness.IsolatedEnv("RAILCTL_ENVIRONMENT=some-other-env")
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -72,7 +72,7 @@ func TestEdgeCases(t *testing.T) {
 		// scopes project + environment, service selection is still the
 		// caller's (no RAILCTL_PROJECT/ENVIRONMENT needed).
 		cmd := exec.Command(harness.Railctl, "--token", env.Token, "get", "variables")
-		cmd.Env = []string{"RAILCTL_SERVICE=" + svc}
+		cmd.Env = harness.IsolatedEnv("RAILCTL_SERVICE=" + svc)
 		var stdout bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &bytes.Buffer{}

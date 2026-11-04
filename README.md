@@ -88,6 +88,34 @@ railctl create service api --image node:20-alpine -p my-app
 railctl update service api --image node:20 -p my-app -e production
 ```
 
+### Contexts: switch projects and identities with one command
+
+kubectl-style local contexts — save targeting profiles and tokens once, then
+switch everything with `use-context`. Purely additive: with no config file,
+railctl behaves exactly as above (CI/scripts unaffected).
+
+```bash
+# Store tokens once — --token-stdin keeps them out of shell history
+railctl config set-credentials work --token-stdin < token.txt
+
+# Contexts reference credentials by name
+railctl config set-context shop-prod -w my-team -p shop -e production --credentials work
+
+railctl config use-context shop-prod   # switch identity + target together
+railctl get services                   # → shop/production, no flags needed
+railctl get services -e staging        # one-field override
+railctl --context side get deployments # one-off switch, active unchanged
+railctl config current-context         # for your shell prompt
+```
+
+Targeting precedence is uniform: **flag > env var > (manifest for `-f`
+commands) > active context** — explicit input always wins. Identity follows
+the same rule (`--token > RAILWAY_TOKEN > context credentials`) with a
+stderr warning when `RAILWAY_TOKEN` overrides the context's credentials.
+The config file (`~/.railctl/config.yaml`, override with `RAILCTL_CONFIG`)
+is created `0600`, stores tokens, and is never committed. See
+[docs/contexts.md](docs/contexts.md) for the full reference.
+
 ### Built-in usage guide (`railctl skill`)
 
 railctl ships a self-contained usage guide **embedded in the binary** — the
@@ -233,15 +261,15 @@ railctl delete service api -p my-app -e production --yes
 
 Control how your services run and scale:
 
-| Flag                    | Description                                            | Valid Values                    |
-| ----------------------- | ------------------------------------------------------ | ------------------------------- |
-| `--start-command`       | Override container's default start command             | Any string                      |
-| `--restart-policy`      | Control restart behavior                               | `ON_FAILURE`, `ALWAYS`, `NEVER` |
-| `--max-retries`         | Maximum restart attempts (requires `--restart-policy`) | Integer >= 0                    |
-| `--replicas`            | Number of instances (horizontal scaling)               | Integer >= 1                    |
+| Flag                    | Description                                                             | Valid Values                                           |
+| ----------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------ |
+| `--start-command`       | Override container's default start command                              | Any string                                             |
+| `--restart-policy`      | Control restart behavior                                                | `ON_FAILURE`, `ALWAYS`, `NEVER`                        |
+| `--max-retries`         | Maximum restart attempts (requires `--restart-policy`)                  | Integer >= 0                                           |
+| `--replicas`            | Number of instances (horizontal scaling)                                | Integer >= 1                                           |
 | `--region`              | Pin the service to a single region (env: `RAILCTL_REGION`, create only) | Region ID (e.g. `us-west2`; see `railctl get regions`) |
-| `--healthcheck-path`    | HTTP endpoint for health checks                        | Path (e.g., `/health`)          |
-| `--healthcheck-timeout` | Max seconds to wait for health check                   | Integer (default: 300)          |
+| `--healthcheck-path`    | HTTP endpoint for health checks                                         | Path (e.g., `/health`)                                 |
+| `--healthcheck-timeout` | Max seconds to wait for health check                                    | Integer (default: 300)                                 |
 
 **Note:** These flags are available for both `create service` and `update service` commands.
 
@@ -470,20 +498,22 @@ These flags are available on every command:
 | `--project`     | `-p`  | Project name (default: `RAILCTL_PROJECT` env var)                 |
 | `--environment` | `-e`  | Environment name (default: `RAILCTL_ENVIRONMENT` env var)         |
 | `--service`     | `-s`  | Service name (default: `RAILCTL_SERVICE` env var)                 |
+| `--context`     |       | Use this saved context for the current command only               |
 | `--output`      | `-o`  | Output format: `table`, `wide`, `json`, `yaml` (default: `table`) |
 
 ### Environment Variables
 
-| Variable                    | Description                                                      | Example         |
-| --------------------------- | ---------------------------------------------------------------- | --------------- |
-| `RAILWAY_TOKEN`             | Railway API token (required)                                     | `frp_xxxxxxxxx` |
-| `RAILCTL_WORKSPACE`         | Default workspace name (required when multiple workspaces exist) | `my-team`       |
-| `RAILCTL_PROJECT`           | Default project name/ID                                          | `my-app`        |
-| `RAILCTL_ENVIRONMENT`       | Default environment name/ID                                      | `production`    |
-| `RAILCTL_SERVICE`           | Default service name/ID                                          | `api`           |
-| `RAILCTL_REGION`            | Default region for `create service` (create only)               | `us-west2`      |
-| `RAILCTL_REGISTRY_USERNAME` | Docker registry username                                         | `myuser`        |
-| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password                                         | `mytoken`       |
+| Variable                    | Description                                                                | Example             |
+| --------------------------- | -------------------------------------------------------------------------- | ------------------- |
+| `RAILWAY_TOKEN`             | Railway API token (required)                                               | `frp_xxxxxxxxx`     |
+| `RAILCTL_WORKSPACE`         | Default workspace name (required when multiple workspaces exist)           | `my-team`           |
+| `RAILCTL_PROJECT`           | Default project name/ID                                                    | `my-app`            |
+| `RAILCTL_ENVIRONMENT`       | Default environment name/ID                                                | `production`        |
+| `RAILCTL_SERVICE`           | Default service name/ID                                                    | `api`               |
+| `RAILCTL_CONFIG`            | Path to the local contexts config file (default: `~/.railctl/config.yaml`) | `/tmp/railctl.yaml` |
+| `RAILCTL_REGION`            | Default region for `create service` (create only)                          | `us-west2`          |
+| `RAILCTL_REGISTRY_USERNAME` | Docker registry username                                                   | `myuser`            |
+| `RAILCTL_REGISTRY_PASSWORD` | Docker registry password                                                   | `mytoken`           |
 
 ### Output Formats
 

@@ -245,6 +245,7 @@ func runCLI(token string, args ...string) (stdout, stderr string, code int) {
 
 	fullArgs := append([]string{"--token", token}, args...)
 	cmd := exec.CommandContext(ctx, harness.Railctl, fullArgs...)
+	cmd.Env = harness.IsolatedEnv()
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

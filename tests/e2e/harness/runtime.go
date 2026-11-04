@@ -14,16 +14,17 @@ import (
 	"time"
 )
 
-// RunEnv is Run with extra environment variables layered onto the process
-// environment (e.g. RAILCTL_NO_HINTS=1). It otherwise behaves exactly like Run:
-// injects --token, never fails the test, 3-minute timeout.
+// RunEnv is Run with extra environment variables layered onto the isolated
+// environment (e.g. RAILCTL_NO_HINTS=1). It otherwise behaves exactly like
+// Run: injects --token, never fails the test, 3-minute timeout, machine
+// config and shell RAILCTL_*/RAILWAY_TOKEN scrubbed (see IsolatedEnv).
 func (e *Env) RunEnv(extraEnv []string, args ...string) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	fullArgs := append([]string{"--token", e.Token}, args...)
 	cmd := exec.CommandContext(ctx, Railctl, fullArgs...)
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = IsolatedEnv(extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -59,6 +60,7 @@ type BgProc struct {
 func (e *Env) StartBackground(args ...string) *BgProc {
 	fullArgs := append([]string{"--token", e.Token}, args...)
 	cmd := exec.Command(Railctl, fullArgs...)
+	cmd.Env = IsolatedEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 

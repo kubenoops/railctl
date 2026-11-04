@@ -371,14 +371,16 @@ environments with `delete -f`.
 
 ---
 
-## 4. Context resolution: flags → env vars → token scope
+## 4. Context resolution: flags → env vars → local context → token scope
 
 Every command resolves context in the order **flag → `RAILCTL_*` env var →
-default**. With a project token, project/environment come from the token
-itself; a flag or env var naming the _same_ project/environment is accepted
-silently, while a _different_ one fails fast (contradiction) — stale
-`RAILCTL_PROJECT`/`RAILCTL_ENVIRONMENT` values cannot silently redirect
-commands to the token's scope.
+active local context (see `railctl config` below) → default**; for the
+declarative `-f` commands the manifest slots before the local context:
+**flag → env var → manifest fields → local context**. With a project token,
+project/environment come from the token itself; a flag or env var naming the
+_same_ project/environment is accepted silently, while a _different_ one
+fails fast (contradiction) — stale `RAILCTL_PROJECT`/`RAILCTL_ENVIRONMENT`
+values cannot silently redirect commands to the token's scope.
 
 | Flag                   | Env var               | Meaning                                       |
 | ---------------------- | --------------------- | --------------------------------------------- |
@@ -389,6 +391,50 @@ commands to the token's scope.
 | `-s` / `--service`     | `RAILCTL_SERVICE`     | Service name or ID (never baked into a token) |
 | `-o` / `--output`      | —                     | `table` (default), `wide`, `json`, `yaml`     |
 | `--debug`              | —                     | Dump GraphQL requests/responses to stderr     |
+| `--context`            | —                     | Use this local context for this command only  |
+
+### Local contexts & credentials: `railctl config`
+
+Save targeting profiles and tokens once; switch everything with one command.
+The config file lives at `~/.railctl/config.yaml` (override: `RAILCTL_CONFIG`
+env var, single path), is created `0600`, and stores tokens — never commit
+it. A context holds optional workspace, required project, optional
+environment, and an optional named credential; the environment field acts
+like kubectl's default namespace.
+
+```bash
+# Store tokens once — the ONLY command that sees a token value.
+# --token-stdin is the preferred path (keeps it out of shell history):
+railctl config set-credentials work --token-stdin < token.txt
+railctl config set-credentials personal --token-stdin < token.txt
+
+# Contexts reference credentials by name (never inline):
+railctl config set-context shop-prod -w my-team -p shop -e production --credentials work
+railctl config set-context side -p blog --credentials personal
+
+railctl config use-context shop-prod   # switch identity + target together
+railctl get services                   # → shop/production, no flags
+railctl get services -e staging        # per-field override (project from context)
+railctl --context side get deployments # one-off switch, active unchanged
+```
+
+Management verbs (kubectl-style): `config get-contexts` (marks the active
+one, shows token _types_ — values are never displayed), `config
+current-context`, `config set-context [--current]`, `config delete-context`
+(clears the active slot if it was active), `config get-credentials`,
+`config delete-credentials` (refused while a context references them).
+
+Identity precedence follows the same rule as targeting:
+`--token > RAILWAY_TOKEN > context credentials`. When `RAILWAY_TOKEN`
+overrides the context's credentials, railctl warns on stderr naming both.
+No config file = railctl behaves exactly as without this feature (CI and
+scripts are unaffected). `config set-credentials` performs one live probe
+to detect and store the token type (account/workspace/project); all other
+config commands are purely local.
+
+The config file refuses to load with looser than `0600` permissions
+(fix: `chmod 600 <path>`), and a context referencing a missing credential
+fails loudly — dangling references cannot arise through the CLI.
 
 Name arguments resolve **exact match → case-insensitive substring**; ambiguous
 matches error listing candidates. Unknown names list what exists:

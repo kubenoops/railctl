@@ -54,7 +54,7 @@ test-e2e-workspace: build
 # Run L3 project-scope E2E tests — the bulk group (needs RAILWAY_WORKSPACE_TOKEN;
 # the group's TestMain mints its own project token)
 test-e2e-project: build
-	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 25m ./tests/e2e/project/...
+	RAILCTL=$(CURDIR)/$(BINARY) go test -tags e2e -v -timeout 45m ./tests/e2e/project/...
 
 # Run the L3 project group against a project the caller already owns, under a
 # raw PROJECT token (needs RAILWAY_PROJECT_TOKEN; no fixture project is created).

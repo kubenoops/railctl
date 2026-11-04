@@ -94,13 +94,20 @@ func runApply(cmd *cobra.Command, args []string) error {
 	}
 	client := newAPIClient(tkn)
 
-	projectName := getProject()
+	// Declarative chain (FR-016): flag > env > config file > active context.
+	projectName := explicitProject()
 	if projectName == "" {
 		projectName = cfg.Project
 	}
-	envName := getEnvironment()
+	if projectName == "" && activeContext != nil {
+		projectName = activeContext.Project
+	}
+	envName := explicitEnvironment()
 	if envName == "" {
 		envName = cfg.Environment
+	}
+	if envName == "" && activeContext != nil {
+		envName = activeContext.Environment
 	}
 
 	ctx, err := cmdutil.ResolveContext(client, cmdutil.ResolveOpts{

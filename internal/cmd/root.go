@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/kubenoops/railctl/internal/api"
 	"github.com/kubenoops/railctl/internal/cmdutil"
+	"github.com/kubenoops/railctl/internal/contexts"
 	"github.com/kubenoops/railctl/internal/output"
 )
 
@@ -29,6 +31,7 @@ var (
 	environment  string
 	service      string
 	debug        bool
+	contextName  string
 
 	// newAPIClient is a factory function for creating API clients.
 	// It can be overridden in tests for dependency injection.
@@ -39,6 +42,17 @@ var (
 		client.WarnFn = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
 		return client
 	}
+
+	// activeContext is the selected context for this invocation (the active
+	// context from the config file). Nil when no config file exists or no
+	// context is active — targeting then behaves exactly as before the
+	// feature (FR-004). Set once per process in the root PersistentPreRunE.
+	activeContext *contexts.Context
+
+	// activeConfig is the loaded config file for this invocation (nil when
+	// none exists). Kept alongside activeContext so token credentials can
+	// resolve by name (FR-016).
+	activeConfig *contexts.File
 )
 
 // rootCmd represents the base command when called without any subcommands.
@@ -78,7 +92,7 @@ Examples:
 			return err
 		}
 		cmdutil.OutputIsText = format == output.FormatTable
-		return nil
+		return loadActiveContext()
 	},
 }
 
@@ -138,44 +152,137 @@ func init() {
 		"Service name (default: RAILCTL_SERVICE env var)")
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false,
 		"Enable debug logging (shows GraphQL requests/responses)")
+	rootCmd.PersistentFlags().StringVar(&contextName, "context", "",
+		"Use this context for the current command only (targeting and credentials)")
 
 	// Customize version template
 	rootCmd.SetVersionTemplate(fmt.Sprintf("railctl version {{.Version}} (commit: %s, built: %s)\n", commit, date))
 }
 
-// getToken returns the API token from flag or environment variable.
+// loadActiveContext reads the config file fresh (FR-003) and resolves the
+// context for this invocation: the --context flag's choice when given, else
+// the active context. Config errors (loose permissions, corrupt YAML,
+// dangling credential references) fail every command; a missing file is not
+// an error (FR-004). An unknown --context name fails before any API call
+// (FR-017).
+func loadActiveContext() error {
+	f, err := contexts.Load(contexts.ConfigPath())
+	if err != nil {
+		return err
+	}
+	activeConfig = f
+	activeContext = nil
+	if f == nil {
+		if contextName != "" {
+			return fmt.Errorf("unknown context '%s'; no config file exists", contextName)
+		}
+		return nil
+	}
+	if contextName != "" {
+		ctx := f.Context(contextName)
+		if ctx == nil {
+			return fmt.Errorf("unknown context '%s'; available contexts: %s",
+				contextName, strings.Join(contextNames(f), ", "))
+		}
+		activeContext = ctx
+		return nil
+	}
+	if f.CurrentContext != "" {
+		activeContext = f.Context(f.CurrentContext)
+	}
+	return nil
+}
+
+// contextNames returns the file's context names, sorted for stable errors.
+func contextNames(f *contexts.File) []string {
+	return f.ContextNames()
+}
+
+// getToken returns the API token from flag, environment variable, or the
+// active context's credentials (FR-016: flag > env > context). When the
+// environment variable overrides the selected context's credentials, a
+// stderr warning names both sources (FR-018).
 func getToken() (string, error) {
 	if token != "" {
 		return token, nil
 	}
 	if envToken := os.Getenv("RAILWAY_TOKEN"); envToken != "" {
+		if activeContext != nil && activeContext.Credentials != "" {
+			fmt.Fprintf(os.Stderr, "⚠ RAILWAY_TOKEN is overriding credentials '%s' from context '%s'\n",
+				activeContext.Credentials, activeContext.Name)
+		}
 		return envToken, nil
+	}
+	if activeContext != nil && activeContext.Credentials != "" && activeConfig != nil {
+		if cred := activeConfig.Credential(activeContext.Credentials); cred != nil {
+			return cred.Token, nil
+		}
 	}
 	return "", fmt.Errorf("no API token provided. Set RAILWAY_TOKEN environment variable or use --token flag")
 }
 
-// getWorkspace returns the workspace name from flag or environment variable.
-func getWorkspace() string {
-	if workspace != "" {
-		return workspace
-	}
-	return os.Getenv("RAILCTL_WORKSPACE")
-}
-
-// getProject returns the project name from flag or environment variable.
-func getProject() string {
+// explicitProject returns the project from flag or env var only — the
+// context is deliberately excluded. Used by the declarative -f commands,
+// where the config file slots between env and context (FR-016:
+// flag > env > file > context).
+func explicitProject() string {
 	if project != "" {
 		return project
 	}
 	return os.Getenv("RAILCTL_PROJECT")
 }
 
-// getEnvironment returns the environment name from flag or environment variable.
-func getEnvironment() string {
+// explicitEnvironment is explicitProject for the environment field.
+func explicitEnvironment() string {
 	if environment != "" {
 		return environment
 	}
 	return os.Getenv("RAILCTL_ENVIRONMENT")
+}
+
+// getWorkspace returns the workspace name from flag, environment variable,
+// or the active context (FR-016: flag > env > context).
+func getWorkspace() string {
+	if workspace != "" {
+		return workspace
+	}
+	if env := os.Getenv("RAILCTL_WORKSPACE"); env != "" {
+		return env
+	}
+	if activeContext != nil {
+		return activeContext.Workspace
+	}
+	return ""
+}
+
+// getProject returns the project name from flag, environment variable, or
+// the active context (FR-016: flag > env > context).
+func getProject() string {
+	if project != "" {
+		return project
+	}
+	if env := os.Getenv("RAILCTL_PROJECT"); env != "" {
+		return env
+	}
+	if activeContext != nil {
+		return activeContext.Project
+	}
+	return ""
+}
+
+// getEnvironment returns the environment name from flag, environment
+// variable, or the active context (FR-016: flag > env > context).
+func getEnvironment() string {
+	if environment != "" {
+		return environment
+	}
+	if env := os.Getenv("RAILCTL_ENVIRONMENT"); env != "" {
+		return env
+	}
+	if activeContext != nil {
+		return activeContext.Environment
+	}
+	return ""
 }
 
 // getService returns the service name from flag or environment variable.
