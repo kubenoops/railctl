@@ -21,10 +21,20 @@ var (
 	execRunner sshx.Runner = sshx.ExecRunner{}
 )
 
-// sshKeyHint is the actionable one-liner printed to stderr when an ssh child
-// exits non-zero — most commonly a publickey/permission failure because the
-// user has not registered their SSH key. railctl does not manage keys.
-const sshKeyHint = "If this failed with a publickey/permission error, register your SSH key at https://railway.com/account/ssh-keys, then retry."
+// sshKeyHint is the actionable hint printed to stderr when an ssh child exits
+// non-zero (shared by exec and port-forward). The two common causes:
+//   - publickey/permission: the user has not registered their SSH key.
+//   - the relay answers "agent path temporarily unavailable" (with a command)
+//     or "TUI not currently available" (interactive): it authenticated a key
+//     owned by a DIFFERENT Railway account (typically an ssh-agent key offered
+//     first) that cannot see the project. It reads like an outage but is not;
+//     -i <key> fixes it, since -i also sets IdentitiesOnly=yes.
+//
+// railctl does not manage keys.
+const sshKeyHint = "If this failed with a publickey/permission error, register your SSH key at https://railway.com/account/ssh-keys, then retry.\n" +
+	"If the relay replied \"agent path temporarily unavailable\" or \"TUI not currently available\", the key that authenticated " +
+	"likely belongs to a different Railway account (e.g. an ssh-agent key offered first); retry with -i <key> pointing at the key " +
+	"registered to this project's account."
 
 // warnIfUnknownReplica checks a user-supplied --deployment-instance id against
 // the service's current replicas and prints a stderr hint if it's not found.
@@ -97,7 +107,7 @@ func init() {
 	// (split via ArgsLenAtDash in runExec). Mirrors `kubectl exec pod -it -- cmd`.
 	execCmd.Flags().SetInterspersed(true)
 	execCmd.Flags().StringVarP(&execIdentityFile, "identity-file", "i", "",
-		"SSH private key to use (default: your ~/.ssh default key or ssh-agent)")
+		"SSH private key to use; only this key is offered (default: your ~/.ssh default key or ssh-agent)")
 	execCmd.Flags().StringVarP(&execInstanceID, "deployment-instance", "d", "",
 		"Service instance id to target (advanced; skips the instance lookup)")
 }
@@ -172,9 +182,9 @@ func runExec(cmd *cobra.Command, args []string) error {
 	if runErr != nil {
 		var exitErr *sshx.ExitError
 		if errors.As(runErr, &exitErr) {
-			// A non-zero ssh exit is often a publickey/permission failure. Surface
-			// the actionable key-registration hint after ssh's own error, then
-			// propagate the exit code as railctl's own.
+			// A non-zero ssh exit is often a publickey/permission failure or a
+			// wrong-account key. Surface the actionable key hint after ssh's own
+			// error, then propagate the exit code as railctl's own.
 			fmt.Fprintln(os.Stderr, sshKeyHint)
 			os.Exit(exitErr.Code)
 		}

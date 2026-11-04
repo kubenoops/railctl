@@ -97,6 +97,24 @@ func TestRunPortForward_BuildsSingleForwardArgv(t *testing.T) {
 	}
 }
 
+// TestRunPortForward_IdentityFileOffersOnlyThatKey asserts -i reaches ssh
+// together with IdentitiesOnly=yes (same baseArgs path as exec).
+func TestRunPortForward_IdentityFileOffersOnlyThatKey(t *testing.T) {
+	runner := &fakeRunner{}
+	client := execTestClient("inst-xyz")
+	restore := setPFEnv(t, client, runner)
+	defer restore()
+	pfIdentityFile = "/home/u/.ssh/railway"
+
+	if err := runPortForward(portForwardCmd, []string{"api", "5432"}); err != nil {
+		t.Fatalf("runPortForward error: %v", err)
+	}
+	joined := strings.Join(runner.gotArgv, " ")
+	if !strings.Contains(joined, "-i /home/u/.ssh/railway -o IdentitiesOnly=yes") {
+		t.Errorf("argv must pass -i with IdentitiesOnly=yes: %v", runner.gotArgv)
+	}
+}
+
 func TestRunPortForward_MultipleSpecsOneInvocation(t *testing.T) {
 	runner := &fakeRunner{}
 	client := execTestClient("inst-xyz")
