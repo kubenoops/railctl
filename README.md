@@ -364,6 +364,10 @@ railctl delete volume my-data -p my-app -e production
 railctl delete volume my-data --yes -p my-app -e production  # Skip confirmation
 ```
 
+In a manifest, `volume.mountPath` creates the volume (also on a service that
+already exists) and `volume.sizeMB` grows it; see
+[Declarative Configuration](docs/declarative-config.md).
+
 ### Volume Backups
 
 Railway can back up a volume manually or on an automated schedule (daily,

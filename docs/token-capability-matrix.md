@@ -60,7 +60,13 @@ operations split exactly on this line:
 | `volumeCreate`                                     | ✅ `input.environmentId`                   | ✅                  |
 | `volumeInstanceUpdate` (mount path, attach/detach) | ✅ `environmentId` arg                     | ✅                  |
 | Volume delete (patch: `volumes.<id>.isDeleted`)    | ✅ `environmentPatchCommit(environmentId)` | ✅                  |
+| Volume resize (patch: `volumes.<id>.sizeMB`)¹      | ✅ `environmentPatchCommit(environmentId)` | ✅                  |
 | **`volumeUpdate` (rename)**                        | ❌ `volumeId` only                         | ❌ `Not Authorized` |
+
+¹ Verified 2026-11-03. The commit always succeeds; Railway applies the patch
+asynchronously and reports a refusal (e.g. "The new size must be larger than
+the current size.") only on `environmentPatch(id) { status lastAppliedError }`.
+A resize redeploys the service, even with `skipDeploys: true`.
 
 Rename is **not fixable from a leaf token**: `VolumeUpdateInput` has no
 environment field (schema introspection), and the environment config's volumes

@@ -410,3 +410,31 @@ func TestAwaitDeploymentsSettled(t *testing.T) {
 		t.Error("a failing read must not report quiet")
 	}
 }
+
+func TestAwaitNewDeploymentSettled(t *testing.T) {
+	// The old deployment, then Railway's new one in flight, then settled: the
+	// settled new one is returned.
+	calls := 0
+	redeploying := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		calls++
+		switch calls {
+		case 1:
+			return []Deployment{{ID: "dep-old", Status: "SUCCESS"}}, nil
+		case 2:
+			return []Deployment{{ID: "dep-new", Status: "DEPLOYING"}}, nil
+		}
+		return []Deployment{{ID: "dep-new", Status: "REMOVED"}}, nil
+	}}
+	d, ok := AwaitNewDeploymentSettled(redeploying, "p", "e", "s", "dep-old", 50*time.Millisecond, time.Millisecond)
+	if !ok || d.ID != "dep-new" || d.Status != "REMOVED" {
+		t.Errorf("got %+v, %v; want dep-new REMOVED", d, ok)
+	}
+
+	// No new deployment ever appears: bounded false.
+	unchanged := &MockClient{ListDeploymentsFunc: func(_, _, _ string, _ int) ([]Deployment, error) {
+		return []Deployment{{ID: "dep-old", Status: "SUCCESS"}}, nil
+	}}
+	if _, ok := AwaitNewDeploymentSettled(unchanged, "p", "e", "s", "dep-old", 20*time.Millisecond, time.Millisecond); ok {
+		t.Error("the deployment from before must not count as the new one")
+	}
+}

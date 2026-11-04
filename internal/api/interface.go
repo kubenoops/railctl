@@ -27,6 +27,7 @@ type APIClient interface {
 	ListServices(projectID, environmentID string) ([]types.ServiceDetail, error)
 	GetService(id string) (types.ServiceDetail, error)
 	GetEnvironmentConfig(environmentID string) (string, error)
+	GetEnvironmentPatchStatus(patchID string) (EnvironmentPatchStatus, error)
 	CreateService(projectID, environmentID, name, image string, creds *RegistryCredentials) (types.Service, error)
 	UpdateServiceInstance(serviceID, environmentID, image string, creds *RegistryCredentials) error
 	AttachSourceAndDeploy(serviceID, environmentID, image string, creds *RegistryCredentials) (string, error)
@@ -77,6 +78,7 @@ type APIClient interface {
 	ListVolumes(projectID, environmentID string) ([]VolumeInstance, error)
 	CreateVolume(projectID, environmentID, serviceID, mountPath string, region string) (Volume, error)
 	DeleteVolume(environmentID, volumeID string) error
+	ResizeVolume(environmentID, volumeID string, sizeMB int) (string, error)
 	UpdateVolumeName(volumeID, name string) error
 	UpdateVolumeMountPath(volumeID, serviceID, environmentID, mountPath string) error
 	AttachVolume(volumeID, serviceID, environmentID string) error

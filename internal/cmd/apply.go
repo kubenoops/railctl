@@ -427,6 +427,7 @@ func fetchLiveState(client api.APIClient, projectID, envID string, desired []con
 				lv := diff.LiveVolume{
 					MountPath:        vi.MountPath,
 					VolumeInstanceID: vi.ID,
+					SizeMB:           vi.SizeMB,
 				}
 				// Only read schedules for volumes under declarative management.
 				// Warn (don't fail) on error so a transient read doesn't present
