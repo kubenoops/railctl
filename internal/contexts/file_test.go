@@ -60,6 +60,28 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 	}
 }
 
+// Saving must bootstrap the config directory when it does not exist yet —
+// on a fresh machine ~/.railctl is absent and the first write (the
+// feature's bootstrap) must create it, not fail (PR #96 review).
+func TestSave_CreatesMissingParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", ".railctl", "config.yaml")
+
+	if err := Save(path, &File{CurrentContext: "a", Contexts: []Context{{Name: "a", Project: "p"}}}); err != nil {
+		t.Fatalf("Save to a path with missing parent directories failed: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after save: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("expected file mode 0600, got %o", perm)
+	}
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load after bootstrap save: %v", err)
+	}
+}
+
 // A config file with group or other permission bits must be refused with an
 // error naming the path and the chmod remediation (FR-002).
 func TestLoad_RefusesLoosePermissions(t *testing.T) {

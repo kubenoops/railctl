@@ -102,6 +102,12 @@ func Save(path string, f *File) error {
 		return fmt.Errorf("failed to encode config: %w", err)
 	}
 	dir := filepath.Dir(path)
+	// Bootstrap the config directory on first write (fresh machine:
+	// ~/.railctl does not exist yet). 0700 matches the 0600 file posture —
+	// no group/other access to secret material (PR #96 review).
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("failed to create config directory %s: %w", dir, err)
+	}
 	tmp, err := os.CreateTemp(dir, ".railctl-config-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file in %s: %w", dir, err)
