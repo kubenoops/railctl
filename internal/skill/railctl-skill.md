@@ -434,7 +434,7 @@ services:
     volume:
       mountPath: /app/data
       backupSchedules: [daily, weekly] # daily/weekly/monthly
-      sizeMB: 100000 # optional; only grows (Railway can't shrink a volume)
+      sizeMB: 100000 # optional minimum; only grows (Railway can't shrink a volume)
 
     variables:
       PORT: "3000"
@@ -782,12 +782,15 @@ removed with `delete domain`, never silently on apply.)
   with an explicit warning naming what was removed. A service with no
   `volume:` block is left untouched (its live volume is never shown as a
   removal). Declaring a volume on a service that has none **creates it** on
-  the next apply, with its schedules and `sizeMB`, then rolls the service out
-  once (after the resize: a resize during Railway's own attach rollout cancels
-  it and leaves nothing running).
-- **`volume.sizeMB` only grows.** Railway can't shrink a volume, so a declared
-  size below the live one **fails the apply** before anything is written. A
-  resize redeploys the service (brief downtime on a volume-backed service).
+  the next apply, with its schedules and `sizeMB`. Volume changes run first in
+  an update, so a refused resize writes nothing else. Railway redeploys the
+  service itself for the attach and the resize; apply waits for the attach
+  redeploy before resizing (a resize during it cancels it, leaving nothing
+  running) and rolls out itself only when other changes are staged or
+  Railway's redeploy didn't succeed.
+- **`volume.sizeMB` is a minimum.** Railway can't shrink a volume, so a live
+  one already at or above it is left as is. Each resize redeploys the service
+  (brief downtime on a volume-backed service).
 - **`domain.port` and `tcpProxy.port` reconcile removal**: omitting the block
   and re-applying closes the port (railctl-generated public surface is fully
   declarative — this is how you un-expose a service). **`customDomains` are the

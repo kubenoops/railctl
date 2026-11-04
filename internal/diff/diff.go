@@ -435,15 +435,16 @@ func compareService(d config.ServiceConfig, ls LiveService) []FieldDiff {
 		fields = append(fields, FieldDiff{Path: "volume.mountPath", Current: liveMountPath, Desired: d.Volume.MountPath})
 	}
 
-	// Volume size: only when declared. A volume that doesn't exist yet is
-	// created at the declared size.
+	// Volume size: a declared sizeMB is a minimum. Railway only grows volumes,
+	// so a live one already at or above it is left alone, and an unknown live
+	// size (0) never reports a change that couldn't converge.
 	if d.Volume.MountPath != "" && d.Volume.SizeMB > 0 {
-		liveSize := ""
-		if liveVolume != nil && liveVolume.SizeMB > 0 {
-			liveSize = fmt.Sprintf("%d", liveVolume.SizeMB)
-		}
-		if desired := fmt.Sprintf("%d", d.Volume.SizeMB); desired != liveSize {
-			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Current: liveSize, Desired: desired})
+		desired := fmt.Sprintf("%d", d.Volume.SizeMB)
+		switch {
+		case liveVolume == nil:
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Desired: desired})
+		case liveVolume.SizeMB > 0 && liveVolume.SizeMB < d.Volume.SizeMB:
+			fields = append(fields, FieldDiff{Path: "volume.sizeMB", Current: fmt.Sprintf("%d", liveVolume.SizeMB), Desired: desired})
 		}
 	}
 

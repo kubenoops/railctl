@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1098,18 +1099,37 @@ func updatedServiceMock(volumes []api.VolumeInstance) *api.MockClient {
 	}
 }
 
+// deploymentsSeq answers ListDeployments with each list in turn, repeating the
+// last one, and records every call in events.
+func deploymentsSeq(events *[]string, lists ...[]api.Deployment) func(string, string, string, int) ([]api.Deployment, error) {
+	i := 0
+	return func(string, string, string, int) ([]api.Deployment, error) {
+		*events = append(*events, "list")
+		l := lists[min(i, len(lists)-1)]
+		i++
+		return l, nil
+	}
+}
+
+var (
+	oldDeployment   = []api.Deployment{{ID: "dep-old", Status: "SUCCESS"}}
+	railwayRedeploy = []api.Deployment{{ID: "dep-railway", Status: "SUCCESS"}}
+)
+
 func TestApply_UpdateCreatesMissingVolume(t *testing.T) {
-	svcID := "svc-1"
-	var created []string
-	deploys := 0
-	mock := updatedServiceMock([]api.VolumeInstance{
-		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
-	})
+	// Only the volume changed: apply follows the redeploy Railway starts for
+	// the attach instead of restarting the service a second time.
+	var events, created []string
+	mock := updatedServiceMock(nil)
+	mock.ListDeploymentsFunc = deploymentsSeq(&events, oldDeployment, railwayRedeploy)
 	mock.CreateVolumeFunc = func(p, e, s, mountPath, region string) (api.Volume, error) {
 		created = append(created, s, mountPath, region)
 		return api.Volume{ID: "vol-1"}, nil
 	}
-	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) { deploys++; return "dep-1", nil }
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) {
+		events = append(events, "deploy")
+		return "dep-1", nil
+	}
 
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
 		Type: diff.ChangeUpdate, ServiceName: "web",
@@ -1125,13 +1145,34 @@ func TestApply_UpdateCreatesMissingVolume(t *testing.T) {
 	if strings.Join(created, "|") != "svc-1|/data|" {
 		t.Errorf("CreateVolume(service, mountPath, region) = %v", created)
 	}
-	// Railway's own attach rollout can be cancelled by a later volume patch,
-	// so apply rolls out once itself and --await follows that deployment.
-	if deploys != 1 || result.DeploymentIDs["web"] != "dep-1" {
-		t.Errorf("deploys = %d, DeploymentIDs = %v; want one rollout recorded as dep-1", deploys, result.DeploymentIDs)
+	if slices.Contains(events, "deploy") || result.DeploymentIDs["web"] != "dep-railway" {
+		t.Errorf("events = %v, DeploymentIDs = %v; want Railway's redeploy followed, no rollout of ours", events, result.DeploymentIDs)
 	}
 	if !strings.Contains(out.String(), "volume created at /data") {
 		t.Errorf("output should report the new volume:\n%s", out.String())
+	}
+}
+
+func TestApply_UpdateVolumeRedeployCancelled(t *testing.T) {
+	// Railway can cancel its own volume redeploy without a replacement; apply
+	// then rolls out itself so the service isn't left with nothing running.
+	var events []string
+	mock := updatedServiceMock(nil)
+	mock.ListDeploymentsFunc = deploymentsSeq(&events, oldDeployment, []api.Deployment{{ID: "dep-railway", Status: "REMOVED"}})
+	mock.CreateVolumeFunc = func(p, e, s, m, r string) (api.Volume, error) { return api.Volume{ID: "vol-1"}, nil }
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) { return "dep-1", nil }
+
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.mountPath", Desired: "/data"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data"}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if result.DeploymentIDs["web"] != "dep-1" {
+		t.Errorf("DeploymentIDs = %v, want apply's own rollout dep-1", result.DeploymentIDs)
 	}
 }
 
@@ -1163,13 +1204,23 @@ func TestApply_UpdateCreatesVolumeInDeclaredRegion(t *testing.T) {
 
 func TestApply_UpdateCreatesVolumeWithSizeAndSchedules(t *testing.T) {
 	svcID := "svc-1"
+	var events []string
 	var resized []any
 	var scheduledOn string
 	mock := updatedServiceMock([]api.VolumeInstance{
 		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
 	})
-	mock.CreateVolumeFunc = func(p, e, s, m, r string) (api.Volume, error) { return api.Volume{ID: "vol-1"}, nil }
+	mock.ListDeploymentsFunc = deploymentsSeq(&events,
+		oldDeployment,
+		[]api.Deployment{{ID: "dep-attach", Status: "SUCCESS"}},
+		[]api.Deployment{{ID: "dep-resize", Status: "SUCCESS"}},
+	)
+	mock.CreateVolumeFunc = func(p, e, s, m, r string) (api.Volume, error) {
+		events = append(events, "create")
+		return api.Volume{ID: "vol-1"}, nil
+	}
 	mock.ResizeVolumeFunc = func(e, volumeID string, sizeMB int) (string, error) {
+		events = append(events, "resize")
 		resized = append(resized, volumeID, sizeMB)
 		return "patch-1", nil
 	}
@@ -1199,20 +1250,67 @@ func TestApply_UpdateCreatesVolumeWithSizeAndSchedules(t *testing.T) {
 	if scheduledOn != "vi-1" {
 		t.Errorf("schedules set on %q, want vi-1 (the new volume's instance)", scheduledOn)
 	}
+	// The resize waits for the attach redeploy (a resize during it cancels it),
+	// and the resize's own redeploy is then followed.
+	if got := strings.Join(events, "|"); got != "list|create|list|resize|list" {
+		t.Errorf("events = %s, want list|create|list|resize|list", got)
+	}
+	if result.DeploymentIDs["web"] != "dep-resize" {
+		t.Errorf("DeploymentIDs = %v, want dep-resize", result.DeploymentIDs)
+	}
+}
+
+func TestApply_UpdateVolumeAndImageRollsOutAfterRailway(t *testing.T) {
+	// With other staged changes apply still rolls out itself, but only after
+	// Railway's volume redeploy settled, so the two don't race.
+	var events []string
+	mock := updatedServiceMock(nil)
+	mock.ListDeploymentsFunc = deploymentsSeq(&events, oldDeployment, railwayRedeploy)
+	mock.CreateVolumeFunc = func(p, e, s, m, r string) (api.Volume, error) {
+		events = append(events, "create")
+		return api.Volume{ID: "vol-1"}, nil
+	}
+	mock.UpdateServiceInstanceFunc = func(s, e, image string, creds *api.RegistryCredentials) error {
+		events = append(events, "image")
+		return nil
+	}
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) {
+		events = append(events, "deploy")
+		return "dep-1", nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{
+			{Path: "image", Current: "nginx:1.27", Desired: "nginx:1.28"},
+			{Path: "volume.mountPath", Desired: "/data"},
+		},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Image: "nginx:1.28", Volume: config.VolumeConfig{MountPath: "/data"}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 0 {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if got := strings.Join(events, "|"); got != "list|create|image|list|deploy" {
+		t.Errorf("events = %s, want list|create|image|list|deploy (volume first, rollout after Railway's)", got)
+	}
+	if result.DeploymentIDs["web"] != "dep-1" {
+		t.Errorf("DeploymentIDs = %v, want dep-1", result.DeploymentIDs)
+	}
 }
 
 func TestApply_UpdateGrowsVolume(t *testing.T) {
 	svcID := "svc-1"
-	var calls []string
+	var events []string
 	mock := updatedServiceMock([]api.VolumeInstance{
 		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
 	})
+	mock.ListDeploymentsFunc = deploymentsSeq(&events, oldDeployment, railwayRedeploy)
 	mock.ResizeVolumeFunc = func(e, volumeID string, sizeMB int) (string, error) {
-		calls = append(calls, fmt.Sprintf("resize:%d", sizeMB))
+		events = append(events, fmt.Sprintf("resize:%d", sizeMB))
 		return "patch-1", nil
 	}
 	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) {
-		calls = append(calls, "deploy")
+		events = append(events, "deploy")
 		return "dep-1", nil
 	}
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
@@ -1224,27 +1322,80 @@ func TestApply_UpdateGrowsVolume(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("unexpected errors: %v", result.Errors)
 	}
-	// The rollout comes after Railway has applied the resize.
-	if got := strings.Join(calls, "|"); got != "resize:250000|deploy" {
-		t.Errorf("calls = %s, want resize:250000|deploy", got)
+	if got := strings.Join(events, "|"); got != "list|resize:250000|list" {
+		t.Errorf("events = %s, want list|resize:250000|list (Railway's resize redeploy followed)", got)
 	}
 }
 
-func TestApply_UpdateRefusesShrink(t *testing.T) {
-	resizeCalled := false
-	mock := updatedServiceMock(nil)
-	mock.ResizeVolumeFunc = func(e, v string, s int) (string, error) { resizeCalled = true; return "patch-1", nil }
+func TestApply_UpdateResizeFailureWritesNothingElse(t *testing.T) {
+	// The volume step runs first, so a refused resize leaves the image and
+	// variables unwritten instead of staged with no rollout.
+	svcID := "svc-1"
+	var writes []string
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.ResizeVolumeFunc = func(e, v string, s int) (string, error) { return "patch-1", nil }
+	mock.GetEnvironmentPatchStatusFunc = func(id string) (api.EnvironmentPatchStatus, error) {
+		return api.EnvironmentPatchStatus{Status: "FAILED", LastAppliedError: "plan limit reached"}, nil
+	}
+	mock.UpdateServiceInstanceFunc = func(s, e, image string, creds *api.RegistryCredentials) error {
+		writes = append(writes, "image")
+		return nil
+	}
+	mock.SetVariablesFunc = func(p, e, s string, vars map[string]string, skip bool) error {
+		writes = append(writes, "variables")
+		return nil
+	}
+	mock.DeployServiceInstanceFunc = func(s, e string) (string, error) {
+		writes = append(writes, "deploy")
+		return "dep-1", nil
+	}
 	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
 		Type: diff.ChangeUpdate, ServiceName: "web",
-		Fields: []diff.FieldDiff{{Path: "volume.sizeMB", Current: "250000", Desired: "50000"}},
+		Fields: []diff.FieldDiff{
+			{Path: "image", Current: "nginx:1.27", Desired: "nginx:1.28"},
+			{Path: "variables.MODE", Desired: "fast"},
+			{Path: "volume.sizeMB", Current: "50000", Desired: "2000000"},
+		},
 	}}}
-	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 50000}}}
+	cfg := map[string]config.ServiceConfig{"web": {
+		Name: "web", Image: "nginx:1.28", Variables: map[string]string{"MODE": "fast"},
+		Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 2000000},
+	}}
 	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
-	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "only grow") {
-		t.Fatalf("expected a shrink refusal, got %v", result.Errors)
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "plan limit reached") {
+		t.Fatalf("expected Railway's refusal, got %v", result.Errors)
 	}
-	if resizeCalled {
-		t.Error("a shrink must not reach Railway")
+	if len(writes) != 0 {
+		t.Errorf("a refused resize must leave the rest unwritten, got %v", writes)
+	}
+}
+
+func TestApply_UpdateResizeUnknownPatchStatus(t *testing.T) {
+	// A status other than STAGED/APPLYING/COMMITTED/FAILED fails at once
+	// instead of polling to the deadline.
+	svcID := "svc-1"
+	checks := 0
+	mock := updatedServiceMock([]api.VolumeInstance{
+		{ID: "vi-1", Volume: api.Volume{ID: "vol-1"}, ServiceID: &svcID, MountPath: "/data", SizeMB: 50000},
+	})
+	mock.ResizeVolumeFunc = func(e, v string, s int) (string, error) { return "patch-1", nil }
+	mock.GetEnvironmentPatchStatusFunc = func(id string) (api.EnvironmentPatchStatus, error) {
+		checks++
+		return api.EnvironmentPatchStatus{Status: "SKIPPED"}, nil
+	}
+	cs := &diff.ChangeSet{Changes: []diff.ResourceChange{{
+		Type: diff.ChangeUpdate, ServiceName: "web",
+		Fields: []diff.FieldDiff{{Path: "volume.sizeMB", Current: "50000", Desired: "250000"}},
+	}}}
+	cfg := map[string]config.ServiceConfig{"web": {Name: "web", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: 250000}}}
+	result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0].Error(), "SKIPPED") {
+		t.Fatalf("expected the unknown status in the error, got %v", result.Errors)
+	}
+	if checks != 1 {
+		t.Errorf("status checked %d times, want 1", checks)
 	}
 }
 
@@ -1277,14 +1428,14 @@ func TestApply_UpdateResizeRefusedByRailway(t *testing.T) {
 func TestApply_CreateServiceWithVolumeSize(t *testing.T) {
 	svcID := "svc-1"
 	tests := []struct {
-		name        string
-		sizeMB      int
-		wantCalls   string
-		wantWarning bool
+		name      string
+		sizeMB    int
+		wantCalls string
 	}{
 		// Grown before the first rollout, so it deploys onto the full size.
 		{name: "above the default", sizeMB: 250000, wantCalls: "resize:250000|deploy"},
-		{name: "below the default", sizeMB: 5000, wantCalls: "deploy", wantWarning: true},
+		// sizeMB is a minimum: a plan default already above it is kept.
+		{name: "below the default", sizeMB: 5000, wantCalls: "deploy"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1310,16 +1461,12 @@ func TestApply_CreateServiceWithVolumeSize(t *testing.T) {
 			cfg := map[string]config.ServiceConfig{"web": {
 				Name: "web", Image: "nginx", Volume: config.VolumeConfig{MountPath: "/data", SizeMB: tt.sizeMB},
 			}}
-			var out bytes.Buffer
-			result := Apply(mock, cs, "p", "e", cfg, Opts{Output: &out})
+			result := Apply(mock, cs, "p", "e", cfg, Opts{Output: io.Discard})
 			if len(result.Errors) != 0 {
 				t.Fatalf("unexpected errors: %v", result.Errors)
 			}
 			if got := strings.Join(calls, "|"); got != tt.wantCalls {
 				t.Errorf("calls = %s, want %s", got, tt.wantCalls)
-			}
-			if got := strings.Contains(out.String(), "can't shrink"); got != tt.wantWarning {
-				t.Errorf("shrink warning = %v, want %v:\n%s", got, tt.wantWarning, out.String())
 			}
 		})
 	}

@@ -215,3 +215,22 @@ func AwaitDeploymentsSettled(client APIClient, projectID, environmentID, service
 		time.Sleep(poll)
 	}
 }
+
+// AwaitNewDeploymentSettled polls until the service's latest deployment is
+// one other than before and has reached a terminal status, and returns it.
+// Railway redeploys a service on its own after a volume attach or resize;
+// this is how apply follows that redeploy. ok is false when none settled
+// before the deadline.
+func AwaitNewDeploymentSettled(client APIClient, projectID, environmentID, serviceID, before string, timeout, poll time.Duration) (Deployment, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		deployments, err := client.ListDeployments(projectID, environmentID, serviceID, 1)
+		if err == nil && len(deployments) > 0 && deployments[0].ID != before && settledStatuses[deployments[0].Status] {
+			return deployments[0], true
+		}
+		if !time.Now().Before(deadline) {
+			return Deployment{}, false
+		}
+		time.Sleep(poll)
+	}
+}

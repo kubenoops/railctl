@@ -315,6 +315,21 @@ func TestCompute_UpdateVolume(t *testing.T) {
 	}
 }
 
+func TestCompute_ConvergedVolumeNoChanges(t *testing.T) {
+	// A volume that matches the manifest yields no fields, so a second apply
+	// neither writes nor redeploys.
+	desired := []config.ServiceConfig{{Name: "web", Image: "node:20", Volume: config.VolumeConfig{
+		MountPath: "/data", BackupSchedules: []string{"DAILY"}, SizeMB: 250000,
+	}}}
+	live := []LiveService{{Name: "web", Image: "node:20", Volumes: []LiveVolume{
+		{MountPath: "/data", BackupSchedules: []string{"DAILY"}, SizeMB: 250000},
+	}}}
+
+	if cs := Compute(desired, live, false); cs.HasChanges() {
+		t.Errorf("expected no changes, got %+v", cs.Changes)
+	}
+}
+
 func TestCompute_UndeclaredVolumeLeftAlone(t *testing.T) {
 	// A volume the manifest doesn't declare (e.g. added in the dashboard) is not
 	// shown as a removal: apply never deletes one.
@@ -337,8 +352,11 @@ func TestCompute_VolumeSize(t *testing.T) {
 		{name: "matches", declared: 50000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}}},
 		{name: "grow", declared: 250000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}},
 			want: &FieldDiff{Path: "volume.sizeMB", Current: "50000", Desired: "250000"}},
-		{name: "shrink", declared: 5000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}},
-			want: &FieldDiff{Path: "volume.sizeMB", Current: "50000", Desired: "5000"}},
+		// sizeMB is a minimum: a volume already larger is left alone rather
+		// than blocking every apply on a shrink Railway can't do.
+		{name: "live already larger", declared: 5000, live: []LiveVolume{{MountPath: "/data", SizeMB: 50000}}},
+		// An unknown live size must not report a change on every run.
+		{name: "live size unknown", declared: 250000, live: []LiveVolume{{MountPath: "/data"}}},
 		{name: "no volume yet", declared: 250000,
 			want: &FieldDiff{Path: "volume.sizeMB", Desired: "250000"}},
 	}
